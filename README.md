@@ -7,7 +7,7 @@ Sistem klasifikasi penyebab gangguan transmisi berbasis AI menggunakan file reka
 Sistem ini menganalisis file COMTRADE (.cfg + .dat) dari relai jarak SUTT dan mengklasifikasikan penyebab gangguan ke dalam kategori:
 
 - **PETIR (TRANSIEN)** — gangguan petir, AR berhasil, tidak perlu crew lapangan
-- **KONDUKTOR / KERUSAKAN MEKANIK** — perubahan fasa saat AR, diduga tower roboh / konduktor putus
+- **KONDUKTOR / KERUSAKAN PERALATAN** — perubahan fasa saat AR, diduga tower roboh / konduktor putus, CT Meledak dan sebagainya
 - **GANGGUAN PERMANEN** — AR gagal, penyebab belum spesifik, perlu investigasi lapangan
 - **NON-PETIR — PERLU INVESTIGASI** — bukan petir, butuh data lebih lanjut
 
