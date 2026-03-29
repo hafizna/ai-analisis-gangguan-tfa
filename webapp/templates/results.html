@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}Analysis Results{% endblock %}
+
+{% block extra_css %}
+.results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 18px; margin: 24px 0;
+}
+.card {
+    background: white; border: 2px solid #e2e8f0;
+    border-radius: 12px; padding: 22px;
+}
+.card-prediction {
+    background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+    color: white; border: none;
+}
+.card h3 { font-size: 15px; margin-bottom: 12px; opacity: 0.85; }
+.card-prediction h3 { color: rgba(255,255,255,0.85); }
+.big-value { font-size: 36px; font-weight: 800; margin: 6px 0; }
+.sub-label { font-size: 13px; color: #718096; margin-top: 4px; }
+.card-prediction .sub-label { color: rgba(255,255,255,0.75); }
+.conf-bar {
+    width: 100%; height: 26px; background: rgba(255,255,255,0.2);
+    border-radius: 13px; overflow: hidden; margin-top: 12px;
+}
+.conf-fill {
+    height: 100%; display: flex; align-items: center;
+    justify-content: center; font-size: 13px; font-weight: 700;
+    color: #1e3a8a; transition: width 0.5s ease;
+}
+.conf-high   { background: #10b981; color: white; }
+.conf-medium { background: #f59e0b; }
+.conf-low    { background: #ef4444; color: white; }
+
+.tier-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: 12px; font-weight: 700; margin-top: 10px;
+}
+.tier-1 { background: #fef3c7; color: #92400e; }
+.tier-2 { background: #dbeafe; color: #1e40af; }
+.tier-0 { background: #f3f4f6; color: #6b7280; }
+
+.evidence-box {
+    background: #f8fafc; border-left: 4px solid #3b82f6;
+    padding: 14px 16px; border-radius: 6px;
+    font-size: 13px; color: #374151; margin-top: 18px;
+    font-family: monospace; line-height: 1.6;
+}
+
+.features-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.features-table td { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; }
+.features-table td:first-child { color: #6b7280; width: 48%; }
+.features-table td:last-child   { font-weight: 600; color: #1e293b; }
+
+.confirm-section {
+    background: #f7fafc; border-radius: 12px;
+    padding: 28px; margin-top: 32px;
+}
+.form-group { margin: 18px 0; }
+.form-group label { display: block; font-weight: 600; color: #2d3748; margin-bottom: 7px; }
+.form-control {
+    width: 100%; padding: 11px; border: 2px solid #cbd5e0;
+    border-radius: 8px; font-size: 15px;
+}
+.form-control:focus { outline: none; border-color: #3b82f6; }
+textarea.form-control { min-height: 90px; resize: vertical; }
+.button-group { display: flex; gap: 14px; margin-top: 24px; flex-wrap: wrap; }
+
+.file-bar {
+    background: #eff6ff; border-left: 4px solid #3b82f6;
+    padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-size: 14px;
+}
+.file-bar strong { color: #1e40af; }
+{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Fault Analysis Results</h1>
+    <p>{{ analysis.station_name }} — {{ analysis.original_filename }}</p>
+</div>
+
+<div class="content">
+    <div class="file-bar">
+        <strong>Gardu Induk:</strong> {{ analysis.station_name }} &nbsp;|&nbsp;
+        <strong>Rele:</strong> {{ analysis.relay_model }} &nbsp;|&nbsp;
+        {% if analysis.voltage_kv != "Tidak diketahui" %}<strong>Sistem:</strong> {{ analysis.voltage_kv }} kV &nbsp;|&nbsp;{% endif %}
+        <strong>Waktu Analisis:</strong> {{ analysis.timestamp }}
+    </div>
+
+    {% if not analysis.scaling_ok %}
+    <div style="background:#fef3c7; border-left:4px solid #f59e0b; padding:12px 16px;
+                border-radius:6px; margin-bottom:16px; font-size:13px; color:#92400e;">
+        ⚠️ <strong>Perhatian:</strong> Arus puncak yang terdeteksi sangat kecil
+        ({{ "%.1f"|format(analysis.peak_fault_current_a) }} A).
+        Kemungkinan file menyimpan nilai sisi sekunder CT — rasio CT belum diterapkan.
+        Fitur arus pada hasil ini mungkin tidak akurat.
+    </div>
+    {% endif %}
+
+    <div class="results-grid">
+
+        <!-- Prediction card -->
+        <div class="card card-prediction">
+            <h3>PREDIKSI AI</h3>
+            <div class="big-value">{{ analysis.label }}</div>
+            <div class="sub-label">Prediksi penyebab gangguan</div>
+
+            {% set conf_pct = (analysis.confidence * 100) | int %}
+            <div class="conf-bar">
+                {% if conf_pct >= 75 %}{% set cc = 'conf-high' %}
+                {% elif conf_pct >= 50 %}{% set cc = 'conf-medium' %}
+                {% else %}{% set cc = 'conf-low' %}{% endif %}
+                <div class="conf-fill {{ cc }}" style="width:{{ conf_pct }}%;">{{ conf_pct }}%</div>
+            </div>
+
+            {% if analysis.tier == 1 %}
+                <div class="tier-badge tier-1">Tier 1 — Rule</div>
+            {% elif analysis.tier == 2 %}
+                <div class="tier-badge tier-2">Tier 2 — ML</div>
+            {% else %}
+                <div class="tier-badge tier-0">No model</div>
+            {% endif %}
+        </div>
+
+        <!-- Fault features -->
+        <div class="card">
+            <h3>FITUR GANGGUAN</h3>
+            <table class="features-table">
+                <tr><td>Zone</td>          <td>{{ analysis.zone_operated }}</td></tr>
+                <tr><td>Phases</td>        <td>{{ analysis.faulted_phases }}</td></tr>
+                <tr><td>Trip type</td>     <td>{{ analysis.trip_type }}</td></tr>
+                <tr><td>Duration</td>      <td>{{ "%.0f" | format(analysis.fault_duration_ms) }} ms</td></tr>
+                <tr><td>Fault count</td>   <td>{{ analysis.fault_count }}</td></tr>
+                <tr><td>Reclose OK</td>    <td>{{ analysis.reclose_successful }}</td></tr>
+            </table>
+        </div>
+
+        <!-- Waveform metrics -->
+        <div class="card">
+            <h3>METRIK GELOMBANG</h3>
+            <table class="features-table">
+                <tr><td>Peak current</td>   <td>{{ "%.0f" | format(analysis.peak_fault_current_a) }} A</td></tr>
+                <tr><td>i0 / i1 ratio</td>  <td>{{ "%.3f" | format(analysis.i0_i1_ratio) }}</td></tr>
+                <tr><td>Voltage sag</td>    <td>{{ "%.3f" | format(analysis.voltage_sag_depth_pu) }} pu</td></tr>
+            </table>
+        </div>
+
+    </div>
+
+    <!-- Evidence -->
+    <div class="evidence-box">
+        <strong>Evidence:</strong> {{ analysis.evidence }}
+    </div>
+
+    <!-- Confirm / correct -->
+    <div class="confirm-section">
+        <h2 style="color:#1e3a8a; margin-bottom:8px;">Konfirmasi atau Koreksi Hasil</h2>
+        <p style="color:#718096; margin-bottom:16px;">
+            Pilih penyebab gangguan yang sebenarnya untuk menyimpan hasil ini dan meningkatkan model.
+        </p>
+        <form action="{{ url_for('confirm_prediction') }}" method="POST">
+            <div class="form-group">
+                <label for="fault_cause">Actual fault cause *</label>
+                <select id="fault_cause" name="fault_cause" class="form-control" required>
+                    {% for cat in fault_categories %}
+                        <option value="{{ cat }}"
+                            {% if cat == analysis.label or (cat == 'LAYANG-LAYANG' and analysis.label == 'LAYANG') %}selected{% endif %}>
+                            {{ cat }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="notes">Notes (optional)</label>
+                <textarea id="notes" name="notes" class="form-control"
+                    placeholder="Additional observations..."></textarea>
+            </div>
+            <div class="button-group">
+                <button type="submit" class="btn btn-success">Save Confirmation</button>
+                <a href="{{ url_for('index') }}" class="btn btn-secondary">Analyze Another</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="footer">
+    Rule: {{ analysis.rule_name }} &nbsp;|&nbsp; Tier {{ analysis.tier }}
+</div>
+{% endblock %}

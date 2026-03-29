@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Saved{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Confirmation Saved</h1>
+    <p>Thank you — your label has been recorded.</p>
+</div>
+
+<div class="content" style="text-align:center; padding: 60px 40px;">
+    <div style="font-size:64px; margin-bottom:24px;">✅</div>
+    <h2 style="color:#1e3a8a; margin-bottom:12px;">Label recorded</h2>
+    <p style="color:#718096; margin-bottom:36px;">
+        The confirmed fault cause has been saved to history.<br>
+        As more labels accumulate, the model can be retrained.
+    </p>
+    <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
+        <a href="{{ url_for('index') }}" class="btn btn-primary">Analyze Another File</a>
+        <a href="{{ url_for('history') }}" class="btn btn-secondary">View History</a>
+    </div>
+</div>
+
+<div class="footer">UIT JBT DFR Fault Classifier</div>
+{% endblock %}

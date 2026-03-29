@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Unggah File COMTRADE{% endblock %}
+
+{% block extra_css %}
+.upload-section { max-width: 680px; margin: 0 auto; }
+.upload-box {
+    border: 3px dashed #cbd5e0; border-radius: 12px;
+    padding: 50px 40px; text-align: center; margin: 24px 0;
+    background: #f7fafc; transition: all 0.3s;
+}
+.upload-box.dragover { border-color: #3b82f6; background: #dbeafe; }
+.file-label {
+    display: inline-block; padding: 10px 20px; background: #3b82f6;
+    color: white; border-radius: 8px; cursor: pointer;
+    font-weight: 600; margin: 8px 4px; transition: all 0.2s;
+}
+.file-label:hover { background: #2563eb; transform: translateY(-2px); }
+.file-input { display: none; }
+.file-info {
+    margin-top: 16px; padding: 14px; background: white;
+    border-radius: 8px; border: 1px solid #e2e8f0;
+}
+.file-name { font-weight: 600; color: #2d3748; margin: 4px 0; }
+.file-size { color: #718096; font-size: 13px; }
+.info-card {
+    background: #eff6ff; border-left: 4px solid #3b82f6;
+    padding: 18px; margin: 18px 0; border-radius: 8px;
+}
+.info-card h3 { color: #1e40af; margin-bottom: 10px; }
+.info-card ul  { margin-left: 20px; color: #1e3a8a; }
+.info-card li  { margin: 7px 0; }
+{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Unggah File COMTRADE</h1>
+    <p>Klasifikasi penyebab gangguan — Rele Jarak SUTT UIT JBT</p>
+</div>
+
+<div class="content">
+    <div class="upload-section">
+        <div class="info-card">
+            <h3>File yang Diperlukan</h3>
+            <ul>
+                <li><strong>.cfg</strong> — file konfigurasi COMTRADE</li>
+                <li><strong>.dat</strong> — file data (nama sama dengan .cfg)</li>
+            </ul>
+            <p style="margin-top:12px; color:#1e3a8a;">
+                Atau gunakan <a href="{{ url_for('browse') }}" style="color:#1e40af; font-weight:600;">Pilih Rekaman</a>
+                untuk memilih langsung dari folder raw_data tanpa perlu unggah.
+            </p>
+        </div>
+
+        <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data">
+            <div class="upload-box" id="dropZone">
+                <div style="font-size:44px; margin-bottom:16px;">📤</div>
+                <h3>Drag &amp; Drop Files Here</h3>
+                <p style="margin:12px 0; color:#718096;">or</p>
+                <label for="cfg_file" class="file-label">Select .cfg</label>
+                <input type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" class="file-input" required>
+                <label for="dat_file" class="file-label">Select .dat</label>
+                <input type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" class="file-input" required>
+            </div>
+
+            <div id="fileInfo" class="file-info" style="display:none;">
+                <div id="cfgInfo"></div>
+                <div id="datInfo"></div>
+            </div>
+
+            <div style="text-align:center; margin-top:28px;">
+                <button type="submit" class="btn btn-primary" id="analyzeBtn" disabled>
+                    ⚡ Analisis Gangguan
+                </button>
+            </div>
+        </form>
+
+        <div class="info-card" style="margin-top:36px;">
+            <h3>Yang dianalisis sistem</h3>
+            <ul>
+                <li><strong>Aturan deterministic (Tier 1)</strong> — KONDUKTOR: perubahan fasa saat AR, gangguan permanen 3 fasa</li>
+                <li><strong>Classifier ML (Tier 2)</strong> — pohon keputusan PETIR: di/dt, arus puncak, rasio i0/i1</li>
+                <li><strong>Fitur yang ditampilkan</strong> — zona, fasa, durasi, jumlah gangguan, hasil AR</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="footer">Sistem Klasifikasi Penyebab Gangguan DFR — UIT JBT | Hanya file rele jarak (DISTANCE)</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const cfgInput  = document.getElementById('cfg_file');
+const datInput  = document.getElementById('dat_file');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const fileInfo  = document.getElementById('fileInfo');
+const cfgInfo   = document.getElementById('cfgInfo');
+const datInfo   = document.getElementById('datInfo');
+const dropZone  = document.getElementById('dropZone');
+
+function fmt(bytes) {
+    const k = 1024, s = ['B','KB','MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + s[i];
+}
+
+function update() {
+    const c = cfgInput.files[0], d = datInput.files[0];
+    if (c || d) fileInfo.style.display = 'block';
+    if (c) cfgInfo.innerHTML = `<div class="file-name">📄 ${c.name}</div><div class="file-size">${fmt(c.size)}</div>`;
+    if (d) datInfo.innerHTML = `<div class="file-name">📊 ${d.name}</div><div class="file-size">${fmt(d.size)}</div>`;
+    analyzeBtn.disabled = !(c && d);
+}
+
+cfgInput.addEventListener('change', update);
+datInput.addEventListener('change', update);
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('dragover');
+    for (let f of e.dataTransfer.files) {
+        const dt = new DataTransfer(); dt.items.add(f);
+        if (f.name.toLowerCase().endsWith('.cfg')) cfgInput.files = dt.files;
+        if (f.name.toLowerCase().endsWith('.dat')) datInput.files = dt.files;
+    }
+    update();
+});
+
+document.getElementById('uploadForm').addEventListener('submit', () => {
+    analyzeBtn.disabled = true;
+    analyzeBtn.innerHTML = '⏳ Analyzing...';
+});
+</script>
+{% endblock %}

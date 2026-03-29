@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Proteksi Belum Didukung{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Rekaman Tidak Dapat Dianalisis</h1>
+    <p>{{ filename }}</p>
+</div>
+
+<div class="content" style="text-align:center; padding: 50px 40px;">
+
+    <div style="font-size:56px; margin-bottom:20px;">⚠️</div>
+
+    <div style="background:#fef3c7; border:2px solid #f59e0b; border-radius:12px;
+                padding:28px 36px; max-width:600px; margin:0 auto 32px; text-align:left;">
+        <h2 style="color:#92400e; margin-bottom:12px; font-size:18px;">
+            {{ reason_title }}
+        </h2>
+        <p style="color:#78350f; line-height:1.7; font-size:15px;">
+            {{ reason_detail }}
+        </p>
+    </div>
+
+    {% if tips %}
+    <div style="background:#eff6ff; border:2px solid #3b82f6; border-radius:12px;
+                padding:20px 28px; max-width:600px; margin:0 auto 32px; text-align:left;">
+        <h3 style="color:#1e40af; margin-bottom:10px; font-size:15px;">Informasi Tambahan</h3>
+        <ul style="color:#1e3a8a; line-height:1.8; padding-left:20px;">
+            {% for tip in tips %}
+            <li>{{ tip }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
+        <a href="{{ url_for('browse') }}" class="btn btn-primary">Pilih Rekaman Lain</a>
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">Unggah File Baru</a>
+    </div>
+</div>
+
+<div class="footer">AI Analisis Gangguan — TFA</div>
+{% endblock %}

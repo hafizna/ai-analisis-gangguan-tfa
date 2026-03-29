@@ -1,0 +1,487 @@
+"""
+Fault Event Detector
+====================
+Detects fault inception point and reclose events from waveform data.
+"""
+
+from dataclasses import dataclass
+from typing import Optional, List
+import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FaultEvent:
+    """Represents a detected fault event."""
+    inception_idx: int           # Sample index of fault start
+    inception_time: float        # Time in seconds
+    clearing_idx: Optional[int]  # Sample index of fault clearing
+    clearing_time: Optional[float]
+    duration_ms: float           # Fault duration in milliseconds
+    detection_method: str        # "current_derivative" or "rms_change" or "status_channel"
+    confidence: float            # 0-1
+    faulted_phases: List[str]    # ["A"], ["A", "B"], etc.
+
+    # Reclose detection
+    reclose_events: List[dict]   # List of {time, success: bool} for each reclose attempt
+
+
+def detect_fault(record) -> Optional[FaultEvent]:
+    """
+    Detect fault inception from waveform data.
+
+    Strategy (try in order):
+    1. Status channels: If trip/pickup channels exist, use their transition times
+    2. Current derivative: Where |dI/dt| exceeds 3x pre-fault max on any phase
+    3. RMS change: Where RMS current changes by >50% in one cycle
+
+    Also detects reclose events:
+    - After fault clearing, look for current returning (breaker reclose)
+    - If current returns and stays stable → successful reclose
+    - If current returns and another fault occurs → failed reclose
+    - Track all reclose attempts with timestamps
+
+    Args:
+        record: ComtradeRecord with waveform data
+
+    Returns:
+        FaultEvent or None if no fault detected
+    """
+
+    # Try status channel detection first
+    fault = _detect_from_status_channels(record)
+    if fault and fault.confidence > 0.7:
+        logger.debug(f"Fault detected from status channels: {fault.inception_time:.4f}s")
+        return fault
+
+    # Fall back to waveform-based detection
+    fault = _detect_from_waveforms(record)
+    if fault:
+        logger.debug(f"Fault detected from waveforms: {fault.inception_time:.4f}s ({fault.detection_method})")
+        return fault
+
+    logger.warning("No fault detected in recording")
+    return None
+
+
+def _extract_phase_from_name(name_upper: str) -> Optional[str]:
+    """Extract faulted phase from channel name (handles ABC and RST notations)."""
+    import re
+    if '(R)' in name_upper: return 'A'
+    if '(S)' in name_upper: return 'B'
+    if '(T)' in name_upper: return 'C'
+    if any(k in name_upper for k in ['PHA FAULT', 'A PHASE FAULT', 'PHASE A FAULT', 'TRIP PHA', 'PHS A', 'TRIP PH A']): return 'A'
+    if any(k in name_upper for k in ['PHB FAULT', 'B PHASE FAULT', 'PHASE B FAULT', 'TRIP PHB', 'PHS B', 'TRIP PH B']): return 'B'
+    if any(k in name_upper for k in ['PHC FAULT', 'C PHASE FAULT', 'PHASE C FAULT', 'TRIP PHC', 'PHS C', 'TRIP PH C']): return 'C'
+    if re.search(r'\bOPRT R\b|\bTRIP R\b|OPRT R$| R$', name_upper): return 'A'
+    if re.search(r'\bOPRT S\b|\bTRIP S\b|OPRT S$| S$', name_upper): return 'B'
+    if re.search(r'\bOPRT T\b|\bTRIP T\b|OPRT T$| T$', name_upper): return 'C'
+    # L1/L2/L3 notation (ABB REL, some Siemens): L1=A, L2=B, L3=C
+    if re.search(r'\bL1\b|L1$| L1[^0-9]', name_upper): return 'A'
+    if re.search(r'\bL2\b|L2$| L2[^0-9]', name_upper): return 'B'
+    if re.search(r'\bL3\b|L3$| L3[^0-9]', name_upper): return 'C'
+
+    # PCS900: PhSA/PhSB/PhSC, TrpA/TrpB/TrpC, DZ1R/DZ1S/DZ1T
+    if name_upper in ('PHSA',) or 'TRPA' in name_upper: return 'A'
+    if name_upper in ('PHSB',) or 'TRPB' in name_upper: return 'B'
+    if name_upper in ('PHSC',) or 'TRPC' in name_upper: return 'C'
+    if re.search(r'DZ\d+R$', name_upper): return 'A'
+    if re.search(r'DZ\d+S$', name_upper): return 'B'
+    if re.search(r'DZ\d+T$', name_upper): return 'C'
+
+    if name_upper.endswith(' A'): return 'A'
+    if name_upper.endswith(' B'): return 'B'
+    if name_upper.endswith(' C'): return 'C'
+    return None
+
+
+def _detect_from_status_channels(record) -> Optional[FaultEvent]:
+    """
+    Detect fault inception from status channel transitions.
+
+    Look for channels like:
+    - "Trip", "Operate", "Pickup", "Start"
+    - Find the first transition from 0 to 1
+
+    Returns:
+        FaultEvent or None
+    """
+
+    # Keywords that indicate a protection operate/trip — expanded for all naming conventions.
+    # NOTE: 'START' and 'STARTUP' are intentionally excluded — they are pickup/pre-trip
+    # indicators (e.g. "Relay Startup", "B Phase Startup") that may not have a clearing edge.
+    TRIP_KEYWORDS = [
+        'TRIP', 'OPERATE', 'OPRT', 'PICKUP',
+        'LP OPRT',      # External DFR Indonesian: "LP OPRT R WTS2"
+        'MPU MAIN',     # External DFR: "MPU MAIN 1 TRIP (S) UNGARAN 1"
+        'CB1.TRP',      # PCS900 Siemens: "CB1.TrpA/B/C"
+        '.OP',          # PCS900: "21Q1.Op"
+        'DZ1', 'DZ2',   # PCS900: "DZ1R/S/T"
+        'RELAY TRIP',   # ABB REL: "Relay TRIP L2"
+    ]
+    # Keywords that should NOT trigger fault detection even if they contain TRIP/START
+    EXCLUDE_KEYWORDS = [
+        'RECLOSE', 'CLOSURE', 'A/R', 'AR INPROG', 'INPROGRESS',
+        'CB CLOSE', 'CLOSE CMD',
+        'SEND', 'RCV', 'RECV',
+        'RELAY TEST', 'RELAY BLOCK',
+        'OVERLOAD', 'ALARM',
+        'SUCC', 'FAIL', 'LOCKOUT',
+        'SWITCH SETGRP', 'BLK REM',
+    ]
+
+    best_inception_idx = None
+    best_clearing_idx = None
+    best_channel_name = None
+    faulted_phases = []
+
+    _extract_phase = _extract_phase_from_name
+
+    for ch in record.status_channels:
+        name_upper = ch.name.upper()
+
+        # Skip non-trip channels
+        if any(ex in name_upper for ex in EXCLUDE_KEYWORDS):
+            continue
+
+        is_trip = any(kw in name_upper for kw in TRIP_KEYWORDS)
+        if not is_trip:
+            continue
+
+        if len(ch.samples) < 2:
+            continue
+
+        transitions = np.diff(ch.samples)
+        rising_edges = np.where(transitions > 0)[0]
+
+        if len(rising_edges) == 0:
+            continue
+
+        # Use earliest rising edge across all trip channels
+        first_on = rising_edges[0] + 1
+        if best_inception_idx is None or first_on < best_inception_idx:
+            best_inception_idx = first_on
+            best_channel_name = ch.name
+
+        # For clearing: find the LAST falling edge within 500ms of the first ON for this channel.
+        # This handles external DFR contact bounce (multiple brief pulses = one sustained event).
+        falling_edges = np.where(transitions < 0)[0]
+        later_falls = falling_edges[falling_edges >= rising_edges[0]]
+        if len(later_falls) > 0:
+            # Cap search window at 500ms after inception
+            t_inception = record.time[first_on]
+            within_window = [
+                fi for fi in later_falls
+                if fi + 1 < len(record.time) and record.time[fi + 1] - t_inception <= 0.5
+            ]
+            last_fall = within_window[-1] if within_window else later_falls[0]
+            ch_clearing = last_fall + 1
+        else:
+            ch_clearing = None
+
+        # Keep the clearing from the channel with the latest clearing time
+        # (gives us the full fault duration across all trip channels)
+        if ch_clearing is not None:
+            if best_clearing_idx is None or ch_clearing > best_clearing_idx:
+                best_clearing_idx = ch_clearing
+
+        # Collect faulted phases from this channel
+        if _extract_phase:
+            ph = _extract_phase(name_upper)
+            if ph and ph not in faulted_phases:
+                faulted_phases.append(ph)
+
+    if best_inception_idx is None:
+        return None
+
+    inception_time = record.time[best_inception_idx] if best_inception_idx < len(record.time) else 0.0
+    clearing_time = (record.time[best_clearing_idx]
+                     if best_clearing_idx and best_clearing_idx < len(record.time) else None)
+    duration_ms = (clearing_time - inception_time) * 1000 if clearing_time else 0.0
+
+    reclose_events = _detect_reclose_from_status(record, best_inception_idx)
+
+    logger.debug(f"Fault detected from status channel '{best_channel_name}': "
+                 f"inception={inception_time:.4f}s dur={duration_ms:.1f}ms phases={faulted_phases}")
+
+    return FaultEvent(
+        inception_idx=best_inception_idx,
+        inception_time=inception_time,
+        clearing_idx=best_clearing_idx,
+        clearing_time=clearing_time,
+        duration_ms=duration_ms,
+        detection_method="status_channel",
+        confidence=0.9,
+        faulted_phases=faulted_phases,
+        reclose_events=reclose_events
+    )
+
+
+def _detect_from_waveforms(record) -> Optional[FaultEvent]:
+    """
+    Detect fault inception from current waveforms.
+
+    Uses current derivative (dI/dt) method:
+    1. Calculate dI/dt for each phase
+    2. Find where |dI/dt| exceeds threshold (3x pre-fault max)
+    3. Use earliest detection across all phases
+    """
+
+    # Get current channels
+    ia = next((ch for ch in record.analog_channels if ch.canonical_name == 'IA' and ch.measurement == 'current'), None)
+    ib = next((ch for ch in record.analog_channels if ch.canonical_name == 'IB' and ch.measurement == 'current'), None)
+    ic = next((ch for ch in record.analog_channels if ch.canonical_name == 'IC' and ch.measurement == 'current'), None)
+
+    if not (ia and ib and ic):
+        logger.warning("Cannot detect fault: missing phase currents")
+        return None
+
+    if len(ia.samples) == 0 or len(record.time) == 0:
+        logger.warning("Cannot detect fault: no samples")
+        return None
+
+    # Calculate sampling interval
+    if len(record.time) > 1:
+        dt = record.time[1] - record.time[0]
+    else:
+        logger.warning("Cannot detect fault: insufficient time samples")
+        return None
+
+    # Calculate dI/dt for each phase
+    di_dt_a = np.gradient(ia.samples, dt)
+    di_dt_b = np.gradient(ib.samples, dt)
+    di_dt_c = np.gradient(ic.samples, dt)
+
+    # Pre-fault baseline: cap at 50ms to avoid swallowing the fault in long recordings.
+    # Long external DFR recordings (e.g. 2.4s) with fault at 128ms would otherwise
+    # include the fault in the 10% baseline window and make the threshold too high.
+    max_prefault_ms = 50.0  # ms
+    max_prefault_samples = max(10, int(max_prefault_ms / 1000.0 / dt))
+    prefault_length = min(int(len(ia.samples) * 0.1), max_prefault_samples)
+    if prefault_length < 10:
+        prefault_length = min(10, len(ia.samples) // 2)
+
+    # Calculate pre-fault threshold
+    prefault_di_dt_max_a = np.max(np.abs(di_dt_a[:prefault_length]))
+    prefault_di_dt_max_b = np.max(np.abs(di_dt_b[:prefault_length]))
+    prefault_di_dt_max_c = np.max(np.abs(di_dt_c[:prefault_length]))
+
+    threshold_a = 3.0 * prefault_di_dt_max_a if prefault_di_dt_max_a > 0 else 1000.0
+    threshold_b = 3.0 * prefault_di_dt_max_b if prefault_di_dt_max_b > 0 else 1000.0
+    threshold_c = 3.0 * prefault_di_dt_max_c if prefault_di_dt_max_c > 0 else 1000.0
+
+    # Find where dI/dt exceeds threshold
+    fault_candidates_a = np.where(np.abs(di_dt_a) > threshold_a)[0]
+    fault_candidates_b = np.where(np.abs(di_dt_b) > threshold_b)[0]
+    fault_candidates_c = np.where(np.abs(di_dt_c) > threshold_c)[0]
+
+    # Combine all candidates and find earliest
+    all_candidates = np.concatenate([fault_candidates_a, fault_candidates_b, fault_candidates_c])
+
+    if len(all_candidates) == 0:
+        logger.warning("No fault detected: dI/dt never exceeded threshold")
+        return None
+
+    inception_idx = int(np.min(all_candidates))
+    inception_time = record.time[inception_idx]
+
+    # Determine which phases faulted
+    faulted_phases = []
+    if len(fault_candidates_a) > 0 and fault_candidates_a[0] <= inception_idx + 5:
+        faulted_phases.append('A')
+    if len(fault_candidates_b) > 0 and fault_candidates_b[0] <= inception_idx + 5:
+        faulted_phases.append('B')
+    if len(fault_candidates_c) > 0 and fault_candidates_c[0] <= inception_idx + 5:
+        faulted_phases.append('C')
+
+    # Detect clearing (when current drops back to pre-fault levels)
+    clearing_idx = _detect_fault_clearing(ia, ib, ic, inception_idx, prefault_length)
+    clearing_time = record.time[clearing_idx] if clearing_idx and clearing_idx < len(record.time) else None
+
+    duration_ms = (clearing_time - inception_time) * 1000 if clearing_time else 0.0
+
+    # Detect reclose events
+    reclose_events = _detect_reclose_from_waveforms(ia, ib, ic, record.time, clearing_idx) if clearing_idx else []
+
+    return FaultEvent(
+        inception_idx=inception_idx,
+        inception_time=inception_time,
+        clearing_idx=clearing_idx,
+        clearing_time=clearing_time,
+        duration_ms=duration_ms,
+        detection_method="current_derivative",
+        confidence=0.8,
+        faulted_phases=faulted_phases,
+        reclose_events=reclose_events
+    )
+
+
+def _detect_fault_clearing(ia, ib, ic, inception_idx, prefault_length):
+    """Detect when fault current returns to pre-fault levels."""
+
+    # Calculate pre-fault RMS
+    prefault_rms_a = np.sqrt(np.mean(ia.samples[:prefault_length]**2))
+    prefault_rms_b = np.sqrt(np.mean(ib.samples[:prefault_length]**2))
+    prefault_rms_c = np.sqrt(np.mean(ic.samples[:prefault_length]**2))
+
+    # Look for when current drops back to ~1.5x pre-fault levels
+    # (allowing some margin for transients)
+    threshold_a = prefault_rms_a * 1.5
+    threshold_b = prefault_rms_b * 1.5
+    threshold_c = prefault_rms_c * 1.5
+
+    # Search from inception forward
+    for i in range(inception_idx + 10, len(ia.samples)):
+        # Check instantaneous current
+        if (np.abs(ia.samples[i]) < threshold_a and
+            np.abs(ib.samples[i]) < threshold_b and
+            np.abs(ic.samples[i]) < threshold_c):
+            # Verify it stays low for at least 5 samples
+            if i + 5 < len(ia.samples):
+                window = slice(i, i+5)
+                if (np.all(np.abs(ia.samples[window]) < threshold_a) and
+                    np.all(np.abs(ib.samples[window]) < threshold_b) and
+                    np.all(np.abs(ic.samples[window]) < threshold_c)):
+                    return i
+
+    return None
+
+
+def _detect_reclose_from_status(record, inception_idx):
+    """
+    Detect reclose events and their outcome from status channels.
+
+    Success determined by:
+    - AR Succ / AR Success channel active → True
+    - CB Close command issued (BO CB CLOSE) → True
+    - AR Fail / AR Lockout / AR Final Trip / 79 Final Trip → False
+    - AR in progress but recording ends before completion → None (truncated)
+    """
+    reclose_events = []
+
+    AR_ATTEMPT_KW  = ['RECLOSE', 'CLOSURE', 'A/R', 'AR ', 'AR INPROG', 'INPROGRESS',
+                      '1P TRIP INIT', '3P TRIP INIT', 'AR 1POLE', '1POLE IN PROG', 'A/R OPRT']
+    AR_SUCCESS_KW  = ['AR SUCC', 'RECLOSE SUCC', 'CB CLOSE', 'BO14', 'BO13', 'SYN MEET', 'VOL MEET']
+    AR_FAILURE_KW  = ['AR FAIL', 'AR LOCKOUT', 'AR FINAL', '79 FINAL', 'FINAL TRIP', 'TOR', 'TRIP ON RECLOSE']
+    POLE_DEAD_KW   = ['POLE DEAD', 'ANY POLE', 'ALL POLE']
+
+    # Pre-scan: collect success/failure evidence
+    success_times = []
+    failure_times = []
+    for ch in record.status_channels:
+        name_upper = ch.name.upper()
+        transitions = np.diff(ch.samples)
+        rising = np.where(transitions > 0)[0]
+        if len(rising) == 0:
+            continue
+        for edge in rising:
+            t = record.time[edge + 1] if edge + 1 < len(record.time) else record.time[-1]
+            if edge > inception_idx:
+                if any(k in name_upper for k in AR_SUCCESS_KW):
+                    success_times.append(t)
+                if any(k in name_upper for k in AR_FAILURE_KW):
+                    failure_times.append(t)
+
+    # Detect AR attempts and assign success/failure
+    seen_reclose_times = set()
+    for ch in record.status_channels:
+        name_upper = ch.name.upper()
+        if not any(kw in name_upper for kw in AR_ATTEMPT_KW):
+            continue
+
+        transitions = np.diff(ch.samples)
+        rising_edges = np.where(transitions > 0)[0]
+
+        for edge_idx in rising_edges:
+            if edge_idx <= inception_idx:
+                continue
+            reclose_time = record.time[edge_idx + 1] if edge_idx + 1 < len(record.time) else record.time[-1]
+
+            t_key = round(float(reclose_time) * 100)
+            if t_key in seen_reclose_times:
+                continue
+            seen_reclose_times.add(t_key)
+
+            success = None
+            if any(st > reclose_time - 0.05 for st in failure_times):
+                success = False
+            elif any(st > reclose_time - 0.05 for st in success_times):
+                success = True
+
+            reclose_events.append({'time': reclose_time, 'success': success})
+
+    # "Any/All Pole Dead" falling edge (1→0) after inception = CB reclosed
+    for ch in record.status_channels:
+        name_upper = ch.name.upper()
+        if not any(k in name_upper for k in POLE_DEAD_KW):
+            continue
+        transitions = np.diff(ch.samples)
+        rising_edges = np.where(transitions > 0)[0]
+        falling_edges = np.where(transitions < 0)[0]
+        # Must have both a rising (CB opened) and falling (CB reclosed) after inception
+        post_rise = rising_edges[rising_edges > inception_idx]
+        if len(post_rise) == 0:
+            continue
+        post_fall = falling_edges[falling_edges > post_rise[0]]
+        for edge_idx in post_fall:
+            reclose_time = record.time[edge_idx + 1] if edge_idx + 1 < len(record.time) else record.time[-1]
+            t_key = round(float(reclose_time) * 100)
+            if t_key in seen_reclose_times:
+                continue
+            seen_reclose_times.add(t_key)
+            # Falling edge of pole-dead = CB closed = successful reclose (no fault recurrence)
+            success = True
+            if any(ft > reclose_time and ft < reclose_time + 0.3 for ft in failure_times):
+                success = False
+            reclose_events.append({'time': reclose_time, 'success': success})
+
+    return reclose_events
+
+
+def _detect_reclose_from_waveforms(ia, ib, ic, time, clearing_idx):
+    """
+    Detect reclose events from current waveforms.
+
+    After clearing, look for:
+    1. Current returning (breaker reclose)
+    2. If current returns and stays stable → successful reclose
+    3. If current returns and another fault spike → failed reclose
+    """
+    reclose_events = []
+
+    if clearing_idx is None or clearing_idx >= len(ia.samples) - 100:
+        return reclose_events
+
+    # Calculate post-clearing baseline
+    post_clear_window = slice(clearing_idx, min(clearing_idx + 50, len(ia.samples)))
+    baseline_rms_a = np.sqrt(np.mean(ia.samples[post_clear_window]**2))
+    baseline_rms_b = np.sqrt(np.mean(ib.samples[post_clear_window]**2))
+    baseline_rms_c = np.sqrt(np.mean(ic.samples[post_clear_window]**2))
+
+    # Look for current returning (load current)
+    for i in range(clearing_idx + 50, len(ia.samples)):
+        rms_a = np.sqrt(np.mean(ia.samples[max(0, i-10):i]**2))
+        rms_b = np.sqrt(np.mean(ib.samples[max(0, i-10):i]**2))
+        rms_c = np.sqrt(np.mean(ic.samples[max(0, i-10):i]**2))
+
+        # If current increased significantly from dead time
+        if (rms_a > baseline_rms_a * 2 or rms_b > baseline_rms_b * 2 or rms_c > baseline_rms_c * 2):
+            reclose_time = time[i]
+
+            # Check if fault re-occurs (current spikes again)
+            if i + 50 < len(ia.samples):
+                future_max_a = np.max(np.abs(ia.samples[i:i+50]))
+                future_max_b = np.max(np.abs(ib.samples[i:i+50]))
+                future_max_c = np.max(np.abs(ic.samples[i:i+50]))
+
+                # If future current is very high → failed reclose
+                success = not (future_max_a > rms_a * 5 or future_max_b > rms_b * 5 or future_max_c > rms_c * 5)
+            else:
+                success = True  # Assume successful if recording ends soon after
+
+            reclose_events.append({'time': reclose_time, 'success': success})
+            break  # Only detect first reclose
+
+    return reclose_events

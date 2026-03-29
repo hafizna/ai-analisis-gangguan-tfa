@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+
+{% block extra_css %}
+.stats-row {
+    display: flex; gap: 16px; margin-bottom: 28px; flex-wrap: wrap;
+}
+.stat-card {
+    background: #eff6ff; border-radius: 10px;
+    padding: 18px 24px; flex: 1; min-width: 140px; text-align: center;
+}
+.stat-value { font-size: 32px; font-weight: 800; color: #1e3a8a; }
+.stat-label { font-size: 13px; color: #6b7280; margin-top: 4px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+    background: #1e3a8a; color: white;
+    padding: 10px 12px; text-align: left; font-weight: 600;
+}
+td { padding: 9px 12px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+tr:hover td { background: #f8fafc; }
+
+.badge {
+    display: inline-block; padding: 2px 9px; border-radius: 12px;
+    font-size: 12px; font-weight: 700;
+}
+.badge-petir      { background: #fef9c3; color: #854d0e; }
+.badge-konduktor  { background: #fee2e2; color: #991b1b; }
+.badge-unknown    { background: #f3f4f6; color: #6b7280; }
+.badge-other      { background: #e0e7ff; color: #3730a3; }
+
+.correct-yes { color: #10b981; font-weight: 700; }
+.correct-no  { color: #ef4444; font-weight: 700; }
+
+.tier-1 { background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.tier-2 { background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Prediction History</h1>
+    <p>All confirmed analyses — newest first</p>
+</div>
+
+<div class="content">
+
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-value">{{ total }}</div>
+            <div class="stat-label">Total Analyzed</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ correct }}</div>
+            <div class="stat-label">Correct Predictions</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ accuracy }}%</div>
+            <div class="stat-label">Accuracy</div>
+        </div>
+    </div>
+
+    {% if rows %}
+    <div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Station</th>
+                <th>File</th>
+                <th>Predicted</th>
+                <th>Confirmed</th>
+                <th>OK?</th>
+                <th>Tier</th>
+                <th>Zone</th>
+                <th>Phases</th>
+                <th>Dur (ms)</th>
+                <th>Reclose</th>
+                <th>Conf</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+        {% set lbl = r.predicted_label | upper %}
+        {% if lbl == 'PETIR' %}{% set bc = 'badge-petir' %}
+        {% elif lbl == 'KONDUKTOR' %}{% set bc = 'badge-konduktor' %}
+        {% elif lbl == 'UNKNOWN' or lbl == 'PERMANENT_UNKNOWN' %}{% set bc = 'badge-unknown' %}
+        {% else %}{% set bc = 'badge-other' %}{% endif %}
+        <tr>
+            <td style="white-space:nowrap;">{{ r.timestamp }}</td>
+            <td>{{ r.station }}</td>
+            <td style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                title="{{ r.filename }}">{{ r.filename }}</td>
+            <td><span class="badge {{ bc }}">{{ r.predicted_label }}</span></td>
+            <td>{{ r.confirmed_label }}</td>
+            <td>
+                {% if r.correct == 'True' %}
+                    <span class="correct-yes">✓</span>
+                {% else %}
+                    <span class="correct-no">✗</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if r.tier == '1' %}<span class="tier-1">Rule</span>
+                {% else %}<span class="tier-2">ML</span>{% endif %}
+            </td>
+            <td>{{ r.zone }}</td>
+            <td>{{ r.phases }}</td>
+            <td>{{ r.duration_ms | float | round(0) | int }}</td>
+            <td>{{ r.reclose_ok }}</td>
+            <td>{{ (r.predicted_conf | float * 100) | round(0) | int }}%</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div style="text-align:center; padding:60px; color:#9ca3af;">
+        <div style="font-size:48px; margin-bottom:16px;">📋</div>
+        <p>No analyses confirmed yet. Upload and analyze a COMTRADE file to get started.</p>
+    </div>
+    {% endif %}
+
+    <div style="margin-top:24px;">
+        <a href="{{ url_for('index') }}" class="btn btn-primary">Analyze New File</a>
+    </div>
+</div>
+
+<div class="footer">UIT JBT DFR Fault Classifier — History</div>
+{% endblock %}
