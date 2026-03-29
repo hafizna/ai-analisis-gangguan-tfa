@@ -152,27 +152,22 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         pred = clf.predict(X)[0]
         proba = clf.predict_proba(X)[0]
 
-        if pred == 1:   # PETIR
+        if pred == 1:   # PETIR / transient
             confidence = float(proba[1])
-            # Low-confidence PETIR: could be HEWAN/BENDA ASING with similar waveform
-            if confidence < 0.85:
-                label_out = "PETIR (TRANSIEN) — KONFIRMASI DIPERLUKAN"
-                caveat = (f"Konfidensitas rendah ({confidence:.0%}) — "
-                          "HEWAN atau BENDA ASING dapat memiliki karakteristik serupa. "
-                          "Periksa rekaman dan konfirmasi secara manual.")
-            else:
-                label_out = "PETIR (TRANSIEN)"
-                caveat = "gangguan transien, AR berhasil, tidak perlu crew lapangan."
             return ClassificationResult(
-                label=label_out,
+                label="GANGGUAN TRANSIEN",
                 confidence=confidence,
                 tier=2,
                 rule_name="petir_decision_tree",
                 evidence=(
-                    f"Classifier ML: probabilitas PETIR={confidence:.0%}  "
+                    f"Classifier ML: pola transien terdeteksi (prob={confidence:.0%})  "
                     f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
                     f"fault_count={row.get('fault_count', '?')}  "
-                    f"i0/i1={row.get('i0_i1_ratio', 0):.2f}  — {caveat}"
+                    f"i0/i1={row.get('i0_i1_ratio', 0):.2f}  — "
+                    f"Kemungkinan penyebab: PETIR / Benda Asing / Layang-Layang / Hewan. "
+                    f"Karakteristik gelombang ketiga penyebab ini serupa sehingga tidak dapat "
+                    f"dibedakan dari rekaman DFR saja. Konfirmasi berdasarkan data cuaca "
+                    f"atau inspeksi lapangan jika diperlukan."
                     + _unknown_prot_caveat
                 ),
                 features=row,

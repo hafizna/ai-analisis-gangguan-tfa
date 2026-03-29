@@ -219,7 +219,7 @@ def run():
             # Simple check: predicted contains folder label keyword
             correct = labeled.apply(
                 lambda r: r["folder_label"].upper() in r["predicted_label"].upper()
-                          or ("PETIR" in r["predicted_label"] and r["folder_label"] == "PETIR"),
+                          or ("TRANSIEN" in r["predicted_label"] and r["folder_label"] == "PETIR"),
                 axis=1
             ).sum()
             print(f"\nPada {len(labeled)} file berlabel:")
