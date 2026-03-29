@@ -1,34 +1,31 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-*.pyd
 .Python
 *.egg-info/
-dist/
-build/
 
-# Virtual environment
+# Virtual environments
 venv/
 env/
 .venv/
 
-# Raw data — too large for git (keep on local machine only)
-../raw_data/
-../archive/
-../cases/
+# Generated output — not needed for running the app
+data/predictions/
+data/features/
+data/labels/
 
-# Uploaded files (temp, per-session)
-webapp/uploads/
-webapp/history.csv
+# Temp / debug files
+temp_labeled_paths.txt
+extraction_summary.txt
+test_batch_results.csv
+test_retraining_labels.csv
+*.png
+
+# Docs (not needed for deployment)
+*.md
 
 # OS
 .DS_Store
 Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-
-# Claude
-../.claude/
+webapp/history.csv

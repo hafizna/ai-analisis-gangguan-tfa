@@ -21,18 +21,18 @@
         "VA": ["UL1", "V_A", "VA", "U_L1", "UL1E"],
         "VB": ["UL2", "V_B", "VB", "U_L2", "UL2E"],
         "VC": ["UL3", "V_C", "VC", "U_L3", "UL3E"],
-        "VN": ["U0", "VN", "V_N", "U_E", "UE", "3U0"]
+        "VN": ["U0", "VN", "V_N", "U_E", "UE", "3U0", "UN"]
       }
     },
     "SIEMENS": {
       "channel_patterns": {
-        "IA": ["IA", "I PHASE A", "IL1", "I_PH_A"],
-        "IB": ["IB", "I PHASE B", "IL2", "I_PH_B"],
-        "IC": ["IC", "I PHASE C", "IL3", "I_PH_C"],
+        "IA": ["IA", "I PHASE A", "IL1", "I_PH_A", "I A"],
+        "IB": ["IB", "I PHASE B", "IL2", "I_PH_B", "I B"],
+        "IC": ["IC", "I PHASE C", "IL3", "I_PH_C", "I C"],
         "IN": ["IE", "IN", "3I0", "I_E"],
-        "VA": ["UA", "VA", "V PHASE A", "UL1"],
-        "VB": ["UB", "VB", "V PHASE B", "UL2"],
-        "VC": ["UC", "VC", "V PHASE C", "UL3"],
+        "VA": ["UA", "VA", "V PHASE A", "UL1", "V A"],
+        "VB": ["UB", "VB", "V PHASE B", "UL2", "V B"],
+        "VC": ["UC", "VC", "V PHASE C", "UL3", "V C"],
         "VN": ["UE", "VN", "3U0", "U_E"]
       }
     },

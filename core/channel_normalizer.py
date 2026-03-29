@@ -106,7 +106,9 @@ def normalize_channel_name(raw_name: str, unit: str, manufacturer: str = "UNKNOW
 
     for canonical, patterns in manufacturer_patterns.items():
         for pattern in patterns:
-            if pattern.upper() == raw_upper or pattern.upper() in raw_upper:
+            pat_upper = pattern.upper()
+            # Use word-boundary match to avoid false substring hits (e.g. "IN" inside "LINE")
+            if pat_upper == raw_upper or re.search(r'\b' + re.escape(pat_upper) + r'\b', raw_upper):
                 # Extract phase from canonical name
                 phase = canonical[-1] if canonical[-1] in "ABCN" else None
                 logger.debug(f"Matched '{raw_name}' → '{canonical}' (manufacturer: {manufacturer})")
@@ -144,46 +146,52 @@ def _generic_pattern_match(raw_upper: str, measurement: str) -> tuple:
     Returns:
         (canonical_name, phase) tuple
     """
-    # RST phase notation (R=A, S=B, T=C) - check first to avoid confusion with VR (voltage regulator)
-    # Need to be careful: VR could mean "phase R voltage" OR "voltage regulator"
-    # Check word boundaries to distinguish
-    words = raw_upper.split()
-    if "VR" in words or raw_upper.startswith("VR ") or " VR" in raw_upper:
-        return ("VA", "A")  # VR maps to VA (phase R = phase A)
-    if "VS" in words or raw_upper.startswith("VS ") or " VS" in raw_upper:
-        return ("VB", "B")  # VS maps to VB (phase S = phase B)
-    if "VT" in words or raw_upper.startswith("VT ") or " VT" in raw_upper:
-        return ("VC", "C")  # VT maps to VC (phase T = phase C)
-    if "IR" in words or raw_upper.startswith("IR ") or " IR" in raw_upper:
-        return ("IA", "A")  # IR maps to IA (phase R = phase A)
-    if "IS" in words or raw_upper.startswith("IS ") or " IS" in raw_upper:
-        return ("IB", "B")  # IS maps to IB (phase S = phase B)
-    if "IT" in words or raw_upper.startswith("IT ") or " IT" in raw_upper:
-        return ("IC", "C")  # IT maps to IC (phase T = phase C)
+    # Token-aware matching avoids false positives like "IN" in "LINE_A_IL1".
+    tokens = set(re.findall(r"[A-Z0-9]+", raw_upper))
 
-    # Neutral/residual patterns - check first to avoid false matches with phase patterns
-    # (e.g., "IN" could be mistaken for "IC" if phase C is checked first)
-    if measurement == "voltage" and any(p in raw_upper for p in ["VN", "V0", "3V0", "V_N", "V_RES", "RESVOL", "VG", "UE", "U0"]):
-        return ("VN", "N")
-    if measurement == "current" and any(p in raw_upper for p in ["IN", "I0", "3I0", "I_N", "I_RES", "RESCUR", "IG", "IE"]):
-        return ("IN", "N")
+    def has_token(*candidates: str) -> bool:
+        return any(c in tokens for c in candidates)
 
-    # Phase A patterns (ABC notation)
-    if any(p in raw_upper for p in ["VA", "V_A", "V1", "VPHSA", "V PHASE A", "V A", "UL1", "UA"]):
+    def has_substr(*candidates: str) -> bool:
+        return any(c in raw_upper for c in candidates)
+
+    # Neutral/residual patterns first, but token-aware (prevents LINE -> IN mistakes).
+    if measurement == "voltage":
+        if has_token("VN", "V0", "3V0", "VG", "UE", "U0", "UN") or has_substr("V_N", "V_RES", "RESVOL"):
+            return ("VN", "N")
+    if measurement == "current":
+        if has_token("IN", "I0", "3I0", "IG", "IE") or has_substr("I_N", "I_RES", "RESCUR"):
+            return ("IN", "N")
+
+    # Explicit CT/VT R/S/T naming used in several PLN records.
+    if measurement == "voltage":
+        if re.search(r"\b(VT|V|U)\s*R\b", raw_upper):
+            return ("VA", "A")
+        if re.search(r"\b(VT|V|U)\s*S\b", raw_upper):
+            return ("VB", "B")
+        if re.search(r"\b(VT|V|U)\s*T\b", raw_upper):
+            return ("VC", "C")
+    if measurement == "current":
+        if re.search(r"\b(CT|I)\s*R\b", raw_upper):
+            return ("IA", "A")
+        if re.search(r"\b(CT|I)\s*S\b", raw_upper):
+            return ("IB", "B")
+        if re.search(r"\b(CT|I)\s*T\b", raw_upper):
+            return ("IC", "C")
+
+    # RST and ABC notations. Phase-to-neutral variants (VRN/VAN etc.) map to same phase.
+    if has_token("VR", "UL1", "UA", "VA", "V1", "VRN", "VAN") or has_substr("V_A", "VPHSA", "V PHASE A", "IPHSA"):
         return ("VA", "A")
-    if any(p in raw_upper for p in ["IA", "I_A", "I1", "IL1", "IPHSA", "I PHASE A", "I A"]):
-        return ("IA", "A")
-
-    # Phase B patterns (ABC notation)
-    if any(p in raw_upper for p in ["VB", "V_B", "V2", "VPHSB", "V PHASE B", "V B", "UL2", "UB"]):
+    if has_token("VS", "UL2", "UB", "VB", "V2", "VSN", "VBN") or has_substr("V_B", "VPHSB", "V PHASE B"):
         return ("VB", "B")
-    if any(p in raw_upper for p in ["IB", "I_B", "I2", "IL2", "IPHSB", "I PHASE B", "I B"]):
-        return ("IB", "B")
-
-    # Phase C patterns (ABC notation)
-    if any(p in raw_upper for p in ["VC", "V_C", "V3", "VPHSC", "V PHASE C", "V C", "UL3", "UC"]):
+    if has_token("VT", "UL3", "UC", "VC", "V3", "VTN", "VCN") or has_substr("V_C", "VPHSC", "V PHASE C"):
         return ("VC", "C")
-    if any(p in raw_upper for p in ["IC", "I_C", "I3", "IL3", "IPHSC", "I PHASE C", "I C"]):
+
+    if has_token("IR", "IL1", "IA", "I1", "IRN", "IAN") or has_substr("I_A", "I PHASE A"):
+        return ("IA", "A")
+    if has_token("IS", "IL2", "IB", "I2", "ISN", "IBN") or has_substr("I_B", "I PHASE B"):
+        return ("IB", "B")
+    if has_token("IT", "IL3", "IC", "I3", "ITN", "ICN") or has_substr("I_C", "I PHASE C"):
         return ("IC", "C")
 
     return (None, None)
