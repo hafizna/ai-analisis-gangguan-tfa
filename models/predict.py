@@ -50,6 +50,66 @@ from models.train import FEATURE_COLS, encode_reclose
 MODEL_PATH = Path(__file__).parent / "petir_tree.pkl"
 
 
+def _transient_cause_likelihoods(row: dict) -> str:
+    """
+    Rule-based heuristic to estimate likelihood of each transient cause.
+    Returns a formatted string like: PETIR 55% | Layang 25% | Hewan 12% | ...
+
+    Based on domain knowledge of power system protection behaviour.
+    NOT a trained model — do not interpret as statistically rigorous.
+    """
+    dur   = float(row.get("fault_duration_ms", 80) or 80)
+    fc    = int(row.get("fault_count", 1) or 1)
+    i0i1  = float(row.get("i0_i1_ratio", 0) or 0)
+    peak  = float(row.get("peak_current_a", 0) or 0)
+    reclose_ok = row.get("reclose_ok", None)
+
+    scores = {"PETIR": 3.0, "Layang-Layang": 1.0, "Hewan": 1.0,
+              "Benda Asing": 1.0, "Pohon": 0.5}
+
+    # ── PETIR: short arc, high current, single event ─────────────────────────
+    if dur < 60:   scores["PETIR"] *= 2.0
+    elif dur < 100: scores["PETIR"] *= 1.4
+    elif dur > 400: scores["PETIR"] *= 0.3
+
+    if peak > 10000: scores["PETIR"] *= 2.0
+    elif peak > 5000: scores["PETIR"] *= 1.5
+    elif 0 < peak < 500: scores["PETIR"] *= 0.6
+
+    if fc == 1: scores["PETIR"] *= 1.3
+    elif fc > 3: scores["PETIR"] *= 0.4
+
+    # ── Layang-Layang: kite swings back → multiple sub-faults, medium dur ────
+    if fc >= 3: scores["Layang-Layang"] *= 3.0
+    elif fc == 2: scores["Layang-Layang"] *= 1.8
+
+    if 50 <= dur <= 350: scores["Layang-Layang"] *= 1.5
+    elif dur < 30 or dur > 600: scores["Layang-Layang"] *= 0.4
+
+    # ── Hewan: brief single-phase contact, moderate current ──────────────────
+    if dur < 100 and i0i1 > 0.8: scores["Hewan"] *= 2.5
+    elif i0i1 > 0.5: scores["Hewan"] *= 1.4
+
+    if fc == 1: scores["Hewan"] *= 1.3
+    if 0 < peak < 4000: scores["Hewan"] *= 1.4
+    elif peak > 10000: scores["Hewan"] *= 0.3
+
+    # ── Benda Asing: foreign object, often multiple events ───────────────────
+    if fc >= 2: scores["Benda Asing"] *= 2.0
+    if 80 <= dur <= 500: scores["Benda Asing"] *= 1.4
+
+    # ── Pohon: branch contact — longer duration, may fail reclose ────────────
+    if dur > 300: scores["Pohon"] *= 2.5
+    if dur > 600: scores["Pohon"] *= 2.0
+    if fc > 2: scores["Pohon"] *= 1.8
+    if reclose_ok is False: scores["Pohon"] *= 2.0
+    if peak > 8000: scores["Pohon"] *= 0.3   # tree rarely causes extreme currents
+
+    total = sum(scores.values())
+    parts = sorted(scores.items(), key=lambda x: -x[1])
+    return "  |  ".join(f"{k} {v/total*100:.0f}%" for k, v in parts)
+
+
 @dataclass
 class ClassificationResult:
     label: str
@@ -152,8 +212,9 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         pred = clf.predict(X)[0]
         proba = clf.predict_proba(X)[0]
 
-        if pred == 1:   # PETIR / transient
+        if pred == 1:   # transient fault
             confidence = float(proba[1])
+            likelihoods = _transient_cause_likelihoods(row)
             return ClassificationResult(
                 label="GANGGUAN TRANSIEN",
                 confidence=confidence,
@@ -163,11 +224,10 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                     f"Classifier ML: pola transien terdeteksi (prob={confidence:.0%})  "
                     f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
                     f"fault_count={row.get('fault_count', '?')}  "
-                    f"i0/i1={row.get('i0_i1_ratio', 0):.2f}  — "
-                    f"Kemungkinan penyebab: PETIR / Benda Asing / Layang-Layang / Hewan. "
-                    f"Karakteristik gelombang ketiga penyebab ini serupa sehingga tidak dapat "
-                    f"dibedakan dari rekaman DFR saja. Konfirmasi berdasarkan data cuaca "
-                    f"atau inspeksi lapangan jika diperlukan."
+                    f"i0/i1={row.get('i0_i1_ratio', 0):.2f}  |  "
+                    f"Estimasi penyebab (heuristik): {likelihoods}  |  "
+                    f"Catatan: karakteristik gelombang PETIR/Layang/Hewan/Benda Asing serupa "
+                    f"— konfirmasi via data cuaca atau inspeksi lapangan."
                     + _unknown_prot_caveat
                 ),
                 features=row,
