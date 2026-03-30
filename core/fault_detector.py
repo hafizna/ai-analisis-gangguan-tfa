@@ -603,3 +603,34 @@ def _detect_reclose_from_waveforms(ia, ib, ic, time, clearing_idx):
             break  # Only detect first reclose
 
     return reclose_events
+
+
+def extract_soe(record, fault_inception_s: float = None) -> list:
+    """
+    Extract Sequence of Events (SOE) from COMTRADE status channels.
+
+    Returns list of dicts sorted by timestamp:
+      { time_s, rel_ms, channel, state }
+    rel_ms is relative to fault_inception_s (negative = pre-fault).
+    If fault_inception_s is None, relative to first event.
+    """
+    events = []
+    for ch in record.status_channels:
+        if len(ch.samples) < 2:
+            continue
+        transitions = np.diff(ch.samples)
+        for idx in np.where(transitions > 0)[0]:
+            t = float(record.time[idx + 1]) if idx + 1 < len(record.time) else float(record.time[-1])
+            events.append({'time_s': t, 'channel': ch.name, 'state': 1})
+        for idx in np.where(transitions < 0)[0]:
+            t = float(record.time[idx + 1]) if idx + 1 < len(record.time) else float(record.time[-1])
+            events.append({'time_s': t, 'channel': ch.name, 'state': 0})
+
+    if not events:
+        return []
+
+    events.sort(key=lambda x: x['time_s'])
+    ref = fault_inception_s if fault_inception_s is not None else events[0]['time_s']
+    for ev in events:
+        ev['rel_ms'] = round((ev['time_s'] - ref) * 1000, 2)
+    return events

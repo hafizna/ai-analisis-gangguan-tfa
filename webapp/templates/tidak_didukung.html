@@ -58,5 +58,33 @@
         <a href="{{ url_for('index') }}" class="btn btn-primary">Unggah File Lain</a>
         <a href="{{ url_for('browse') }}" class="btn btn-outline">Pilih Rekaman</a>
     </div>
+
+    {% if soe %}
+    <div style="margin-top:24px; background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; padding:20px;">
+        <div style="font-size:10px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:var(--text-muted); margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            Urutan Event Digital (SOE) — Data tetap tersedia meski klasifikasi belum didukung
+            <span style="flex:1; height:1px; background:var(--border); display:block;"></span>
+        </div>
+        <div style="max-height:300px; overflow-y:auto;">
+            {% for ev in soe %}
+            <div style="display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.04); font-size:12px;">
+                <span style="color:#475569; width:20px; font-size:10px;">{{ loop.index }}.</span>
+                <span style="color:#60a5fa; font-family:monospace; width:72px; font-size:11px;">
+                    {% if ev.rel_ms >= 0 %}+{{ "%.2f"|format(ev.rel_ms) }}{% else %}{{ "%.2f"|format(ev.rel_ms) }}{% endif %} ms
+                </span>
+                <span style="flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ ev.channel }}">{{ ev.channel }}</span>
+                {% if ev.state == 1 %}
+                    <span style="font-size:10px; font-weight:700; color:#10b981; width:30px; text-align:right;">ON ▲</span>
+                {% else %}
+                    <span style="font-size:10px; font-weight:700; color:#ef4444; width:30px; text-align:right;">OFF ▼</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        <div style="margin-top:10px; font-size:11px; color:var(--text-muted);">
+            {{ soe | length }} event digital terdeteksi. Waktu relatif terhadap deteksi gangguan pertama.
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 # Bootstrap path so we can import pipeline modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.predict import classify_file
+from models.predict import classify_file, extract_soe_from_file
 
 
 def _f(val, default=0):
@@ -124,7 +124,7 @@ def _scan_recordings():
     return events
 
 
-def _render_not_supported(filename: str, error_msg: str):
+def _render_not_supported(filename: str, error_msg: str, soe: list = None, cfg_path: str = None):
     """Render a friendly notification page for unsupported file types."""
     msg = error_msg.lower()
     if "differential" in msg or "diferensial" in msg or "87l" in msg or "diff" in msg:
@@ -161,11 +161,19 @@ def _render_not_supported(filename: str, error_msg: str):
         detail = f"Alasan: {error_msg}"
         tips   = ["Coba file dari rele jarak (distance relay) dengan format COMTRADE standar"]
 
+    # Attempt SOE extraction if not already provided
+    if soe is None and cfg_path:
+        try:
+            soe = extract_soe_from_file(cfg_path)
+        except Exception:
+            soe = []
+
     return render_template("tidak_didukung.html",
                            filename=filename,
                            reason_title=title,
                            reason_detail=detail,
-                           tips=tips)
+                           tips=tips,
+                           soe=soe or [])
 
 
 @app.route("/")
@@ -193,9 +201,9 @@ def upload_files():
     try:
         result = classify_file(str(cfg_path))
     except ValueError as e:
-        return _render_not_supported(cfg_file.filename, str(e))
+        return _render_not_supported(cfg_file.filename, str(e), cfg_path=str(cfg_path))
     except Exception as e:
-        return _render_not_supported(cfg_file.filename, f"Pipeline error: {e}")
+        return _render_not_supported(cfg_file.filename, f"Pipeline error: {e}", cfg_path=str(cfg_path))
 
     feats = result.features
 
@@ -208,18 +216,35 @@ def upload_files():
         "rule_name":      result.rule_name,
         "evidence":       result.evidence,
         "recommendation": result.recommendation,
+        "description":    result.description or "",
+        "cause_pcts":     result.cause_pcts or [],
+        "soe":            result.soe or [],
         # key features for display
         "station_name":         _s(feats.get("station_name")),
         "relay_model":          _s(feats.get("relay_model")),
         "zone_operated":        _s(feats.get("zone_operated")),
         "trip_type":            _s(feats.get("trip_type")),
         "faulted_phases":       _s(feats.get("faulted_phases")),
+        "fault_type":           _s(feats.get("fault_type")),
         "fault_duration_ms":    _f(feats.get("fault_duration_ms")),
+        "fault_inception_ms":   _f(feats.get("fault_inception_ms")),
+        "record_duration_ms":   _f(feats.get("record_duration_ms")),
         "fault_count":          int(feats.get("fault_count") or 0),
         "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
+        "peak_fault_phase":     _s(feats.get("peak_fault_phase")),
         "i0_i1_ratio":          _f(feats.get("i0_i1_ratio")),
+        "i0_magnitude_a":       _f(feats.get("i0_magnitude_a")),
+        "i1_magnitude_a":       _f(feats.get("i1_magnitude_a")),
+        "i2_magnitude_a":       _f(feats.get("i2_magnitude_a")),
         "voltage_sag_depth_pu": _f(feats.get("voltage_sag_depth_pu")),
+        "voltage_sag_phase":    _s(feats.get("voltage_sag_phase")),
+        "v_prefault_v":         _f(feats.get("v_prefault_v")),
+        "v_fault_v":            _f(feats.get("v_fault_v")),
+        "z_magnitude_ohms":     _f(feats.get("z_magnitude_ohms")),
+        "z_angle_degrees":      _f(feats.get("z_angle_degrees")),
+        "r_x_ratio":            _f(feats.get("r_x_ratio")),
         "reclose_successful":   _s(feats.get("reclose_successful")),
+        "reclose_time_ms":      _f(feats.get("reclose_time_ms")),
         "voltage_kv":           _s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui",
         "scaling_ok":           _f(feats.get("peak_fault_current_a", 0)) >= 200.0,
     }
@@ -258,9 +283,9 @@ def analyze_from_browse():
     try:
         result = classify_file(cfg_path)
     except ValueError as e:
-        return _render_not_supported(Path(cfg_path).name, str(e))
+        return _render_not_supported(Path(cfg_path).name, str(e), cfg_path=cfg_path)
     except Exception as e:
-        return _render_not_supported(Path(cfg_path).name, f"Pipeline error: {e}")
+        return _render_not_supported(Path(cfg_path).name, f"Pipeline error: {e}", cfg_path=cfg_path)
 
     feats = result.features
     session["analysis"] = {
@@ -272,17 +297,34 @@ def analyze_from_browse():
         "rule_name":      result.rule_name,
         "evidence":       result.evidence,
         "recommendation": result.recommendation,
+        "description":    result.description or "",
+        "cause_pcts":     result.cause_pcts or [],
+        "soe":            result.soe or [],
         "station_name":         _s(feats.get("station_name")),
         "relay_model":          _s(feats.get("relay_model")),
         "zone_operated":        _s(feats.get("zone_operated")),
         "trip_type":            _s(feats.get("trip_type")),
         "faulted_phases":       _s(feats.get("faulted_phases")),
+        "fault_type":           _s(feats.get("fault_type")),
         "fault_duration_ms":    _f(feats.get("fault_duration_ms")),
+        "fault_inception_ms":   _f(feats.get("fault_inception_ms")),
+        "record_duration_ms":   _f(feats.get("record_duration_ms")),
         "fault_count":          int(feats.get("fault_count") or 0),
         "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
+        "peak_fault_phase":     _s(feats.get("peak_fault_phase")),
         "i0_i1_ratio":          _f(feats.get("i0_i1_ratio")),
+        "i0_magnitude_a":       _f(feats.get("i0_magnitude_a")),
+        "i1_magnitude_a":       _f(feats.get("i1_magnitude_a")),
+        "i2_magnitude_a":       _f(feats.get("i2_magnitude_a")),
         "voltage_sag_depth_pu": _f(feats.get("voltage_sag_depth_pu")),
+        "voltage_sag_phase":    _s(feats.get("voltage_sag_phase")),
+        "v_prefault_v":         _f(feats.get("v_prefault_v")),
+        "v_fault_v":            _f(feats.get("v_fault_v")),
+        "z_magnitude_ohms":     _f(feats.get("z_magnitude_ohms")),
+        "z_angle_degrees":      _f(feats.get("z_angle_degrees")),
+        "r_x_ratio":            _f(feats.get("r_x_ratio")),
         "reclose_successful":   _s(feats.get("reclose_successful")),
+        "reclose_time_ms":      _f(feats.get("reclose_time_ms")),
         "voltage_kv":           _s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui",
         "scaling_ok":           _f(feats.get("peak_fault_current_a", 0)) >= 200.0,
     }

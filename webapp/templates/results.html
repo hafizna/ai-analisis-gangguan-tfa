@@ -5,348 +5,577 @@
 {% block nav_upload %}{% endblock %}
 
 {% block extra_css %}
-/* ── Layout ──────────────────────────────────────────────────── */
+/* ── Layout ─────────────────────────────────────────────────── */
 .results-layout {
     display: grid;
-    grid-template-columns: 300px 1fr;
+    grid-template-columns: 310px 1fr;
     gap: 20px;
     align-items: start;
 }
+.left-panel, .right-panel { display: flex; flex-direction: column; gap: 14px; }
 
-/* ── Left panel ──────────────────────────────────────────────── */
-.left-panel { display: flex; flex-direction: column; gap: 16px; }
-
-.prediction-card {
+/* ── Section cards ───────────────────────────────────────────── */
+.r-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+}
+.r-card-dark {
     background: #0b1120;
     border-radius: 14px;
-    padding: 24px;
-    position: relative;
-    overflow: hidden;
+    padding: 22px;
+    position: relative; overflow: hidden;
 }
-.prediction-card::before {
-    content: '';
-    position: absolute;
-    top: -40px; right: -40px;
-    width: 140px; height: 140px;
-    border-radius: 50%;
-    background: rgba(59,130,246,0.12);
+.r-card-dark::before {
+    content: ''; position: absolute; top: -40px; right: -40px;
+    width: 130px; height: 130px; border-radius: 50%;
+    background: rgba(59,130,246,0.10);
 }
+.r-section-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-muted);
+    margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
+}
+.r-section-label::after {
+    content: ''; flex: 1; height: 1px; background: var(--border);
+}
+
+/* ── Prediction card ─────────────────────────────────────────── */
 .pred-eyebrow {
     font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
-    text-transform: uppercase; color: #475569; margin-bottom: 10px;
+    text-transform: uppercase; color: #475569; margin-bottom: 8px;
 }
-.pred-label {
-    font-size: 26px; font-weight: 800; line-height: 1.2;
-    color: #ffffff; margin-bottom: 6px;
-}
-.pred-sub { font-size: 12px; color: #64748b; margin-bottom: 18px; }
+.pred-label { font-size: 24px; font-weight: 800; color: #fff; margin-bottom: 4px; line-height: 1.2; }
+.pred-sub   { font-size: 12px; color: #64748b; margin-bottom: 16px; }
 
-.conf-bar-wrap { margin-top: 4px; }
-.conf-bar-label {
-    display: flex; justify-content: space-between;
-    font-size: 12px; color: #94a3b8; margin-bottom: 6px;
-}
-.conf-bar {
-    width: 100%; height: 6px; background: #1e293b;
-    border-radius: 3px; overflow: hidden;
-}
-.conf-fill {
-    height: 100%; border-radius: 3px; transition: width 0.6s ease;
-}
+.conf-bar-wrap { margin-bottom: 4px; }
+.conf-bar-label { display: flex; justify-content: space-between; font-size: 12px; color: #94a3b8; margin-bottom: 5px; }
+.conf-bar { width: 100%; height: 5px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+.conf-fill { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
 .conf-high   { background: #10b981; }
 .conf-medium { background: #f59e0b; }
 .conf-low    { background: #ef4444; }
 
 .tier-badge {
     display: inline-flex; align-items: center; gap: 5px;
-    padding: 4px 10px; border-radius: 20px;
-    font-size: 11px; font-weight: 700; margin-top: 14px;
+    padding: 3px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; margin-top: 12px;
 }
 .tier-1 { background: rgba(245,158,11,0.15); color: #f59e0b; }
 .tier-2 { background: rgba(59,130,246,0.15); color: #60a5fa; }
 .tier-0 { background: rgba(100,116,139,0.15); color: #94a3b8; }
+.rule-name { font-size: 10px; color: #334155; margin-top: 6px; }
 
-.wave-card {
-    background: var(--panel-bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
+/* ── Cause likelihood bars ───────────────────────────────────── */
+.cause-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
 }
-.wave-card h4 {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-muted);
-    margin-bottom: 16px;
-}
-.metric-row {
-    display: flex; justify-content: space-between; align-items: baseline;
-    padding: 8px 0; border-bottom: 1px solid var(--border);
-    font-size: 13px;
-}
-.metric-row:last-child { border-bottom: none; }
-.metric-name { color: var(--text-muted); }
-.metric-value { font-weight: 700; color: var(--text); }
+.cause-name { font-size: 12px; color: var(--text); width: 110px; flex-shrink: 0; font-weight: 600; }
+.cause-bar-wrap { flex: 1; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+.cause-bar-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.6s ease; }
+.cause-pct { font-size: 12px; color: #94a3b8; width: 38px; text-align: right; flex-shrink: 0; }
 
-/* ── Right panel ─────────────────────────────────────────────── */
-.right-panel { display: flex; flex-direction: column; gap: 16px; }
+/* ── Fault type + duration ───────────────────────────────────── */
+.fault-type-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: 12px; font-weight: 700; margin-bottom: 6px;
+}
+.ft-slg  { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.ft-dlg  { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.ft-3ph  { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.ft-ll   { background: rgba(100,116,139,0.15);color: #94a3b8; }
+.ft-unk  { background: rgba(100,116,139,0.15);color: #94a3b8; }
 
-.info-strip {
-    display: flex; gap: 8px; flex-wrap: wrap;
+.duration-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+.dur-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: center; }
+.dur-box label { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 4px; }
+.dur-val { font-size: 16px; font-weight: 800; color: var(--text); }
+.dur-unit { font-size: 10px; color: var(--text-muted); }
+.dur-badge {
+    display: inline-block; font-size: 9px; font-weight: 700;
+    padding: 1px 6px; border-radius: 10px; margin-top: 2px;
 }
-.info-chip {
-    display: inline-flex; align-items: center; gap: 5px;
-    background: var(--card-bg); border: 1px solid var(--border);
-    border-radius: 6px; padding: 5px 10px;
-    font-size: 12px; font-weight: 600; color: var(--text);
-}
-.info-chip .chip-icon { font-size: 13px; }
+.dur-transien { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.dur-permanen { background: rgba(239,68,68,0.15);  color: #ef4444; }
 
-.params-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
+/* ── SOE ─────────────────────────────────────────────────────── */
+.soe-wrap { max-height: 260px; overflow-y: auto; }
+.soe-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 12px;
 }
+.soe-row:last-child { border-bottom: none; }
+.soe-num  { color: #475569; width: 20px; flex-shrink: 0; font-size: 10px; }
+.soe-time { color: #60a5fa; font-family: monospace; width: 72px; flex-shrink: 0; font-size: 11px; }
+.soe-ch   { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.soe-state-on  { font-size: 10px; font-weight: 700; color: #10b981; width: 30px; text-align: right; flex-shrink: 0; }
+.soe-state-off { font-size: 10px; font-weight: 700; color: #ef4444; width: 30px; text-align: right; flex-shrink: 0; }
+
+/* ── Right panel: parameter grid ────────────────────────────── */
+.param-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .param-box {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
 }
 .param-box label {
-    font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-muted); display: block;
-    margin-bottom: 6px;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 4px;
 }
-.param-box .param-val {
-    font-size: 20px; font-weight: 800; color: var(--text);
-}
-.param-box .param-unit {
-    font-size: 12px; color: var(--text-muted); margin-left: 3px;
-}
+.param-val  { font-size: 20px; font-weight: 800; color: var(--text); }
+.param-unit { font-size: 11px; color: var(--text-muted); margin-left: 3px; }
+.param-sub  { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
-.evidence-panel {
-    background: var(--panel-bg);
-    border: 1px solid var(--border);
+/* ── Symmetrical components ──────────────────────────────────── */
+.sym-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.sym-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: center; }
+.sym-box label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 4px; }
+.sym-val { font-size: 16px; font-weight: 800; color: var(--accent); }
+.sym-unit { font-size: 10px; color: var(--text-muted); }
+.sym-ratios { display: flex; gap: 20px; }
+.sym-ratio-item { font-size: 12px; color: var(--text-muted); }
+.sym-ratio-item strong { color: var(--text); font-weight: 700; font-size: 14px; }
+
+/* ── Impedance grid ──────────────────────────────────────────── */
+.imp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.imp-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.imp-box label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 4px; }
+.imp-val { font-size: 17px; font-weight: 800; color: #60a5fa; }
+.imp-unit { font-size: 10px; color: var(--text-muted); }
+
+/* ── Description ─────────────────────────────────────────────── */
+.desc-panel {
+    background: var(--panel-bg); border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
-    border-radius: 10px;
-    padding: 18px 20px;
+    border-radius: 10px; padding: 18px 20px;
 }
-.evidence-panel h4 {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px;
+.desc-panel p {
+    font-size: 13px; color: var(--text); line-height: 1.8; margin: 0;
 }
-.evidence-panel p {
-    font-size: 13px; color: var(--text); line-height: 1.7;
-    font-family: 'Courier New', monospace;
-}
+.desc-line { margin-bottom: 6px; padding-left: 12px; position: relative; }
+.desc-line::before { content: '-'; position: absolute; left: 0; color: var(--accent); }
 
+/* ── Rec panel ───────────────────────────────────────────────── */
 .rec-panel {
-    background: var(--panel-bg);
-    border: 1px solid var(--border);
-    border-left: 3px solid #10b981;
-    border-radius: 10px;
-    padding: 18px 20px;
+    background: var(--panel-bg); border: 1px solid var(--border);
+    border-left: 3px solid #10b981; border-radius: 10px; padding: 18px 20px;
 }
-.rec-panel h4 {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: #10b981; margin-bottom: 8px;
-}
-.rec-panel p { font-size: 13px; color: var(--text); line-height: 1.65; }
+.rec-panel h4 { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #10b981; margin-bottom: 8px; }
+.rec-panel p  { font-size: 13px; color: var(--text); line-height: 1.65; }
 
-/* ── Confirm section ─────────────────────────────────────────── */
+/* ── CT/PT bar ───────────────────────────────────────────────── */
+.ctpt-bar {
+    background: var(--panel-bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.ctpt-bar label { font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.ctpt-input {
+    padding: 5px 10px; border: 1.5px solid var(--border); border-radius: 6px;
+    font-size: 13px; background: var(--card-bg); color: var(--text);
+    width: 90px; transition: border-color 0.15s;
+}
+.ctpt-input:focus { outline: none; border-color: var(--accent); }
+.ctpt-note { font-size: 11px; color: var(--text-muted); flex: 1; }
+
+/* ── Confirm ─────────────────────────────────────────────────── */
 .confirm-panel {
-    background: var(--panel-bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px;
-    grid-column: 1 / -1;
+    background: var(--panel-bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; grid-column: 1 / -1;
 }
-.confirm-panel h3 {
-    font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 4px;
-}
-.confirm-panel > p {
-    font-size: 13px; color: var(--text-muted); margin-bottom: 20px;
-}
+.confirm-panel h3 { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.confirm-panel > p { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
 .form-group { margin-bottom: 16px; }
-.form-group label {
-    display: block; font-size: 13px; font-weight: 600;
-    color: var(--text); margin-bottom: 6px;
-}
+.form-group label { display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
 .form-control {
-    width: 100%; padding: 10px 12px;
-    border: 1.5px solid var(--border); border-radius: 8px;
-    font-size: 14px; background: var(--card-bg); color: var(--text);
+    width: 100%; padding: 10px 12px; border: 1.5px solid var(--border);
+    border-radius: 8px; font-size: 14px; background: var(--card-bg); color: var(--text);
     transition: border-color 0.15s;
 }
 .form-control:focus { outline: none; border-color: var(--accent); }
 textarea.form-control { min-height: 80px; resize: vertical; }
-.btn-row { display: flex; gap: 10px; }
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
 .warn-banner {
     background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3);
     border-radius: 8px; padding: 12px 16px; font-size: 12px;
-    color: #92400e; margin-bottom: 16px;
+    color: #92400e; margin-bottom: 16px; grid-column: 1 / -1;
 }
 [data-theme="dark"] .warn-banner { color: #fcd34d; }
 {% endblock %}
 
 {% block content %}
+<div class="results-layout">
 
 {% if not analysis.scaling_ok %}
 <div class="warn-banner">
     ⚠️ <strong>Perhatian:</strong>
     Arus puncak terdeteksi sangat kecil ({{ "%.1f"|format(analysis.peak_fault_current_a) }} A) —
-    kemungkinan nilai sisi sekunder CT. Fitur arus mungkin tidak akurat.
+    kemungkinan nilai sisi sekunder CT. Gunakan koreksi CT/PT di bawah untuk menyesuaikan.
 </div>
 {% endif %}
 
-<div class="results-layout">
+<!-- ══ LEFT PANEL ══════════════════════════════════════════════ -->
+<div class="left-panel">
 
-    <!-- ── Left panel ─────────────────────────────────────────── -->
-    <div class="left-panel">
+    <!-- Prediction card (dark) -->
+    <div class="r-card-dark">
+        <div class="pred-eyebrow">Analisa AI — Penyebab Gangguan</div>
+        <div class="pred-label">{{ analysis.label }}</div>
+        <div class="pred-sub">Hasil klasifikasi otomatis</div>
 
-        <!-- Prediction card -->
-        <div class="prediction-card">
-            <div class="pred-eyebrow">Prediksi Penyebab</div>
-            <div class="pred-label">{{ analysis.label }}</div>
-            <div class="pred-sub">Hasil klasifikasi otomatis</div>
-
-            {% set conf_pct = (analysis.confidence * 100) | int %}
-            <div class="conf-bar-wrap">
-                <div class="conf-bar-label">
-                    <span>Keyakinan</span>
-                    <span>{{ conf_pct }}%</span>
-                </div>
-                <div class="conf-bar">
-                    {% if conf_pct >= 75 %}{% set cc = 'conf-high' %}
-                    {% elif conf_pct >= 50 %}{% set cc = 'conf-medium' %}
-                    {% else %}{% set cc = 'conf-low' %}{% endif %}
-                    <div class="conf-fill {{ cc }}" style="width:{{ conf_pct }}%;"></div>
-                </div>
+        {% set conf_pct = (analysis.confidence * 100) | int %}
+        <div class="conf-bar-wrap">
+            <div class="conf-bar-label">
+                <span>Keyakinan</span>
+                <span>{{ conf_pct }}%
+                    {% if conf_pct >= 75 %}<span style="color:#10b981; font-size:10px;">— TINGGI</span>
+                    {% elif conf_pct >= 50 %}<span style="color:#f59e0b; font-size:10px;">— SEDANG</span>
+                    {% else %}<span style="color:#ef4444; font-size:10px;">— RENDAH</span>{% endif %}
+                </span>
             </div>
-
-            {% if analysis.tier == 1 %}
-                <div class="tier-badge tier-1">Tier 1 — Aturan</div>
-            {% elif analysis.tier == 2 %}
-                <div class="tier-badge tier-2">Tier 2 — ML</div>
-            {% else %}
-                <div class="tier-badge tier-0">Tanpa model</div>
-            {% endif %}
-            <div style="font-size:11px; color:#334155; margin-top:8px;">{{ analysis.rule_name }}</div>
-        </div>
-
-        <!-- Wave metrics -->
-        <div class="wave-card">
-            <h4>Metrik Gelombang</h4>
-            <div class="metric-row">
-                <span class="metric-name">Arus puncak</span>
-                <span class="metric-value">{{ "%.0f"|format(analysis.peak_fault_current_a) }} A</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-name">Rasio i0 / i1</span>
-                <span class="metric-value">{{ "%.3f"|format(analysis.i0_i1_ratio) }}</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-name">Penurunan tegangan</span>
-                <span class="metric-value">{{ "%.3f"|format(analysis.voltage_sag_depth_pu) }} pu</span>
+            <div class="conf-bar">
+                {% if conf_pct >= 75 %}{% set cc = 'conf-high' %}
+                {% elif conf_pct >= 50 %}{% set cc = 'conf-medium' %}
+                {% else %}{% set cc = 'conf-low' %}{% endif %}
+                <div class="conf-fill {{ cc }}" style="width:{{ conf_pct }}%;"></div>
             </div>
         </div>
 
+        {% if analysis.tier == 1 %}
+            <div class="tier-badge tier-1">Layer 0/1 — Aturan Deterministik</div>
+        {% elif analysis.tier == 2 %}
+            <div class="tier-badge tier-2">Layer 2 — Classifier ML</div>
+        {% else %}
+            <div class="tier-badge tier-0">Tanpa Model</div>
+        {% endif %}
+        <div class="rule-name">{{ analysis.rule_name }}</div>
     </div>
 
-    <!-- ── Right panel ────────────────────────────────────────── -->
-    <div class="right-panel">
+    <!-- Cause likelihoods -->
+    {% if analysis.cause_pcts %}
+    <div class="r-card">
+        <div class="r-section-label">Estimasi Penyebab (Heuristik)</div>
+        {% for c in analysis.cause_pcts %}
+        <div class="cause-row">
+            <span class="cause-name">{{ c.name }}</span>
+            <div class="cause-bar-wrap">
+                <div class="cause-bar-fill" style="width:{{ c.pct }}%;
+                    {% if loop.first %}background:var(--accent);{% else %}background:#334155;{% endif %}">
+                </div>
+            </div>
+            <span class="cause-pct">{{ "%.1f"|format(c.pct) }}%</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
 
-        <!-- Info chips -->
-        <div class="info-strip">
-            <span class="info-chip"><span class="chip-icon">🏭</span> {{ analysis.relay_model }}</span>
-            <span class="info-chip">Rele: {{ analysis.zone_operated if analysis.zone_operated != '-' else '—' }}</span>
-            {% if analysis.voltage_kv != 'Tidak diketahui' and analysis.voltage_kv != '-' %}
-            <span class="info-chip">Sistem: {{ analysis.voltage_kv }} kV</span>
-            {% endif %}
-            <span class="info-chip">{{ analysis.timestamp }}</span>
+    <!-- Fault type + duration -->
+    <div class="r-card">
+        <div class="r-section-label">Jenis Gangguan</div>
+        {% set ft = analysis.fault_type | upper %}
+        {% if ft == 'SLG' %}
+            <span class="fault-type-badge ft-slg">SLG ke Tanah</span>
+            <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong> — Gangguan 1 fasa ke tanah
+            </div>
+        {% elif ft == 'DLG' %}
+            <span class="fault-type-badge ft-dlg">DLG ke Tanah</span>
+            <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong> — Gangguan 2 fasa ke tanah
+            </div>
+        {% elif ft == '3PH' %}
+            <span class="fault-type-badge ft-3ph">3PH</span>
+            <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">Gangguan 3 fasa</div>
+        {% elif ft == 'LL' %}
+            <span class="fault-type-badge ft-ll">Line-Line</span>
+            <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong>
+            </div>
+        {% else %}
+            <span class="fault-type-badge ft-unk">{{ analysis.faulted_phases if analysis.faulted_phases != '-' else 'N/A' }}</span>
+        {% endif %}
+        <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">
+            Trip: {{ analysis.trip_type }} — Zona: {{ analysis.zone_operated }}
         </div>
 
-        <!-- Parameter Gangguan -->
-        <div class="params-grid">
-            <div class="param-box">
-                <label>Zona Operasi</label>
-                <div class="param-val">{{ analysis.zone_operated if analysis.zone_operated != '-' else '—' }}</div>
+        <div class="duration-grid" style="margin-top:14px;">
+            <div class="dur-box">
+                <label>Pre-Fault</label>
+                <div class="dur-val">{{ "%.0f"|format(analysis.fault_inception_ms) }}</div>
+                <div class="dur-unit">ms</div>
             </div>
-            <div class="param-box">
-                <label>Fasa Terganggu</label>
-                <div class="param-val">{{ analysis.faulted_phases if analysis.faulted_phases != '-' else '—' }}</div>
-            </div>
-            <div class="param-box">
-                <label>Durasi Gangguan</label>
-                <div class="param-val">{{ "%.0f"|format(analysis.fault_duration_ms) }}<span class="param-unit">ms</span></div>
-            </div>
-            <div class="param-box">
-                <label>Jenis Trip</label>
-                <div class="param-val" style="font-size:15px;">{{ analysis.trip_type }}</div>
-            </div>
-            <div class="param-box">
-                <label>Jumlah Gangguan</label>
-                <div class="param-val">{{ analysis.fault_count }}</div>
-            </div>
-            <div class="param-box">
-                <label>AR Berhasil</label>
-                <div class="param-val" style="font-size:15px;">
-                    {% if analysis.reclose_successful == 'True' %}
-                        <span style="color:#10b981;">Ya</span>
-                    {% elif analysis.reclose_successful == 'False' %}
-                        <span style="color:#ef4444;">Tidak</span>
-                    {% else %}
-                        —
+            <div class="dur-box">
+                <label>Gangguan</label>
+                <div class="dur-val">{{ "%.0f"|format(analysis.fault_duration_ms) }}</div>
+                <div class="dur-unit">ms
+                    {% if 'TRANSIEN' in analysis.label | upper %}
+                    <br><span class="dur-badge dur-transien">TRANSIEN</span>
+                    {% elif 'PERMANEN' in analysis.label | upper %}
+                    <br><span class="dur-badge dur-permanen">PERMANEN</span>
                     {% endif %}
                 </div>
             </div>
+            <div class="dur-box">
+                <label>Total Rec</label>
+                <div class="dur-val">{{ "%.0f"|format(analysis.record_duration_ms) }}</div>
+                <div class="dur-unit">ms</div>
+            </div>
         </div>
-
-        <!-- Evidence -->
-        <div class="evidence-panel">
-            <h4>Dasar Analisis</h4>
-            <p>{{ analysis.evidence }}</p>
-        </div>
-
-        <!-- Recommendation -->
-        {% if analysis.recommendation %}
-        <div class="rec-panel">
-            <h4>Tindak Lanjut</h4>
-            <p>{{ analysis.recommendation }}</p>
-        </div>
-        {% endif %}
-
     </div>
 
-    <!-- ── Confirm section (full width) ───────────────────────── -->
-    <div class="confirm-panel">
-        <h3>Konfirmasi Penyebab</h3>
-        <p>Pilih penyebab aktual untuk menyimpan ke riwayat dan meningkatkan akurasi model.</p>
-        <form action="{{ url_for('confirm_prediction') }}" method="POST">
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-                <div class="form-group">
-                    <label for="fault_cause">Penyebab aktual</label>
-                    <select id="fault_cause" name="fault_cause" class="form-control" required>
-                        {% for cat in fault_categories %}
-                            <option value="{{ cat }}"
-                                {% if cat == analysis.label %}selected{% endif %}>
-                                {{ cat }}
-                            </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="notes">Catatan lapangan (opsional)</label>
-                    <textarea id="notes" name="notes" class="form-control"
-                        placeholder="Catatan observasi atau data pendukung..."></textarea>
-                </div>
+    <!-- SOE -->
+    {% if analysis.soe %}
+    <div class="r-card">
+        <div class="r-section-label">Urutan Event Digital (SOE)</div>
+        <div class="soe-wrap">
+            {% for ev in analysis.soe %}
+            <div class="soe-row">
+                <span class="soe-num">{{ loop.index }}.</span>
+                <span class="soe-time">
+                    {% if ev.rel_ms >= 0 %}+{{ "%.2f"|format(ev.rel_ms) }}{% else %}{{ "%.2f"|format(ev.rel_ms) }}{% endif %} ms
+                </span>
+                <span class="soe-ch" title="{{ ev.channel }}">{{ ev.channel }}</span>
+                {% if ev.state == 1 %}
+                    <span class="soe-state-on">ON ▲</span>
+                {% else %}
+                    <span class="soe-state-off">OFF ▼</span>
+                {% endif %}
             </div>
-            <div class="btn-row">
-                <button type="submit" class="btn btn-success">Simpan Konfirmasi</button>
-                <a href="{{ url_for('index') }}" class="btn btn-outline">Analisis File Lain</a>
-            </div>
-        </form>
+            {% endfor %}
+        </div>
     </div>
+    {% endif %}
 
 </div>
+
+<!-- ══ RIGHT PANEL ═════════════════════════════════════════════ -->
+<div class="right-panel">
+
+    <!-- CT/PT correction bar -->
+    <div class="ctpt-bar">
+        <label>Koreksi CT/PT:</label>
+        <input type="number" id="ctRatio" class="ctpt-input" value="1" min="0.001" step="any" placeholder="CT rasio">
+        <input type="number" id="vtRatio" class="ctpt-input" value="1" min="0.001" step="any" placeholder="VT rasio">
+        <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="applyRatios()">Terapkan</button>
+        <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="resetRatios()">Reset</button>
+        <span class="ctpt-note">Masukkan rasio CT dan VT aktual jika nilai berbeda dari nominal COMTRADE.</span>
+    </div>
+
+    <!-- Electrical parameters top row -->
+    <div class="r-card">
+        <div class="r-section-label">Parameter Elektrik Gangguan</div>
+        <div class="param-grid-2">
+            <div class="param-box">
+                <label>I Puncak — Fasa {{ analysis.peak_fault_phase }}</label>
+                <div>
+                    <span class="param-val" id="disp-peak-i" data-val="{{ "%.2f"|format(analysis.peak_fault_current_a) }}">
+                        {{ "%.2f"|format(analysis.peak_fault_current_a) }}
+                    </span>
+                    <span class="param-unit">A</span>
+                </div>
+                <div class="param-sub">≈ {{ "%.3f"|format(analysis.peak_fault_current_a / 1000) }} kA</div>
+            </div>
+            <div class="param-box">
+                <label>V Nominal (Pre-Fault)</label>
+                <div>
+                    {% if analysis.v_prefault_v > 0 %}
+                    <span class="param-val" id="disp-v-pre" data-val="{{ "%.2f"|format(analysis.v_prefault_v) }}">
+                        {{ "%.2f"|format(analysis.v_prefault_v) }}
+                    </span>
+                    <span class="param-unit">V</span>
+                    {% else %}
+                    <span class="param-val" style="font-size:14px;">N/A</span>
+                    {% endif %}
+                </div>
+                {% if analysis.voltage_kv != 'Tidak diketahui' %}
+                <div class="param-sub">Sistem: {{ analysis.voltage_kv }} kV</div>
+                {% endif %}
+            </div>
+            <div class="param-box">
+                <label>V Gangguan — Fasa {{ analysis.voltage_sag_phase }}</label>
+                <div>
+                    {% if analysis.v_fault_v > 0 %}
+                    <span class="param-val" id="disp-v-flt" data-val="{{ "%.2f"|format(analysis.v_fault_v) }}">
+                        {{ "%.2f"|format(analysis.v_fault_v) }}
+                    </span>
+                    <span class="param-unit">V</span>
+                    {% else %}
+                    <span class="param-val" style="font-size:14px;">N/A</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="param-box">
+                <label>Sag Tegangan</label>
+                <div>
+                    <span class="param-val" style="color:#f59e0b;">{{ "%.1f"|format(analysis.voltage_sag_depth_pu * 100) }}</span>
+                    <span class="param-unit">%</span>
+                </div>
+                <div class="param-sub">i0/i1 = {{ "%.3f"|format(analysis.i0_i1_ratio) }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Symmetrical components -->
+    {% if analysis.i1_magnitude_a > 0 %}
+    <div class="r-card">
+        <div class="r-section-label">Komponen Simetris</div>
+        <div class="sym-grid">
+            <div class="sym-box">
+                <label>I<sub>1</sub> (+)</label>
+                <div>
+                    <span class="sym-val" id="disp-i1" data-val="{{ "%.2f"|format(analysis.i1_magnitude_a) }}">{{ "%.2f"|format(analysis.i1_magnitude_a) }}</span>
+                    <span class="sym-unit"> A</span>
+                </div>
+            </div>
+            <div class="sym-box">
+                <label>I<sub>2</sub> (-)</label>
+                <div>
+                    <span class="sym-val" id="disp-i2" data-val="{{ "%.2f"|format(analysis.i2_magnitude_a) }}">{{ "%.2f"|format(analysis.i2_magnitude_a) }}</span>
+                    <span class="sym-unit"> A</span>
+                </div>
+            </div>
+            <div class="sym-box">
+                <label>I<sub>0</sub> (0)</label>
+                <div>
+                    <span class="sym-val" id="disp-i0" data-val="{{ "%.2f"|format(analysis.i0_magnitude_a) }}">{{ "%.2f"|format(analysis.i0_magnitude_a) }}</span>
+                    <span class="sym-unit"> A</span>
+                </div>
+            </div>
+        </div>
+        <div class="sym-ratios">
+            <div class="sym-ratio-item">
+                I<sub>2</sub>/I<sub>1</sub>: <strong>
+                    {% if analysis.i1_magnitude_a > 0 %}{{ "%.3f"|format(analysis.i2_magnitude_a / analysis.i1_magnitude_a) }}{% else %}—{% endif %}
+                </strong>
+            </div>
+            <div class="sym-ratio-item">
+                I<sub>0</sub>/I<sub>1</sub>: <strong>{{ "%.3f"|format(analysis.i0_i1_ratio) }}</strong>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Impedance -->
+    {% if analysis.z_magnitude_ohms > 0 %}
+    <div class="r-card">
+        <div class="r-section-label">Impedansi Gangguan</div>
+        <div class="imp-grid">
+            <div class="imp-box">
+                <label>Z Min</label>
+                <span class="imp-val">{{ "%.4f"|format(analysis.z_magnitude_ohms) }}</span>
+                <span class="imp-unit"> Ω</span>
+            </div>
+            <div class="imp-box">
+                <label>Sudut Z</label>
+                <span class="imp-val">{{ "%.1f"|format(analysis.z_angle_degrees) }}</span>
+                <span class="imp-unit">°</span>
+            </div>
+            {% if analysis.r_x_ratio != 0 %}
+            <div class="imp-box">
+                <label>R/X Ratio</label>
+                <span class="imp-val">{{ "%.3f"|format(analysis.r_x_ratio) }}</span>
+            </div>
+            {% endif %}
+            <div class="imp-box">
+                <label>AR</label>
+                <span class="imp-val" style="font-size:15px;">
+                    {% if analysis.reclose_successful == 'True' %}<span style="color:#10b981;">BERHASIL</span>
+                    {% elif analysis.reclose_successful == 'False' %}<span style="color:#ef4444;">GAGAL</span>
+                    {% else %}<span style="color:#94a3b8;">—</span>{% endif %}
+                </span>
+                {% if analysis.reclose_time_ms > 0 %}
+                <div style="font-size:10px; color:var(--text-muted);">Dead time: {{ "%.0f"|format(analysis.reclose_time_ms) }} ms</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Description -->
+    {% if analysis.description %}
+    <div class="desc-panel">
+        <div class="r-section-label">Deskripsi Analisa</div>
+        {% for line in analysis.description.split('\n') %}
+        <div class="desc-line" style="font-size:13px; color:var(--text); line-height:1.7; margin-bottom:5px;">{{ line }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Recommendation -->
+    {% if analysis.recommendation %}
+    <div class="rec-panel">
+        <h4>Tindak Lanjut</h4>
+        <p>{{ analysis.recommendation }}</p>
+    </div>
+    {% endif %}
+
+</div>
+
+<!-- ══ CONFIRM (full width) ════════════════════════════════════ -->
+<div class="confirm-panel">
+    <h3>Konfirmasi Penyebab</h3>
+    <p>Pilih penyebab aktual untuk menyimpan ke riwayat dan meningkatkan akurasi model.</p>
+    <form action="{{ url_for('confirm_prediction') }}" method="POST">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <div class="form-group">
+                <label for="fault_cause">Penyebab aktual</label>
+                <select id="fault_cause" name="fault_cause" class="form-control" required>
+                    {% for cat in fault_categories %}
+                        <option value="{{ cat }}"
+                            {% if cat == analysis.label %}selected{% endif %}>
+                            {{ cat }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="notes">Catatan lapangan (opsional)</label>
+                <textarea id="notes" name="notes" class="form-control"
+                    placeholder="Catatan observasi atau data pendukung..."></textarea>
+            </div>
+        </div>
+        <div class="btn-row">
+            <button type="submit" class="btn btn-success">Simpan Konfirmasi</button>
+            <a href="{{ url_for('index') }}" class="btn btn-outline">Analisis File Lain</a>
+        </div>
+    </form>
+</div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// CT/PT ratio scaling — client-side only, does NOT re-run classification
+const _origValues = {};
+
+function applyRatios() {
+    const ct = parseFloat(document.getElementById('ctRatio').value) || 1;
+    const vt = parseFloat(document.getElementById('vtRatio').value) || 1;
+    _scaleEl('disp-peak-i', ct);
+    _scaleEl('disp-i0', ct);
+    _scaleEl('disp-i1', ct);
+    _scaleEl('disp-i2', ct);
+    _scaleEl('disp-v-pre', vt);
+    _scaleEl('disp-v-flt', vt);
+}
+
+function resetRatios() {
+    document.getElementById('ctRatio').value = 1;
+    document.getElementById('vtRatio').value = 1;
+    document.querySelectorAll('[data-val]').forEach(el => {
+        el.textContent = parseFloat(el.dataset.val).toLocaleString('id-ID', {maximumFractionDigits: 2});
+    });
+}
+
+function _scaleEl(id, factor) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const orig = parseFloat(el.dataset.val) || 0;
+    el.textContent = (orig * factor).toLocaleString('id-ID', {maximumFractionDigits: 2});
+}
+</script>
 {% endblock %}

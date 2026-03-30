@@ -106,12 +106,12 @@
     <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data">
         <div class="drop-zone" id="dropZone">
             <div class="drop-icon">📤</div>
-            <h3>Seret & Lepas File di Sini</h3>
-            <p>atau pilih file secara manual</p>
+            <h3>Drag &amp; Drop Files Here</h3>
+            <p>or select files manually</p>
             <div class="file-btns">
-                <label for="cfg_file" class="file-pick">Pilih .cfg</label>
+                <label for="cfg_file" class="file-pick">Select .cfg</label>
                 <input type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" class="file-input" required>
-                <label for="dat_file" class="file-pick">Pilih .dat</label>
+                <label for="dat_file" class="file-pick">Select .dat</label>
                 <input type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" class="file-input" required>
             </div>
         </div>
@@ -143,8 +143,8 @@
     <div class="analysis-card">
         <h4>Yang Dianalisis Sistem</h4>
         <div class="analysis-items">
-            <div class="analysis-item"><strong>Aturan deterministik (Layer 1)</strong> — perubahan fasa saat AR, trip 3-fasa gagal reclose</div>
             <div class="analysis-item"><strong>Konfirmasi transien (Layer 0)</strong> — AR berhasil dengan arus nyata langsung dikategorikan transien</div>
+            <div class="analysis-item"><strong>Aturan deterministik (Layer 1)</strong> — perubahan fasa saat AR, trip 3-fasa gagal reclose</div>
             <div class="analysis-item"><strong>Classifier ML (Layer 2)</strong> — pola di/dt, arus puncak, rasio i0/i1</div>
             <div class="analysis-item"><strong>Estimasi penyebab (heuristik)</strong> — persentase kemungkinan PETIR / Layang / Hewan / Benda Asing / Pohon</div>
         </div>

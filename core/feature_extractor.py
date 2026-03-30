@@ -62,6 +62,15 @@ class DistanceFeatures:
     sampling_rate_hz: float
     record_duration_ms: float
 
+    # === SYMMETRICAL COMPONENT MAGNITUDES (RMS, primary amps) ===
+    i0_magnitude_a: Optional[float] = None
+    i1_magnitude_a: Optional[float] = None
+    i2_magnitude_a: Optional[float] = None
+
+    # === VOLTAGE LEVELS (primary volts, phase-to-ground RMS) ===
+    v_prefault_v: Optional[float] = None
+    v_fault_v: Optional[float] = None
+
 
 @dataclass
 class DifferentialFeatures:
@@ -155,8 +164,11 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
             ia, ib, ic, inception_idx, sampling_rate, system_freq
         )
 
-        # Calculate symmetrical components
+        # Calculate symmetrical components (ratio + magnitudes)
         i0_i1_ratio = _calculate_i0_i1_ratio(
+            ia, ib, ic, inception_idx, sampling_rate, system_freq
+        )
+        i0_mag, i1_mag, i2_mag = _calculate_symmetrical_magnitudes(
             ia, ib, ic, inception_idx, sampling_rate, system_freq
         )
 
@@ -175,6 +187,11 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
 
         # Get voltage level
         voltage_kv = _estimate_voltage_level(va, vb, vc)
+
+        # Get absolute voltage levels (prefault vs fault)
+        v_prefault, v_fault = _calculate_voltage_levels(
+            va, vb, vc, inception_idx, sampling_rate, system_freq, voltage_sag_phase
+        )
 
         # Build feature object
         return DistanceFeatures(
@@ -219,7 +236,13 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
             relay_model=record.rec_dev_id,
             voltage_kv=voltage_kv,
             sampling_rate_hz=sampling_rate,
-            record_duration_ms=record.time[-1] * 1000 if len(record.time) > 0 else 0.0
+            record_duration_ms=record.time[-1] * 1000 if len(record.time) > 0 else 0.0,
+            # Extended electrical fields
+            i0_magnitude_a=i0_mag,
+            i1_magnitude_a=i1_mag,
+            i2_magnitude_a=i2_mag,
+            v_prefault_v=v_prefault,
+            v_fault_v=v_fault,
         )
 
     except Exception as e:
@@ -649,6 +672,51 @@ def _determine_fault_type(faulted_phases, i0_i1_ratio):
         fault_type = "UNKNOWN"
 
     return fault_type, is_ground
+
+
+def _calculate_symmetrical_magnitudes(ia, ib, ic, inception_idx, sampling_rate, system_freq):
+    """Returns (i0_mag, i1_mag, i2_mag) RMS magnitudes in primary amps."""
+    try:
+        samples_per_cycle = int(sampling_rate / system_freq)
+        ws = inception_idx
+        we = min(inception_idx + samples_per_cycle, len(ia.samples))
+
+        i_a = _calculate_phasor(ia.samples[ws:we], system_freq, sampling_rate)
+        i_b = _calculate_phasor(ib.samples[ws:we], system_freq, sampling_rate)
+        i_c = _calculate_phasor(ic.samples[ws:we], system_freq, sampling_rate)
+
+        a = np.exp(2j * np.pi / 3)
+        i0 = (i_a + i_b + i_c) / 3
+        i1 = (i_a + a * i_b + a**2 * i_c) / 3
+        i2 = (i_a + a**2 * i_b + a * i_c) / 3
+
+        return float(np.abs(i0)), float(np.abs(i1)), float(np.abs(i2))
+    except Exception as e:
+        logger.error(f"Symmetrical magnitude calculation failed: {e}")
+        return None, None, None
+
+
+def _calculate_voltage_levels(va, vb, vc, inception_idx, sampling_rate, system_freq, faulted_phase='A'):
+    """Returns (v_prefault_rms, v_fault_rms) in primary volts for the faulted phase."""
+    try:
+        samples_per_cycle = int(sampling_rate / system_freq)
+        prefault_start = max(0, inception_idx - 2 * samples_per_cycle)
+        prefault_end = inception_idx
+        fault_start = inception_idx
+        fault_end = min(inception_idx + 2 * samples_per_cycle, len(va.samples))
+
+        channels = {'A': va, 'B': vb, 'C': vc}
+        v_ch = channels.get(faulted_phase, va)
+
+        if prefault_end <= prefault_start or fault_end <= fault_start:
+            return None, None
+
+        v_pre = float(np.sqrt(np.mean(v_ch.samples[prefault_start:prefault_end]**2)))
+        v_flt = float(np.sqrt(np.mean(v_ch.samples[fault_start:fault_end]**2)))
+        return v_pre, v_flt
+    except Exception as e:
+        logger.error(f"Voltage level calculation failed: {e}")
+        return None, None
 
 
 def _estimate_voltage_level(va, vb, vc):

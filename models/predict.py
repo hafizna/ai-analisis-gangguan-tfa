@@ -42,7 +42,7 @@ if str(_PIPELINE_DIR) not in sys.path:
 
 from core.comtrade_parser import parse_comtrade
 from core.protection_router import determine_protection
-from core.fault_detector import detect_fault
+from core.fault_detector import detect_fault, extract_soe
 from core.feature_extractor import extract_distance_features
 from models.rules import apply_rules, RuleResult
 from models.train import FEATURE_COLS, encode_reclose
@@ -155,6 +155,83 @@ class ClassificationResult:
     recommendation: str   # follow-up action based on top cause
     # Raw feature values for audit
     features: dict
+    # Extended result fields
+    soe: list = None                # Sequence of Events from digital channels
+    description: str = ""          # Natural language analysis narrative
+    cause_pcts: list = None        # [{name, pct}] likelihood bars for transient causes
+
+
+def _compute_cause_pcts(row: dict) -> list:
+    """Return cause likelihoods as [{name, pct}] sorted descending."""
+    scores = _compute_cause_scores(row)
+    total = sum(scores.values()) or 1
+    return sorted(
+        [{"name": k, "pct": round(v / total * 100, 1)} for k, v in scores.items()],
+        key=lambda x: -x["pct"]
+    )
+
+
+def _generate_description(row: dict, result: "ClassificationResult") -> str:
+    """Generate a natural language analysis narrative from features."""
+    phases   = row.get("faulted_phases", "-") or "-"
+    ftype    = row.get("fault_type", "") or ""
+    peak_i   = float(row.get("peak_fault_current_a", 0) or 0)
+    sag_pu   = float(row.get("voltage_sag_depth_pu", 0) or 0)
+    dur_ms   = float(row.get("fault_duration_ms", 0) or 0)
+    zone     = row.get("zone_operated", "") or ""
+    reclose  = row.get("reclose_successful")
+    trip_t   = row.get("trip_type", "") or ""
+    rec_ms   = float(row.get("record_duration_ms", 0) or 0)
+
+    # Fault type description
+    if ftype == "SLG":
+        fault_desc = f"Gangguan Fasa {phases}-N (Single Line to Ground)"
+    elif ftype == "DLG":
+        fault_desc = f"Gangguan Fasa {phases}-N (Double Line to Ground)"
+    elif ftype == "3PH":
+        fault_desc = "Gangguan 3 Fasa (Three Phase)"
+    elif phases and phases != "-":
+        fault_desc = f"Gangguan Fasa {phases}"
+    else:
+        fault_desc = "Gangguan terdeteksi"
+
+    sag_pct = sag_pu * 100
+    lines = []
+
+    # Line 1: Fault characteristics
+    lines.append(
+        f"Terdeteksi {fault_desc} dengan kenaikan arus puncak mencapai "
+        f"{peak_i/1000:.2f} kA dan penurunan tegangan (voltage sag) sebesar {sag_pct:.1f}%."
+    )
+
+    # Line 2: Protection operation
+    if zone and zone not in ("-", "UNKNOWN", ""):
+        lines.append(
+            f"Fungsi proteksi Zona {zone} bekerja mentrigger TRIP "
+            f"({'3-fasa' if trip_t == 'three_pole' else '1-fasa'}) "
+            f"dengan Fault Clearing Time (FCT) {dur_ms:.0f} ms."
+        )
+    elif dur_ms > 0:
+        lines.append(
+            f"Proteksi bekerja mentrigger TRIP dengan Fault Clearing Time (FCT) {dur_ms:.0f} ms."
+        )
+
+    # Line 3: Auto-reclose
+    if reclose is True or reclose == "True":
+        lines.append("Auto Reclose (AR) aktif. Status Reclose: BERHASIL (Line kembali energized).")
+    elif reclose is False or reclose == "False":
+        lines.append("Auto Reclose (AR) aktif. Status Reclose: GAGAL (CB tetap terbuka / Lockout).")
+    else:
+        lines.append("Status Auto Reclose (AR) tidak teridentifikasi dari rekaman digital.")
+
+    # Line 4: AI prediction
+    conf_pct = result.confidence * 100
+    lines.append(
+        f"Berdasarkan analisis pola gelombang, AI mengklasifikasikan gangguan ini sebagai "
+        f"{result.label} dengan tingkat keyakinan {conf_pct:.0f}%."
+    )
+
+    return "\n".join(lines)
 
 
 def _load_model() -> Optional[dict]:
@@ -200,6 +277,9 @@ def classify_file(cfg_path: str) -> ClassificationResult:
     prot = determine_protection(record)
     fault = detect_fault(record)
 
+    # Always extract SOE regardless of protection type
+    _soe = extract_soe(record, fault_inception_s=fault.inception_time if fault else None)
+
     if fault is None:
         raise ValueError(f"No fault detected in: {cfg_path}")
 
@@ -241,7 +321,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 "Verifikasi rekaman AR dan data operasi sebelum memastikan penyebab."
             ),
         }
-        return ClassificationResult(
+        _r1 = ClassificationResult(
             label=rule_result.label,
             confidence=rule_result.confidence,
             tier=1,
@@ -252,7 +332,11 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 "Kumpulkan data pendukung untuk menentukan penyebab gangguan."
             ),
             features=row,
+            soe=_soe,
+            cause_pcts=[],
         )
+        _r1.description = _generate_description(row, _r1)
+        return _r1
 
     # ── Step 6.5: Confirmed-transient shortcut ────────────────────────────────
     # If auto-reclose SUCCEEDED and a real fault current was present, the fault
@@ -262,7 +346,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
     _peak_i     = float(row.get("peak_fault_current_a", 0) or 0)
     if (_reclose_ok is True or _reclose_ok == "True") and _peak_i > 200:
         likelihoods = _transient_cause_likelihoods(row)
-        return ClassificationResult(
+        _r0 = ClassificationResult(
             label="GANGGUAN TRANSIEN",
             confidence=0.95,
             tier=1,
@@ -277,7 +361,11 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             ),
             recommendation=_transient_recommendation(row),
             features=row,
+            soe=_soe,
+            cause_pcts=_compute_cause_pcts(row),
         )
+        _r0.description = _generate_description(row, _r0)
+        return _r0
 
     # ── Step 7: Tier 2 ML classifier ─────────────────────────────────────────
     model_bundle = _load_model()
@@ -290,7 +378,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         if pred == 1:   # transient fault
             confidence  = float(proba[1])
             likelihoods = _transient_cause_likelihoods(row)
-            return ClassificationResult(
+            _r2a = ClassificationResult(
                 label="GANGGUAN TRANSIEN",
                 confidence=confidence,
                 tier=2,
@@ -307,15 +395,15 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 ),
                 recommendation=_transient_recommendation(row),
                 features=row,
+                soe=_soe,
+                cause_pcts=_compute_cause_pcts(row),
             )
+            _r2a.description = _generate_description(row, _r2a)
+            return _r2a
         else:
-            # pred=0 means "not clearly PETIR in waveform signature" — but LAYANG, HEWAN,
-            # BENDA ASING and even POHON are also transient faults.  With only a handful
-            # of non-PETIR training samples the ML boundary is not reliable enough to
-            # assert permanent fault here; use cause likelihoods and flag for confirmation.
-            confidence_transient = float(proba[1])   # probability of being transient
+            confidence_transient = float(proba[1])
             likelihoods = _transient_cause_likelihoods(row)
-            return ClassificationResult(
+            _r2b = ClassificationResult(
                 label="GANGGUAN TRANSIEN",
                 confidence=max(confidence_transient, 0.5),
                 tier=2,
@@ -331,10 +419,14 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 ),
                 recommendation=_transient_recommendation(row),
                 features=row,
+                soe=_soe,
+                cause_pcts=_compute_cause_pcts(row),
             )
+            _r2b.description = _generate_description(row, _r2b)
+            return _r2b
 
     # ── Step 8: fallback ──────────────────────────────────────────────────────
-    return ClassificationResult(
+    _rfb = ClassificationResult(
         label="PERLU INVESTIGASI",
         confidence=0.0,
         tier=0,
@@ -348,7 +440,11 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             "untuk menentukan penyebab gangguan ini."
         ),
         features=row,
+        soe=_soe,
+        cause_pcts=[],
     )
+    _rfb.description = _generate_description(row, _rfb)
+    return _rfb
 
 
 def _flatten(feat, fault) -> dict:
@@ -358,6 +454,7 @@ def _flatten(feat, fault) -> dict:
         "fault_inception_ms":   round(fault.inception_time * 1000, 2),
         "fault_count":          feat.fault_count,
         "faulted_phases":       "+".join(feat.faulted_phases) if feat.faulted_phases else "",
+        "fault_type":           feat.fault_type,
         "trip_type":            feat.trip_type,
         "zone_operated":        feat.zone_operated,
         "reclose_attempted":    feat.reclose_attempted,
@@ -368,9 +465,15 @@ def _flatten(feat, fault) -> dict:
         "peak_fault_current_a": feat.peak_fault_current_a,
         "peak_fault_phase":     feat.peak_fault_phase,
         "i0_i1_ratio":          feat.i0_i1_ratio,
+        "i0_magnitude_a":       feat.i0_magnitude_a,
+        "i1_magnitude_a":       feat.i1_magnitude_a,
+        "i2_magnitude_a":       feat.i2_magnitude_a,
         "thd_percent":          feat.thd_percent,
         "inception_angle_degrees": feat.inception_angle_degrees,
         "voltage_sag_depth_pu": feat.voltage_sag_depth_pu,
+        "voltage_sag_phase":    feat.voltage_sag_phase,
+        "v_prefault_v":         feat.v_prefault_v,
+        "v_fault_v":            feat.v_fault_v,
         "r_x_ratio":            feat.r_x_ratio,
         "z_magnitude_ohms":     feat.z_magnitude_ohms,
         "z_angle_degrees":      feat.z_angle_degrees,
@@ -380,6 +483,19 @@ def _flatten(feat, fault) -> dict:
         "sampling_rate_hz":     feat.sampling_rate_hz,
         "record_duration_ms":   feat.record_duration_ms,
     }
+
+
+def extract_soe_from_file(cfg_path: str) -> list:
+    """Try to extract SOE from a COMTRADE file. Returns [] on any failure."""
+    try:
+        record = parse_comtrade(str(cfg_path))
+        if record is None:
+            return []
+        fault = detect_fault(record)
+        inception = fault.inception_time if fault else None
+        return extract_soe(record, fault_inception_s=inception)
+    except Exception:
+        return []
 
 
 def _print_result(result: ClassificationResult, cfg_path: str):
