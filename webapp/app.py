@@ -395,9 +395,184 @@ def history():
                            total=total, correct=correct, accuracy=accuracy)
 
 
+# ── API endpoints ─────────────────────────────────────────────────────────────
+# All API routes are prefixed with /api and return JSON.
+# No session required — stateless, suitable for integration with other apps.
+
+def _build_analysis_json(result, original_filename: str, ts: str) -> dict:
+    """Build a serialisable dict from a ClassificationResult."""
+    feats = result.features
+    return {
+        "meta": {
+            "filename":   original_filename,
+            "timestamp":  ts,
+            "station":    _s(feats.get("station_name")),
+            "relay":      _s(feats.get("relay_model")),
+            "voltage_kv": _f(feats.get("voltage_kv")) or None,
+            "sampling_hz": _f(feats.get("sampling_rate_hz")),
+        },
+        "classification": {
+            "label":       result.label,
+            "confidence":  round(_f(result.confidence), 4),
+            "tier":        int(result.tier),
+            "rule":        result.rule_name,
+            "description": result.description or "",
+        },
+        "cause_likelihoods": result.cause_pcts or [],
+        "fault": {
+            "type":          _s(feats.get("fault_type")),
+            "phases":        _s(feats.get("faulted_phases")),
+            "zone":          _s(feats.get("zone_operated")),
+            "trip_type":     _s(feats.get("trip_type")),
+            "duration_ms":   _f(feats.get("fault_duration_ms")),
+            "inception_ms":  _f(feats.get("fault_inception_ms")),
+            "record_ms":     _f(feats.get("record_duration_ms")),
+            "fault_count":   int(feats.get("fault_count") or 1),
+        },
+        "electrical": {
+            "peak_current_a":      _f(feats.get("peak_fault_current_a")),
+            "peak_phase":          _s(feats.get("peak_fault_phase")),
+            "i0_magnitude_a":      _f(feats.get("i0_magnitude_a")),
+            "i1_magnitude_a":      _f(feats.get("i1_magnitude_a")),
+            "i2_magnitude_a":      _f(feats.get("i2_magnitude_a")),
+            "i0_i1_ratio":         round(_f(feats.get("i0_i1_ratio")), 4),
+            "voltage_sag_pu":      round(_f(feats.get("voltage_sag_depth_pu")), 4),
+            "voltage_sag_phase":   _s(feats.get("voltage_sag_phase")),
+            "v_prefault_v":        _f(feats.get("v_prefault_v")),
+            "v_fault_v":           _f(feats.get("v_fault_v")),
+            "z_magnitude_ohm":     _f(feats.get("z_magnitude_ohms")),
+            "z_angle_deg":         _f(feats.get("z_angle_degrees")),
+            "r_x_ratio":           _f(feats.get("r_x_ratio")),
+            "di_dt_max":           _f(feats.get("di_dt_max")),
+            "thd_percent":         _f(feats.get("thd_percent")),
+        },
+        "reclose": {
+            "attempted":   bool(feats.get("reclose_attempted")),
+            "successful":  feats.get("reclose_successful"),  # True/False/None
+            "dead_time_ms": _f(feats.get("reclose_time_ms")),
+        },
+        "soe": result.soe or [],
+        "evidence": result.evidence,
+        "recommendation": result.recommendation,
+    }
+
+
+@app.route("/api/status")
+def api_status():
+    """Health-check endpoint."""
+    return jsonify({
+        "status": "ok",
+        "app": "DFR Fault Classifier — TFA",
+        "version": "2.0",
+        "endpoints": [
+            "POST /api/classify  — upload .cfg + .dat, returns JSON analysis",
+            "GET  /api/history   — returns list of confirmed analyses",
+            "GET  /api/status    — this endpoint",
+        ]
+    })
+
+
+@app.route("/api/classify", methods=["POST"])
+def api_classify():
+    """
+    Classify a COMTRADE file pair and return JSON.
+
+    Accepts multipart/form-data with fields:
+        cfg_file  — the .cfg file
+        dat_file  — the .dat file (must share the same base name)
+
+    Returns JSON with full classification result, electrical parameters,
+    symmetrical components, impedance, SOE, and cause likelihoods.
+
+    On error returns:
+        { "error": "...", "code": "..." }  with HTTP 4xx/5xx
+    """
+    cfg_file = request.files.get("cfg_file")
+    dat_file = request.files.get("dat_file")
+
+    if not cfg_file or not dat_file:
+        return jsonify({"error": "Both cfg_file and dat_file are required", "code": "missing_files"}), 400
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cfg_saved = UPLOAD_DIR / secure_filename(f"{ts}_{cfg_file.filename}")
+    dat_saved = UPLOAD_DIR / secure_filename(f"{ts}_{dat_file.filename}")
+    cfg_file.save(cfg_saved)
+    dat_file.save(dat_saved)
+
+    try:
+        result = classify_file(str(cfg_saved))
+    except ValueError as e:
+        # Try to still extract SOE for unsupported relay types
+        soe = extract_soe_from_file(str(cfg_saved))
+        return jsonify({
+            "error": str(e),
+            "code": "unsupported_or_no_fault",
+            "soe": soe,
+        }), 422
+    except Exception as e:
+        return jsonify({"error": f"Pipeline error: {e}", "code": "pipeline_error"}), 500
+
+    payload = _build_analysis_json(result, cfg_file.filename, ts)
+    return jsonify(payload), 200
+
+
+@app.route("/api/history")
+def api_history():
+    """
+    Return the analysis history as JSON.
+
+    Optional query params:
+        limit  — max number of rows (default 100, newest first)
+        format — "full" returns all CSV fields; default returns summary only
+    """
+    limit = min(int(request.args.get("limit", 100)), 1000)
+    full  = request.args.get("format") == "full"
+
+    rows = []
+    if HISTORY_CSV.exists():
+        with open(HISTORY_CSV, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        rows.reverse()   # newest first
+    rows = rows[:limit]
+
+    total   = len(rows)
+    correct = sum(1 for r in rows if r.get("correct") == "True")
+
+    summary = {
+        "total":    total,
+        "correct":  correct,
+        "accuracy": round(correct / total * 100, 1) if total else 0,
+    }
+
+    if full:
+        return jsonify({"summary": summary, "rows": rows})
+
+    slim = [{
+        "timestamp":       r.get("timestamp"),
+        "filename":        r.get("filename"),
+        "station":         r.get("station"),
+        "predicted_label": r.get("predicted_label"),
+        "confirmed_label": r.get("confirmed_label"),
+        "correct":         r.get("correct") == "True",
+        "confidence":      r.get("predicted_conf"),
+        "tier":            r.get("tier"),
+        "zone":            r.get("zone"),
+        "phases":          r.get("phases"),
+        "duration_ms":     r.get("duration_ms"),
+        "reclose_ok":      r.get("reclose_ok"),
+    } for r in rows]
+
+    return jsonify({"summary": summary, "rows": slim})
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("  DFR Fault Classifier - Web App")
     print("  http://localhost:5000")
+    print("")
+    print("  API endpoints:")
+    print("    GET  /api/status")
+    print("    POST /api/classify  (cfg_file + dat_file)")
+    print("    GET  /api/history")
     print("=" * 60)
     app.run(debug=False, host="0.0.0.0", port=5000)
