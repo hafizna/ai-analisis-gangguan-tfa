@@ -378,6 +378,111 @@ def success():
     return render_template("success.html")
 
 
+@app.route("/trends")
+def trends():
+    rows = []
+    if HISTORY_CSV.exists():
+        with open(HISTORY_CSV, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+
+    if not rows:
+        return render_template("trends.html", rows=[], stats={}, cause_dist=[],
+                               station_stats=[], recurring=[], accuracy_by_cause=[], monthly=[])
+
+    from collections import Counter, defaultdict
+
+    total   = len(rows)
+    correct = sum(1 for r in rows if r.get("correct") == "True")
+    stations = len(set(r.get("station", "-") for r in rows if r.get("station")))
+    permanent = sum(1 for r in rows if "PERMANEN" in r.get("confirmed_label", "").upper()
+                    or "KONDUKTOR" in r.get("confirmed_label", "").upper())
+
+    stats = {
+        "total":     total,
+        "correct":   correct,
+        "accuracy":  round(correct / total * 100, 1) if total else 0,
+        "stations":  stations,
+        "permanent": permanent,
+    }
+
+    # Cause distribution (by confirmed label)
+    cause_counter = Counter(r.get("confirmed_label", "LAIN-LAIN") for r in rows)
+    cause_dist = cause_counter.most_common()
+
+    # Per-station stats
+    by_station = defaultdict(list)
+    for r in rows:
+        by_station[r.get("station", "-")].append(r)
+
+    station_stats = []
+    for st, st_rows in sorted(by_station.items(), key=lambda x: -len(x[1])):
+        st_total   = len(st_rows)
+        st_correct = sum(1 for r in st_rows if r.get("correct") == "True")
+        top_cause  = Counter(r.get("confirmed_label", "") for r in st_rows).most_common(1)[0][0]
+        station_stats.append({
+            "station":   st,
+            "count":     st_total,
+            "top_cause": top_cause,
+            "accuracy":  round(st_correct / st_total * 100, 0) if st_total else None,
+        })
+
+    # Recurring faults (stations with ≥ 3 events)
+    recurring = [s for s in station_stats if s["count"] >= 3]
+
+    # Accuracy per cause
+    by_cause = defaultdict(list)
+    for r in rows:
+        by_cause[r.get("confirmed_label", "LAIN-LAIN")].append(r)
+
+    accuracy_by_cause = []
+    for cause, c_rows in sorted(by_cause.items(), key=lambda x: -len(x[1])):
+        c_total   = len(c_rows)
+        c_correct = sum(1 for r in c_rows if r.get("correct") == "True")
+        accuracy_by_cause.append({
+            "cause":    cause,
+            "total":    c_total,
+            "correct":  c_correct,
+            "accuracy": round(c_correct / c_total * 100, 0) if c_total else 0,
+        })
+
+    # Monthly breakdown — parse timestamp YYYYMMDD_HHMMSS
+    by_month = defaultdict(list)
+    for r in rows:
+        ts = r.get("timestamp", "")
+        month = ts[:6] if len(ts) >= 6 else "??????"
+        try:
+            month_label = f"{month[4:6]}/{month[:4]}"
+        except Exception:
+            month_label = month
+        by_month[month_label].append(r)
+
+    monthly = []
+    for month_lbl in sorted(by_month.keys(), reverse=True)[:12]:
+        m_rows  = by_month[month_lbl]
+        m_total = len(m_rows)
+        m_corr  = sum(1 for r in m_rows if r.get("correct") == "True")
+        m_causes = Counter(r.get("confirmed_label", "") for r in m_rows)
+        monthly.append({
+            "month":    month_lbl,
+            "total":    m_total,
+            "causes":   dict(m_causes),
+            "accuracy": round(m_corr / m_total * 100, 0) if m_total else None,
+        })
+
+    return render_template("trends.html", rows=rows, stats=stats,
+                           cause_dist=cause_dist, station_stats=station_stats,
+                           recurring=recurring, accuracy_by_cause=accuracy_by_cause,
+                           monthly=monthly)
+
+
+@app.route("/report")
+def report():
+    analysis = session.get("analysis")
+    if not analysis:
+        return redirect(url_for("index"))
+    return render_template("report.html", analysis=analysis)
+
+
 @app.route("/history")
 def history():
     rows = []

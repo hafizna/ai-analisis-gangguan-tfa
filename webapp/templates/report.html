@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Laporan Gangguan — {{ analysis.station_name }} {{ analysis.timestamp }}</title>
+<style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #0f172a;
+        background: #fff;
+        padding: 28px 32px;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    .rpt-header {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 18px;
+    }
+    .rpt-logo { font-size: 22px; font-weight: 900; letter-spacing: 0.04em; color: #0f172a; }
+    .rpt-logo span { color: #f59e0b; }
+    .rpt-title { font-size: 14px; font-weight: 700; text-align: right; }
+    .rpt-subtitle { font-size: 11px; color: #64748b; margin-top: 2px; text-align: right; }
+
+    /* ── Section label ── */
+    .sec-label {
+        font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+        text-transform: uppercase; color: #64748b;
+        border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;
+        margin: 16px 0 10px;
+    }
+
+    /* ── Info grid ── */
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .info-row { display: flex; gap: 6px; font-size: 11px; }
+    .info-key { color: #64748b; width: 140px; flex-shrink: 0; }
+    .info-val { font-weight: 600; color: #0f172a; }
+
+    /* ── Prediction box ── */
+    .pred-box {
+        background: #0f172a; color: white;
+        border-radius: 8px; padding: 16px 20px;
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 4px;
+    }
+    .pred-label { font-size: 20px; font-weight: 800; }
+    .pred-right { text-align: right; }
+    .pred-conf  { font-size: 22px; font-weight: 800; color: #f59e0b; }
+    .pred-tier  { font-size: 10px; color: #64748b; margin-top: 2px; }
+
+    /* ── Param grid ── */
+    .param-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .param-box {
+        border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 12px;
+        text-align: center;
+    }
+    .param-box .p-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase;
+                        letter-spacing: 0.08em; color: #64748b; margin-bottom: 4px; }
+    .param-box .p-val { font-size: 17px; font-weight: 800; color: #0f172a; }
+    .param-box .p-unit{ font-size: 10px; color: #64748b; }
+
+    /* ── Sym component grid ── */
+    .sym-grid { display: grid; grid-template-columns: repeat(3,1fr); gap:8px; }
+    .sym-box { border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; text-align:center; }
+    .sym-box .s-lbl { font-size:9px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:3px; }
+    .sym-box .s-val { font-size:15px; font-weight:800; color:#1d4ed8; }
+
+    /* ── Cause bars ── */
+    .cause-row { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+    .cause-lbl { font-size:11px; font-weight:600; width:110px; flex-shrink:0; }
+    .cause-track { flex:1; height:12px; background:#f1f5f9; border-radius:3px; overflow:hidden; }
+    .cause-fill  { height:100%; background:#3b82f6; border-radius:3px; }
+    .cause-pct   { font-size:11px; color:#64748b; width:36px; text-align:right; }
+
+    /* ── SOE ── */
+    .soe-table { width:100%; border-collapse:collapse; font-size:10px; }
+    .soe-table th { background:#f8fafc; color:#64748b; font-weight:700; text-transform:uppercase;
+                    font-size:9px; letter-spacing:0.06em; padding:5px 8px; border-bottom:1px solid #e2e8f0; text-align:left; }
+    .soe-table td { padding:4px 8px; border-bottom:1px solid #f1f5f9; }
+    .soe-table tr:last-child td { border-bottom:none; }
+    .soe-on  { color:#10b981; font-weight:700; }
+    .soe-off { color:#ef4444; font-weight:700; }
+
+    /* ── Description & recommendation ── */
+    .desc-box {
+        border-left: 3px solid #3b82f6;
+        background: #f8fafc; border-radius: 0 6px 6px 0;
+        padding: 12px 14px; margin-bottom: 8px;
+    }
+    .desc-box p { font-size: 11px; line-height: 1.8; color: #0f172a; }
+    .desc-line { margin-bottom: 4px; padding-left: 10px; position:relative; }
+    .desc-line::before { content:'-'; position:absolute; left:0; color:#3b82f6; }
+
+    .rec-box {
+        border-left: 3px solid #10b981;
+        background: #f0fdf4; border-radius: 0 6px 6px 0;
+        padding: 12px 14px;
+    }
+    .rec-box p { font-size: 11px; line-height: 1.7; color: #0f172a; }
+
+    /* ── Footer ── */
+    .rpt-footer {
+        margin-top: 24px; padding-top: 10px;
+        border-top: 1px solid #e2e8f0;
+        display: flex; justify-content: space-between;
+        font-size: 10px; color: #94a3b8;
+    }
+
+    /* ── Print button (screen only) ── */
+    .print-btn {
+        position: fixed; top: 20px; right: 20px;
+        background: #3b82f6; color: white;
+        border: none; border-radius: 8px;
+        padding: 10px 18px; font-size: 13px; font-weight: 600;
+        cursor: pointer;
+    }
+    @media print {
+        .print-btn { display: none; }
+        body { padding: 10px 14px; }
+    }
+</style>
+</head>
+<body>
+<button class="print-btn" onclick="window.print()">🖨 Cetak / Simpan PDF</button>
+
+<!-- Header -->
+<div class="rpt-header">
+    <div>
+        <div class="rpt-logo">⚡ <span>TFA</span></div>
+        <div style="font-size:10px; color:#64748b; margin-top:2px;">Fault Analyzer — Klasifikasi Penyebab Gangguan Berbasis AI</div>
+    </div>
+    <div>
+        <div class="rpt-title">LAPORAN ANALISIS GANGGUAN</div>
+        <div class="rpt-subtitle">{{ analysis.station_name }} — {{ analysis.original_filename }}</div>
+        <div class="rpt-subtitle">Dianalisis: {{ analysis.timestamp }}</div>
+    </div>
+</div>
+
+<!-- Prediction -->
+<div class="pred-box">
+    <div>
+        <div style="font-size:9px; color:#475569; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:4px;">Prediksi Penyebab Gangguan</div>
+        <div class="pred-label">{{ analysis.label }}</div>
+        <div style="font-size:10px; color:#64748b; margin-top:4px;">{{ analysis.rule_name }}</div>
+    </div>
+    <div class="pred-right">
+        <div class="pred-conf">{{ (analysis.confidence * 100) | int }}%</div>
+        <div class="pred-tier">
+            {% if analysis.tier == 1 %}Layer 0/1 — Aturan Deterministik
+            {% elif analysis.tier == 2 %}Layer 2 — Classifier ML
+            {% else %}Tanpa Model{% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Cause likelihoods -->
+{% if analysis.cause_pcts %}
+<div class="sec-label">Estimasi Penyebab (Heuristik)</div>
+{% for c in analysis.cause_pcts %}
+<div class="cause-row">
+    <div class="cause-lbl">{{ c.name }}</div>
+    <div class="cause-track"><div class="cause-fill" style="width:{{ c.pct }}%;"></div></div>
+    <div class="cause-pct">{{ "%.1f"|format(c.pct) }}%</div>
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- Fault info -->
+<div class="sec-label">Informasi Gangguan</div>
+<div class="info-grid">
+    <div class="info-row"><span class="info-key">Gardu Induk</span><span class="info-val">{{ analysis.station_name }}</span></div>
+    <div class="info-row"><span class="info-key">Relay / DFR</span><span class="info-val">{{ analysis.relay_model }}</span></div>
+    <div class="info-row"><span class="info-key">Jenis Gangguan</span><span class="info-val">{{ analysis.fault_type }} — Fasa {{ analysis.faulted_phases }}</span></div>
+    <div class="info-row"><span class="info-key">Zona Operasi</span><span class="info-val">{{ analysis.zone_operated }}</span></div>
+    <div class="info-row"><span class="info-key">Jenis Trip</span><span class="info-val">{{ analysis.trip_type }}</span></div>
+    <div class="info-row"><span class="info-key">Sistem Tegangan</span><span class="info-val">{{ analysis.voltage_kv }} kV</span></div>
+    <div class="info-row"><span class="info-key">Auto Reclose</span>
+        <span class="info-val">
+            {% if analysis.reclose_successful == 'True' %}BERHASIL
+            {% elif analysis.reclose_successful == 'False' %}GAGAL
+            {% else %}Tidak teridentifikasi{% endif %}
+        </span>
+    </div>
+    <div class="info-row"><span class="info-key">Waktu Analisis</span><span class="info-val">{{ analysis.timestamp }}</span></div>
+</div>
+
+<!-- Electrical parameters -->
+<div class="sec-label">Parameter Elektrik</div>
+<div class="param-grid">
+    <div class="param-box">
+        <div class="p-lbl">I Puncak</div>
+        <div class="p-val">{{ "%.0f"|format(analysis.peak_fault_current_a) }}</div>
+        <div class="p-unit">A ({{ "%.2f"|format(analysis.peak_fault_current_a/1000) }} kA)</div>
+    </div>
+    <div class="param-box">
+        <div class="p-lbl">Durasi FCT</div>
+        <div class="p-val">{{ "%.0f"|format(analysis.fault_duration_ms) }}</div>
+        <div class="p-unit">ms</div>
+    </div>
+    <div class="param-box">
+        <div class="p-lbl">Sag Tegangan</div>
+        <div class="p-val">{{ "%.1f"|format(analysis.voltage_sag_depth_pu * 100) }}</div>
+        <div class="p-unit">%</div>
+    </div>
+    <div class="param-box">
+        <div class="p-lbl">I₀/I₁ Ratio</div>
+        <div class="p-val">{{ "%.3f"|format(analysis.i0_i1_ratio) }}</div>
+        <div class="p-unit">—</div>
+    </div>
+</div>
+
+<!-- Symmetrical components -->
+{% if analysis.i1_magnitude_a > 0 %}
+<div class="sec-label">Komponen Simetris</div>
+<div class="sym-grid">
+    <div class="sym-box">
+        <div class="s-lbl">I₁ Urutan Positif</div>
+        <div class="s-val">{{ "%.1f"|format(analysis.i1_magnitude_a) }} A</div>
+    </div>
+    <div class="sym-box">
+        <div class="s-lbl">I₂ Urutan Negatif</div>
+        <div class="s-val">{{ "%.1f"|format(analysis.i2_magnitude_a) }} A</div>
+    </div>
+    <div class="sym-box">
+        <div class="s-lbl">I₀ Urutan Nol</div>
+        <div class="s-val">{{ "%.1f"|format(analysis.i0_magnitude_a) }} A</div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Impedance -->
+{% if analysis.z_magnitude_ohms > 0 %}
+<div class="sec-label">Impedansi Gangguan</div>
+<div class="info-grid">
+    <div class="info-row"><span class="info-key">|Z| Minimum</span><span class="info-val">{{ "%.4f"|format(analysis.z_magnitude_ohms) }} Ω</span></div>
+    <div class="info-row"><span class="info-key">Sudut Z</span><span class="info-val">{{ "%.1f"|format(analysis.z_angle_degrees) }}°</span></div>
+    {% if analysis.r_x_ratio != 0 %}
+    <div class="info-row"><span class="info-key">R/X Ratio</span><span class="info-val">{{ "%.3f"|format(analysis.r_x_ratio) }}</span></div>
+    {% endif %}
+    {% if analysis.reclose_time_ms > 0 %}
+    <div class="info-row"><span class="info-key">Dead Time AR</span><span class="info-val">{{ "%.0f"|format(analysis.reclose_time_ms) }} ms</span></div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Description -->
+{% if analysis.description %}
+<div class="sec-label">Deskripsi Analisa</div>
+<div class="desc-box">
+    {% for line in analysis.description.split('\n') %}
+    <div class="desc-line">{{ line }}</div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Recommendation -->
+{% if analysis.recommendation %}
+<div class="sec-label">Tindak Lanjut</div>
+<div class="rec-box">
+    <p>{{ analysis.recommendation }}</p>
+</div>
+{% endif %}
+
+<!-- SOE -->
+{% if analysis.soe %}
+<div class="sec-label">Urutan Event Digital (SOE) — {{ analysis.soe | length }} event</div>
+<table class="soe-table">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Waktu Relatif</th>
+            <th>Channel / Sinyal</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for ev in analysis.soe %}
+    <tr>
+        <td style="color:#94a3b8;">{{ loop.index }}</td>
+        <td style="font-family:monospace; color:#1d4ed8;">
+            {% if ev.rel_ms >= 0 %}+{{ "%.2f"|format(ev.rel_ms) }}{% else %}{{ "%.2f"|format(ev.rel_ms) }}{% endif %} ms
+        </td>
+        <td>{{ ev.channel }}</td>
+        <td>
+            {% if ev.state == 1 %}<span class="soe-on">ON ▲</span>
+            {% else %}<span class="soe-off">OFF ▼</span>{% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<!-- Footer -->
+<div class="rpt-footer">
+    <span>TFA — Fault Analyzer v2.0 | Klasifikasi Penyebab Gangguan Berbasis AI</span>
+    <span>{{ analysis.original_filename }} | {{ analysis.timestamp }}</span>
+</div>
+
+</body>
+</html>

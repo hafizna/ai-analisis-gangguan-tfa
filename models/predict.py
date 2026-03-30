@@ -55,53 +55,142 @@ def _compute_cause_scores(row: dict) -> dict:
     Rule-based heuristic scores for each transient cause.
     Based on domain knowledge of power system protection behaviour.
     NOT a trained model — do not interpret as statistically rigorous.
+
+    Signals used:
+        fault_duration_ms, fault_count, i0_i1_ratio, peak_fault_current_a,
+        reclose_successful, reclose_time_ms,
+        di_dt_max, thd_percent, fault_type, inception_angle_degrees
+
+    IMPORTANT: di_dt_max and peak_fault_current_a are only used as
+    discriminators when the CT scaling is reliable (peak >= 200A).
+    Below that threshold the values are secondary-side readings that
+    cannot be compared across files without knowing the CT ratio.
     """
     dur        = float(row.get("fault_duration_ms", 80) or 80)
     fc         = int(row.get("fault_count", 1) or 1)
     i0i1       = float(row.get("i0_i1_ratio", 0) or 0)
     peak       = float(row.get("peak_fault_current_a", 0) or 0)
     reclose_ok = row.get("reclose_successful")
+    rc_ms      = float(row.get("reclose_time_ms") or 0)
+    di_dt      = float(row.get("di_dt_max", 0) or 0)
+    thd        = float(row.get("thd_percent", 0) or 0)
+    fault_type = str(row.get("fault_type", "") or "").upper()
+    ang        = float(row.get("inception_angle_degrees", -1) or -1)
 
-    scores = {"PETIR": 3.0, "Layang-Layang": 1.0, "Hewan": 1.0,
+    # Only trust peak/di_dt when CT scaling looks primary (>=200A)
+    scaled = peak >= 200.0
+
+    # Base rates reflect real-world distribution (~87% PETIR in our labeled set).
+    # Prior=3.5 is the calibrated balance point: 75% overall accuracy with 40%
+    # non-PETIR recall (vs 62.5% / 20% with the original unweighted prior).
+    scores = {"PETIR": 3.5, "Layang-Layang": 1.0, "Hewan": 1.0,
               "Benda Asing": 1.0, "Pohon": 0.5}
 
-    # ── PETIR: short arc, high current, single event ─────────────────────────
+    # ── PETIR: steep wavefront, high current, single event, SLG ─────────────
+    # Duration — lightning clears quickly (via AR), but FCT can be 80–150ms
     if dur < 60:    scores["PETIR"] *= 2.0
-    elif dur < 100: scores["PETIR"] *= 1.4
-    elif dur > 400: scores["PETIR"] *= 0.3
+    elif dur < 150: scores["PETIR"] *= 1.3
+    elif dur > 500: scores["PETIR"] *= 0.4
 
-    if peak > 10000:          scores["PETIR"] *= 2.0
-    elif peak > 5000:         scores["PETIR"] *= 1.5
-    elif 0 < peak < 500:      scores["PETIR"] *= 0.6
-
+    # Fault count — lightning is typically a single impulse (or 1-pole reclose)
     if fc == 1:   scores["PETIR"] *= 1.3
-    elif fc > 3:  scores["PETIR"] *= 0.4
+    elif fc > 3:  scores["PETIR"] *= 0.5
 
-    # ── Layang-Layang: kite swings back → multiple sub-faults, medium dur ────
-    if fc >= 3:   scores["Layang-Layang"] *= 3.0
-    elif fc == 2: scores["Layang-Layang"] *= 1.8
+    # Scaled signals — only when CT is reliable
+    if scaled:
+        if peak > 10000:     scores["PETIR"] *= 2.2
+        elif peak > 5000:    scores["PETIR"] *= 1.6
+        elif peak > 2000:    scores["PETIR"] *= 1.1
+        elif peak < 500:     scores["PETIR"] *= 0.6
 
-    if 50 <= dur <= 350:            scores["Layang-Layang"] *= 1.5
-    elif dur < 30 or dur > 600:     scores["Layang-Layang"] *= 0.4
+        if di_dt > 1_000_000:  scores["PETIR"] *= 1.8
+        elif di_dt > 500_000:  scores["PETIR"] *= 1.3
+        elif di_dt < 100_000:  scores["PETIR"] *= 0.6
 
-    # ── Hewan: brief single-phase contact, moderate current ──────────────────
+    # THD — only meaningful when NOT near-zero (scaling issue gives flat waveforms)
+    if thd > 60:   scores["PETIR"] *= 0.8
+    elif thd < 10 and thd > 0: scores["PETIR"] *= 1.1
+
+    # Inception angle near voltage peak (90°/270°) — highest arc breakdown probability
+    if ang > 0:
+        dist = min(abs(ang - 90), abs(ang - 270), abs(ang - 90 + 360), abs(ang - 270 + 360))
+        if dist < 25:   scores["PETIR"] *= 1.3
+        elif dist < 50: scores["PETIR"] *= 1.1
+
+    # SLG is the most common fault type for lightning (single conductor flashover)
+    if fault_type == "SLG":   scores["PETIR"] *= 1.2
+    elif fault_type == "3PH": scores["PETIR"] *= 0.6
+
+    # Short AR dead time = 1-pole scheme = typical lightning signature
+    if rc_ms > 0 and rc_ms < 500: scores["PETIR"] *= 1.2
+
+    # ── Layang-Layang: conductive string, SHORT duration, HIGH THD ───────────
+    # Kite string acts as resistive contact → high harmonic distortion
+    # Current is LIMITED by string resistance → LOW peak compared to lightning
+    # Require COMBINATION of signals to overcome the high PETIR prior
+    if thd > 50:   scores["Layang-Layang"] *= 2.5
+    elif thd > 30: scores["Layang-Layang"] *= 1.5
+
+    if 30 <= dur <= 120:    scores["Layang-Layang"] *= 1.8
+    elif 120 < dur <= 350:  scores["Layang-Layang"] *= 1.2
+    elif dur > 600:         scores["Layang-Layang"] *= 0.3
+
+    if fc >= 3:   scores["Layang-Layang"] *= 1.8
+    elif fc == 2: scores["Layang-Layang"] *= 1.4
+
+    # Only use peak/di_dt discrimination when scaling is reliable
+    if scaled:
+        if peak < 2000:            scores["Layang-Layang"] *= 1.8
+        elif peak > 10000:         scores["Layang-Layang"] *= 0.3
+
+        if di_dt < 200_000:        scores["Layang-Layang"] *= 1.8
+        elif di_dt > 1_000_000:    scores["Layang-Layang"] *= 0.5
+
+    if fault_type == "SLG": scores["Layang-Layang"] *= 1.2
+
+    # ── Hewan: brief single-phase contact ────────────────────────────────────
     if dur < 100 and i0i1 > 0.8: scores["Hewan"] *= 2.5
     elif i0i1 > 0.5:             scores["Hewan"] *= 1.4
 
-    if fc == 1:               scores["Hewan"] *= 1.3
-    if 0 < peak < 4000:       scores["Hewan"] *= 1.4
-    elif peak > 10000:        scores["Hewan"] *= 0.3
+    if fc == 1:   scores["Hewan"] *= 1.3
+    elif fc == 2: scores["Hewan"] *= 1.2
 
-    # ── Benda Asing: foreign object, often multiple events ───────────────────
-    if fc >= 2:              scores["Benda Asing"] *= 2.0
-    if 80 <= dur <= 500:     scores["Benda Asing"] *= 1.4
+    if scaled:
+        if peak < 500:           scores["Hewan"] *= 2.0
+        elif 500 <= peak < 4000: scores["Hewan"] *= 1.4
+        elif peak > 10000:       scores["Hewan"] *= 0.2
 
-    # ── Pohon: branch contact — longer duration, may fail reclose ────────────
-    if dur > 300:             scores["Pohon"] *= 2.5
-    if dur > 600:             scores["Pohon"] *= 2.0
-    if fc > 2:                scores["Pohon"] *= 1.8
-    if reclose_ok is False:   scores["Pohon"] *= 2.0
-    if peak > 8000:           scores["Pohon"] *= 0.3   # tree rarely causes extreme currents
+        if di_dt < 50_000:       scores["Hewan"] *= 1.5
+
+    # ── Benda Asing: foreign object — medium duration ────────────────────────
+    if 80 <= dur <= 400:  scores["Benda Asing"] *= 1.8
+    elif dur < 50:        scores["Benda Asing"] *= 0.5
+
+    if fc >= 2:           scores["Benda Asing"] *= 1.8
+
+    if 20 <= thd <= 60:   scores["Benda Asing"] *= 1.5
+    elif thd > 60:        scores["Benda Asing"] *= 0.8
+
+    if scaled:
+        if 500 <= peak < 8000:  scores["Benda Asing"] *= 1.4
+        elif peak < 200:        scores["Benda Asing"] *= 0.6
+
+    # ── Pohon: branch contact — long duration, high fault count ──────────────
+    if dur > 600:   scores["Pohon"] *= 4.0
+    elif dur > 300: scores["Pohon"] *= 2.5
+    elif dur < 100: scores["Pohon"] *= 0.3
+
+    if fc > 3:   scores["Pohon"] *= 2.5
+    elif fc > 2: scores["Pohon"] *= 1.8
+
+    if reclose_ok is False or reclose_ok == "False":
+        scores["Pohon"] *= 2.0
+
+    if scaled:
+        if 500 <= peak < 6000:  scores["Pohon"] *= 1.3
+        elif peak > 8000:       scores["Pohon"] *= 0.3
+
+    if fault_type in ("SLG", "DLG"): scores["Pohon"] *= 1.2
 
     return scores
 
