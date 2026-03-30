@@ -4,37 +4,38 @@
 {% block extra_css %}
 .upload-section { max-width: 680px; margin: 0 auto; }
 .upload-box {
-    border: 3px dashed #cbd5e0; border-radius: 12px;
+    border: 3px dashed var(--border-color); border-radius: 12px;
     padding: 50px 40px; text-align: center; margin: 24px 0;
-    background: #f7fafc; transition: all 0.3s;
+    background: var(--bg-card); transition: all 0.3s;
 }
-.upload-box.dragover { border-color: #3b82f6; background: #dbeafe; }
+.upload-box.dragover { border-color: var(--accent); background: rgba(59,130,246,0.08); }
 .file-label {
-    display: inline-block; padding: 10px 20px; background: #3b82f6;
+    display: inline-block; padding: 10px 20px; background: var(--accent);
     color: white; border-radius: 8px; cursor: pointer;
     font-weight: 600; margin: 8px 4px; transition: all 0.2s;
 }
 .file-label:hover { background: #2563eb; transform: translateY(-2px); }
 .file-input { display: none; }
 .file-info {
-    margin-top: 16px; padding: 14px; background: white;
-    border-radius: 8px; border: 1px solid #e2e8f0;
+    margin-top: 16px; padding: 14px; background: var(--bg-card);
+    border-radius: 8px; border: 1px solid var(--border-color);
 }
-.file-name { font-weight: 600; color: #2d3748; margin: 4px 0; }
-.file-size { color: #718096; font-size: 13px; }
+.file-name { font-weight: 600; color: var(--text-primary); margin: 4px 0; }
+.file-size { color: var(--text-secondary); font-size: 13px; }
 .info-card {
-    background: #eff6ff; border-left: 4px solid #3b82f6;
+    background: rgba(59,130,246,0.08); border-left: 4px solid var(--accent);
     padding: 18px; margin: 18px 0; border-radius: 8px;
 }
-.info-card h3 { color: #1e40af; margin-bottom: 10px; }
-.info-card ul  { margin-left: 20px; color: #1e3a8a; }
+.info-card h3 { color: var(--accent-dark); margin-bottom: 10px; }
+[data-theme="dark"] .info-card h3 { color: #60a5fa; }
+.info-card ul  { margin-left: 20px; color: var(--text-primary); }
 .info-card li  { margin: 7px 0; }
 {% endblock %}
 
 {% block content %}
 <div class="header">
     <h1>Unggah File COMTRADE</h1>
-    <p>Klasifikasi penyebab gangguan — Rele Jarak SUTT UIT JBT</p>
+    <p>Klasifikasi penyebab gangguan berbasis AI</p>
 </div>
 
 <div class="content">
@@ -45,8 +46,8 @@
                 <li><strong>.cfg</strong> — file konfigurasi COMTRADE</li>
                 <li><strong>.dat</strong> — file data (nama sama dengan .cfg)</li>
             </ul>
-            <p style="margin-top:12px; color:#1e3a8a;">
-                Atau gunakan <a href="{{ url_for('browse') }}" style="color:#1e40af; font-weight:600;">Pilih Rekaman</a>
+            <p style="margin-top:12px; color:var(--text-primary);">
+                Atau gunakan <a href="{{ url_for('browse') }}" style="color:var(--accent); font-weight:600;">Pilih Rekaman</a>
                 untuk memilih langsung dari folder raw_data tanpa perlu unggah.
             </p>
         </div>
@@ -54,11 +55,11 @@
         <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data">
             <div class="upload-box" id="dropZone">
                 <div style="font-size:44px; margin-bottom:16px;">📤</div>
-                <h3>Drag &amp; Drop Files Here</h3>
-                <p style="margin:12px 0; color:#718096;">or</p>
-                <label for="cfg_file" class="file-label">Select .cfg</label>
+                <h3 style="color:var(--text-primary);">Seret &amp; Lepas File di Sini</h3>
+                <p style="margin:12px 0; color:var(--text-secondary);">atau</p>
+                <label for="cfg_file" class="file-label">Pilih .cfg</label>
                 <input type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" class="file-input" required>
-                <label for="dat_file" class="file-label">Select .dat</label>
+                <label for="dat_file" class="file-label">Pilih .dat</label>
                 <input type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" class="file-input" required>
             </div>
 
@@ -77,26 +78,26 @@
         <div class="info-card" style="margin-top:36px;">
             <h3>Yang dianalisis sistem</h3>
             <ul>
-                <li><strong>Aturan deterministic (Tier 1)</strong> — KONDUKTOR: perubahan fasa saat AR, gangguan permanen 3 fasa</li>
-                <li><strong>Classifier ML (Tier 2)</strong> — pohon keputusan PETIR: di/dt, arus puncak, rasio i0/i1</li>
-                <li><strong>Fitur yang ditampilkan</strong> — zona, fasa, durasi, jumlah gangguan, hasil AR</li>
+                <li><strong>Aturan deterministik (Tier 1)</strong> — perubahan fasa saat AR, trip 3-fasa gagal reclose</li>
+                <li><strong>Classifier ML (Tier 2)</strong> — pola di/dt, arus puncak, rasio i0/i1 untuk deteksi gangguan transien</li>
+                <li><strong>Estimasi penyebab (heuristik)</strong> — persentase kemungkinan PETIR / Layang / Hewan / Benda Asing / Pohon</li>
             </ul>
         </div>
     </div>
 </div>
 
-<div class="footer">Sistem Klasifikasi Penyebab Gangguan DFR — UIT JBT | Hanya file rele jarak (DISTANCE)</div>
+<div class="footer">Sistem Klasifikasi Penyebab Gangguan DFR — UIT JBT | Hanya mendukung rele jarak (DISTANCE)</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-const cfgInput  = document.getElementById('cfg_file');
-const datInput  = document.getElementById('dat_file');
+const cfgInput   = document.getElementById('cfg_file');
+const datInput   = document.getElementById('dat_file');
 const analyzeBtn = document.getElementById('analyzeBtn');
-const fileInfo  = document.getElementById('fileInfo');
-const cfgInfo   = document.getElementById('cfgInfo');
-const datInfo   = document.getElementById('datInfo');
-const dropZone  = document.getElementById('dropZone');
+const fileInfo   = document.getElementById('fileInfo');
+const cfgInfo    = document.getElementById('cfgInfo');
+const datInfo    = document.getElementById('datInfo');
+const dropZone   = document.getElementById('dropZone');
 
 function fmt(bytes) {
     const k = 1024, s = ['B','KB','MB'];
@@ -129,7 +130,7 @@ dropZone.addEventListener('drop', e => {
 
 document.getElementById('uploadForm').addEventListener('submit', () => {
     analyzeBtn.disabled = true;
-    analyzeBtn.innerHTML = '⏳ Analyzing...';
+    analyzeBtn.innerHTML = '⏳ Menganalisis...';
 });
 </script>
 {% endblock %}

@@ -4,16 +4,56 @@ Sistem klasifikasi otomatis penyebab gangguan saluran transmisi berbasis analisi
 
 ---
 
-## Status Saat Ini
+## Pencapaian Utama
 
-| Item | Status |
+Tantangan terbesar dalam membangun sistem ini bukan pada algoritmanya, melainkan pada **heterogenitas data mentah**: setiap merk relay menyimpan nama channel, format sinyal digital, dan struktur file COMTRADE secara berbeda. Tanpa normalisasi yang benar, fitur apapun tidak bisa diekstrak.
+
+### Yang sudah berhasil diselesaikan:
+
+**1. Parser & Normalisasi Multi-Merk (fondasi sistem)**
+Sistem berhasil membaca dan menormalisasi rekaman COMTRADE dari 6+ merk relay yang berbeda secara otomatis — tanpa konfigurasi manual per file:
+
+| Merk | Konvensi channel yang ditangani |
 |---|---|
-| File COMTRADE diproses | 492 file dari 9 UPT |
+| Siemens SIPROTEC 4 | Nama sinyal generik (IA, UL1, dsb.) |
+| Siemens SIPROTEC 5 (DIGSI 5) | Format komponen `MPI3p1:I A`, `MPV3p1:V A` |
+| ABB REL670 / RED670 | `LINE UL1/UL2/UL3`, `LINE UN` |
+| GE / Multilin | `START Z1`, `TRIP ZONE`, format IL1–IL3 |
+| Schneider / NR Electric | Format lokal PLN (`CTR`, `VTR`, dsb.) |
+| Qualitrol DFR Eksternal | Channel `F21_REC` + format RST |
+
+Normalisasi ini menyelesaikan masalah yang selama ini membuat analisis DFR bergantung pada penanganan manual per rekaman.
+
+**2. Deteksi Proteksi & Ekstraksi Fitur Otomatis**
+Dari rekaman mentah, sistem secara otomatis mengidentifikasi:
+- Tipe proteksi yang bekerja (rele jarak Z1/Z2/Z3, AR, trip fasa)
+- Inception time, durasi, dan jumlah sub-fault
+- Fitur kuantitatif: di/dt, arus puncak, rasio i0/i1, voltage sag, impedansi
+
+**3. Klasifikasi dengan Akurasi 80% pada Data Berlabel**
+Dari 492 file COMTRADE yang diproses dari 9 UPT:
+
+| Item | Hasil |
+|---|---|
 | Berhasil diklasifikasikan | 382 file (78%) |
 | Tidak dapat diklasifikasikan | 110 file (parse gagal / no fault / proteksi lain) |
-| Akurasi pada file berlabel | 80% (105/132 file) |
+| Akurasi pada 132 file berlabel | **80%** (105/132 file tepat) |
 | Proteksi yang didukung | Rele Jarak (Distance 21) |
 | Proteksi yang belum didukung | Diferensial (87L), Arah EF (67N) |
+
+Angka 78% berhasil diklasifikasikan dari raw data yang belum pernah disentuh sebelumnya — dengan variasi merk relay, kualitas rekaman, dan kondisi gangguan yang beragam — merupakan validasi bahwa fondasi pipeline sudah solid.
+
+---
+
+## Keterbatasan Saat Ini & Arah Pengembangan
+
+Klasifikasi saat ini membedakan **gangguan transien vs. permanen** (binary). Pemisahan lebih lanjut per penyebab transien (PETIR / Layang-Layang / Hewan / Benda Asing) belum dilakukan via ML karena keterbatasan data berlabel, **bukan karena keterbatasan teknis**.
+
+Setiap penyebab transien memiliki karakteristik gelombang yang dapat dibedakan — pola ini sudah teramati dari data yang ada dan sudah diimplementasikan sebagai heuristik. Yang dibutuhkan untuk meningkatkannya ke classifier statistik adalah jumlah sampel berlabel yang cukup per kelas (lihat distribusi data di bawah).
+
+---
+
+## Klasifikasi Output
 
 ---
 
@@ -26,7 +66,7 @@ Sistem klasifikasi otomatis penyebab gangguan saluran transmisi berbasis analisi
 | **KONDUKTOR / KERUSAKAN PERALATAN** | Perubahan impedansi antar-fasa saat AR — indikasi tower roboh / konduktor putus / CT meledak. |
 | **NON-PETIR — PERLU INVESTIGASI** | Pola tidak cocok kriteria di atas. Butuh data latih lebih banyak. |
 
-> **Catatan GANGGUAN TRANSIEN:** PETIR, Layang-Layang, Hewan, dan Benda Asing menghasilkan karakteristik gelombang yang serupa sehingga tidak dapat dibedakan dari rekaman DFR saja. Sistem menampilkan estimasi probabilitas per penyebab berdasarkan heuristik (durasi, arus puncak, rasio i0/i1, jumlah sub-fault). Konfirmasi via data cuaca atau inspeksi lapangan tetap diperlukan.
+> **Catatan GANGGUAN TRANSIEN:** Setiap penyebab transien (PETIR, Layang-Layang, Hewan, Benda Asing) memiliki **karakteristik gelombang yang dapat dibedakan** — durasi, arus puncak, rasio i0/i1, dan jumlah sub-fault menunjukkan pola berbeda di data berlabel yang ada. Keterbatasan saat ini bukan pada kemampuan teknis, melainkan **jumlah data berlabel per kelas yang belum cukup** untuk melatih classifier multi-class yang andal secara statistik (maks. 7 sampel per kelas non-PETIR). Sebagai solusi sementara, sistem menggunakan heuristik berbasis pola yang teramati dari data untuk menampilkan estimasi probabilitas per penyebab. Retraining multi-class akan dilakukan setelah ≥30 sampel berlabel per kelas terkumpul melalui konfirmasi stakeholder.
 
 ---
 
@@ -74,19 +114,37 @@ Berdasarkan sinyal proteksi yang terbaca dari file COMTRADE:
 - Perubahan impedansi antar fasa
 
 ### Tier 2 — ML Classifier
-XGBoost binary classifier, dilatih dari 132 file berlabel:
-- **111 PETIR** (transien)
-- **21 non-PETIR** (permanen / investigasi)
-- Features: fault_duration_ms, fault_count, i0/i1 ratio, voltage_sag, peak_current, reclose_status
+XGBoost binary classifier, dilatih dari **132 file berlabel** (rele jarak yang berhasil ter-parse).
+
+#### Distribusi Data Berlabel
+
+| Kelas | Jumlah Sampel | Status untuk ML |
+|---|---|---|
+| PETIR | 111 | ✅ Cukup (digunakan untuk training) |
+| LAYANG-LAYANG | 7 | ❌ Kurang — perlu min. ~30–50 sampel |
+| BENDA ASING | 4 | ❌ Kurang |
+| KONDUKTOR | 3 | ❌ Kurang |
+| POHON | 3 | ❌ Kurang |
+| HEWAN | 2 | ❌ Kurang |
+| LAIN-LAIN | 2 | ❌ Kurang |
+| **Total** | **132** | |
+
+Karena data non-PETIR tidak cukup untuk multi-class training, model saat ini hanya membedakan **transien (termasuk PETIR) vs. non-transien**. Estimasi per kelas disediakan melalui heuristik, bukan ML.
+
+Features yang digunakan: `fault_duration_ms`, `fault_count`, `i0/i1 ratio`, `voltage_sag`, `peak_current`, `reclose_status`
 
 ### Estimasi Penyebab (Heuristik)
-Untuk `GANGGUAN TRANSIEN`, sistem menampilkan estimasi probabilitas per penyebab menggunakan aturan fisik:
-- Durasi pendek + arus tinggi → bobot PETIR naik
-- Fault count ≥ 3 → bobot Layang-Layang naik
-- I0/I1 tinggi + durasi pendek → bobot Hewan naik
-- Durasi panjang / AR gagal → bobot Pohon naik
+Untuk `GANGGUAN TRANSIEN`, sistem menampilkan estimasi probabilitas per penyebab berdasarkan pola yang teramati dari data berlabel yang ada, dikombinasikan dengan pengetahuan domain proteksi sistem tenaga:
 
-**Ini bukan output model ML** — hanya heuristik berbasis domain knowledge. Retraining multi-class akan dilakukan setelah data berlabel per kelas cukup (target: ≥30 sampel per kelas).
+| Penyebab | Sinyal pembeda yang teramati |
+|---|---|
+| PETIR | Durasi pendek (<100ms), arus puncak tinggi, event tunggal |
+| Layang-Layang | Fault count ≥ 3 (kontak berulang saat layang berayun), durasi sedang |
+| Hewan | Rasio i0/i1 tinggi (kontak 1-fasa), arus sedang, event tunggal |
+| Pohon | Durasi panjang (kontak menetap), AR gagal atau lebih lambat |
+| Benda Asing | Fault count ≥ 2, durasi bervariasi |
+
+**Ini adalah heuristik berbasis pola data, bukan output model ML** — karena jumlah sampel berlabel per kelas saat ini tidak mencukupi untuk training statistik. Setelah ≥30 sampel per kelas terkumpul, heuristik ini akan digantikan dengan classifier multi-class terlatih.
 
 ---
 

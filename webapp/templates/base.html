@@ -1,63 +1,109 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}AI Analisis Gangguan — TFA{% endblock %}</title>
     <style>
+        /* ── Tema (variabel CSS) ─────────────────────────────────────────────── */
+        :root {
+            --bg-body:        linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            --bg-nav:         rgba(255,255,255,0.96);
+            --bg-card:        #ffffff;
+            --text-primary:   #1e293b;
+            --text-secondary: #64748b;
+            --text-nav:       #4a5568;
+            --text-brand:     #1e3a8a;
+            --border-color:   #e2e8f0;
+            --shadow:         rgba(0,0,0,0.25);
+            --footer-border:  #e5e7eb;
+            --footer-text:    #6b7280;
+            --accent:         #3b82f6;
+            --accent-dark:    #1e3a8a;
+        }
+        [data-theme="dark"] {
+            --bg-body:        linear-gradient(135deg, #060d1f 0%, #0f172a 100%);
+            --bg-nav:         rgba(15,23,42,0.97);
+            --bg-card:        #1e293b;
+            --text-primary:   #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-nav:       #94a3b8;
+            --text-brand:     #60a5fa;
+            --border-color:   #334155;
+            --shadow:         rgba(0,0,0,0.55);
+            --footer-border:  #334155;
+            --footer-text:    #64748b;
+            --accent:         #3b82f6;
+            --accent-dark:    #1e40af;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            background: var(--bg-body);
             min-height: 100vh;
             padding: 20px;
+            transition: background 0.3s;
         }
         .navbar {
-            background: rgba(255,255,255,0.95);
-            padding: 15px 30px;
+            background: var(--bg-nav);
+            padding: 14px 28px;
             border-radius: 12px;
             margin-bottom: 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 12px var(--shadow);
+            backdrop-filter: blur(8px);
         }
-        .navbar-brand { font-size: 20px; font-weight: bold; color: #1e3a8a; }
+        .navbar-brand { font-size: 19px; font-weight: 700; color: var(--text-brand); }
+        .navbar-right  { display: flex; align-items: center; gap: 20px; }
         .navbar-links { display: flex; gap: 20px; }
-        .navbar-links a { color: #4a5568; text-decoration: none; font-weight: 500; }
-        .navbar-links a:hover { color: #1e3a8a; }
+        .navbar-links a { color: var(--text-nav); text-decoration: none; font-weight: 500; font-size: 14px; }
+        .navbar-links a:hover { color: var(--accent); }
+
+        /* Dark mode toggle */
+        .theme-toggle {
+            background: none; border: 2px solid var(--border-color);
+            border-radius: 20px; padding: 5px 12px; cursor: pointer;
+            font-size: 16px; display: flex; align-items: center; gap: 6px;
+            color: var(--text-nav); transition: all 0.2s;
+        }
+        .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+        .theme-toggle .toggle-label { font-size: 12px; font-weight: 600; }
+
         .container {
             max-width: 1100px;
             margin: 0 auto;
-            background: white;
+            background: var(--bg-card);
             border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 20px 60px var(--shadow);
             overflow: hidden;
         }
         .header {
-            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            background: linear-gradient(135deg, var(--accent-dark) 0%, var(--accent) 100%);
             color: white;
             padding: 36px 40px;
             text-align: center;
         }
-        .header h1 { font-size: 28px; margin-bottom: 8px; }
+        .header h1 { font-size: 27px; margin-bottom: 8px; }
         .header p  { font-size: 15px; opacity: 0.88; }
-        .content   { padding: 36px 40px; }
+        .content   { padding: 36px 40px; color: var(--text-primary); }
         .btn {
             padding: 11px 22px; border: none; border-radius: 8px;
             font-size: 15px; font-weight: 600; cursor: pointer;
             transition: all 0.2s; text-decoration: none; display: inline-block;
         }
-        .btn-primary  { background: #3b82f6; color: white; }
-        .btn-primary:hover  { background: #2563eb; transform: translateY(-2px); }
-        .btn-success  { background: #10b981; color: white; }
-        .btn-success:hover  { background: #059669; transform: translateY(-2px); }
+        .btn-primary   { background: #3b82f6; color: white; }
+        .btn-primary:hover   { background: #2563eb; transform: translateY(-2px); }
+        .btn-success   { background: #10b981; color: white; }
+        .btn-success:hover   { background: #059669; transform: translateY(-2px); }
         .btn-secondary { background: #6b7280; color: white; }
         .btn-secondary:hover { background: #4b5563; }
         .footer {
             text-align: center; padding: 16px;
-            color: #6b7280; font-size: 13px;
-            border-top: 1px solid #e5e7eb;
+            color: var(--footer-text); font-size: 13px;
+            border-top: 1px solid var(--footer-border);
         }
         {% block extra_css %}{% endblock %}
     </style>
@@ -65,15 +111,44 @@
 <body>
     <div class="navbar">
         <div class="navbar-brand">⚡ AI Analisis Gangguan — TFA</div>
-        <div class="navbar-links">
-            <a href="{{ url_for('index') }}">Unggah File</a>
-            <a href="{{ url_for('browse') }}">Pilih Rekaman</a>
-            <a href="{{ url_for('history') }}">Riwayat</a>
+        <div class="navbar-right">
+            <div class="navbar-links">
+                <a href="{{ url_for('index') }}">Unggah File</a>
+                <a href="{{ url_for('browse') }}">Pilih Rekaman</a>
+                <a href="{{ url_for('history') }}">Riwayat</a>
+            </div>
+            <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Ganti tema">
+                <span id="themeIcon">🌙</span>
+                <span class="toggle-label" id="themeLabel">Gelap</span>
+            </button>
         </div>
     </div>
     <div class="container">
         {% block content %}{% endblock %}
     </div>
     {% block extra_js %}{% endblock %}
+    <script>
+        (function() {
+            const saved = localStorage.getItem('theme') || 'light';
+            applyTheme(saved);
+        })();
+
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            const icon  = document.getElementById('themeIcon');
+            const label = document.getElementById('themeLabel');
+            if (icon && label) {
+                if (theme === 'dark') { icon.textContent = '☀️'; label.textContent = 'Terang'; }
+                else                  { icon.textContent = '🌙'; label.textContent = 'Gelap';  }
+            }
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme') || 'light';
+            const next = current === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('theme', next);
+            applyTheme(next);
+        }
+    </script>
 </body>
 </html>

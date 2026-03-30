@@ -50,73 +50,109 @@ from models.train import FEATURE_COLS, encode_reclose
 MODEL_PATH = Path(__file__).parent / "petir_tree.pkl"
 
 
-def _transient_cause_likelihoods(row: dict) -> str:
+def _compute_cause_scores(row: dict) -> dict:
     """
-    Rule-based heuristic to estimate likelihood of each transient cause.
-    Returns a formatted string like: PETIR 55% | Layang 25% | Hewan 12% | ...
-
+    Rule-based heuristic scores for each transient cause.
     Based on domain knowledge of power system protection behaviour.
     NOT a trained model — do not interpret as statistically rigorous.
     """
-    dur   = float(row.get("fault_duration_ms", 80) or 80)
-    fc    = int(row.get("fault_count", 1) or 1)
-    i0i1  = float(row.get("i0_i1_ratio", 0) or 0)
-    peak  = float(row.get("peak_current_a", 0) or 0)
-    reclose_ok = row.get("reclose_ok", None)
+    dur        = float(row.get("fault_duration_ms", 80) or 80)
+    fc         = int(row.get("fault_count", 1) or 1)
+    i0i1       = float(row.get("i0_i1_ratio", 0) or 0)
+    peak       = float(row.get("peak_fault_current_a", 0) or 0)
+    reclose_ok = row.get("reclose_successful")
 
     scores = {"PETIR": 3.0, "Layang-Layang": 1.0, "Hewan": 1.0,
               "Benda Asing": 1.0, "Pohon": 0.5}
 
     # ── PETIR: short arc, high current, single event ─────────────────────────
-    if dur < 60:   scores["PETIR"] *= 2.0
+    if dur < 60:    scores["PETIR"] *= 2.0
     elif dur < 100: scores["PETIR"] *= 1.4
     elif dur > 400: scores["PETIR"] *= 0.3
 
-    if peak > 10000: scores["PETIR"] *= 2.0
-    elif peak > 5000: scores["PETIR"] *= 1.5
-    elif 0 < peak < 500: scores["PETIR"] *= 0.6
+    if peak > 10000:          scores["PETIR"] *= 2.0
+    elif peak > 5000:         scores["PETIR"] *= 1.5
+    elif 0 < peak < 500:      scores["PETIR"] *= 0.6
 
-    if fc == 1: scores["PETIR"] *= 1.3
-    elif fc > 3: scores["PETIR"] *= 0.4
+    if fc == 1:   scores["PETIR"] *= 1.3
+    elif fc > 3:  scores["PETIR"] *= 0.4
 
     # ── Layang-Layang: kite swings back → multiple sub-faults, medium dur ────
-    if fc >= 3: scores["Layang-Layang"] *= 3.0
+    if fc >= 3:   scores["Layang-Layang"] *= 3.0
     elif fc == 2: scores["Layang-Layang"] *= 1.8
 
-    if 50 <= dur <= 350: scores["Layang-Layang"] *= 1.5
-    elif dur < 30 or dur > 600: scores["Layang-Layang"] *= 0.4
+    if 50 <= dur <= 350:            scores["Layang-Layang"] *= 1.5
+    elif dur < 30 or dur > 600:     scores["Layang-Layang"] *= 0.4
 
     # ── Hewan: brief single-phase contact, moderate current ──────────────────
     if dur < 100 and i0i1 > 0.8: scores["Hewan"] *= 2.5
-    elif i0i1 > 0.5: scores["Hewan"] *= 1.4
+    elif i0i1 > 0.5:             scores["Hewan"] *= 1.4
 
-    if fc == 1: scores["Hewan"] *= 1.3
-    if 0 < peak < 4000: scores["Hewan"] *= 1.4
-    elif peak > 10000: scores["Hewan"] *= 0.3
+    if fc == 1:               scores["Hewan"] *= 1.3
+    if 0 < peak < 4000:       scores["Hewan"] *= 1.4
+    elif peak > 10000:        scores["Hewan"] *= 0.3
 
     # ── Benda Asing: foreign object, often multiple events ───────────────────
-    if fc >= 2: scores["Benda Asing"] *= 2.0
-    if 80 <= dur <= 500: scores["Benda Asing"] *= 1.4
+    if fc >= 2:              scores["Benda Asing"] *= 2.0
+    if 80 <= dur <= 500:     scores["Benda Asing"] *= 1.4
 
     # ── Pohon: branch contact — longer duration, may fail reclose ────────────
-    if dur > 300: scores["Pohon"] *= 2.5
-    if dur > 600: scores["Pohon"] *= 2.0
-    if fc > 2: scores["Pohon"] *= 1.8
-    if reclose_ok is False: scores["Pohon"] *= 2.0
-    if peak > 8000: scores["Pohon"] *= 0.3   # tree rarely causes extreme currents
+    if dur > 300:             scores["Pohon"] *= 2.5
+    if dur > 600:             scores["Pohon"] *= 2.0
+    if fc > 2:                scores["Pohon"] *= 1.8
+    if reclose_ok is False:   scores["Pohon"] *= 2.0
+    if peak > 8000:           scores["Pohon"] *= 0.3   # tree rarely causes extreme currents
 
-    total = sum(scores.values())
-    parts = sorted(scores.items(), key=lambda x: -x[1])
+    return scores
+
+
+def _transient_cause_likelihoods(row: dict) -> str:
+    """Returns a formatted string like: PETIR 55% | Layang 25% | Hewan 12% | ..."""
+    scores = _compute_cause_scores(row)
+    total  = sum(scores.values())
+    parts  = sorted(scores.items(), key=lambda x: -x[1])
     return "  |  ".join(f"{k} {v/total*100:.0f}%" for k, v in parts)
+
+
+_CAUSE_RECOMMENDATIONS = {
+    "PETIR": (
+        "Rekaman dapat diarsipkan sebagai indikasi gangguan petir. "
+        "Bandingkan dengan data cuaca atau rekaman penangkal petir di sekitar jalur untuk konfirmasi."
+    ),
+    "Layang-Layang": (
+        "Periksa area ROW untuk aktivitas layang-layang. "
+        "Koordinasikan sosialisasi larangan bermain layang-layang di bawah SUTT dengan masyarakat sekitar jalur."
+    ),
+    "Hewan": (
+        "Inspeksi isolator dan tower di zona gangguan untuk jejak kontak hewan. "
+        "Pertimbangkan pemasangan pelindung hewan (bird/animal guard) pada tower yang rawan."
+    ),
+    "Benda Asing": (
+        "Lakukan inspeksi visual tower dan konduktor di zona gangguan untuk benda asing "
+        "(plastik, banner, tali, dll). Dokumentasikan untuk pemetaan titik rawan."
+    ),
+    "Pohon": (
+        "Inspeksi vegetasi di sepanjang ROW pada zona gangguan. "
+        "Jadwalkan pemangkasan jika terdapat pohon yang mendekati jarak aman konduktor."
+    ),
+}
+
+
+def _transient_recommendation(row: dict) -> str:
+    """Return a context-aware follow-up recommendation based on the top-scoring cause."""
+    scores = _compute_cause_scores(row)
+    top    = max(scores, key=scores.get)
+    return _CAUSE_RECOMMENDATIONS.get(top, "Verifikasi penyebab melalui data pendukung.")
 
 
 @dataclass
 class ClassificationResult:
     label: str
     confidence: float
-    tier: int           # 1 = rules, 2 = ML, 0 = fallback
-    rule_name: str      # populated for Tier 1 hits
+    tier: int             # 1 = rules, 2 = ML, 0 = fallback
+    rule_name: str        # populated for Tier 1 hits
     evidence: str
+    recommendation: str   # follow-up action based on top cause
     # Raw feature values for audit
     features: dict
 
@@ -195,12 +231,26 @@ def classify_file(cfg_path: str) -> ClassificationResult:
     # ── Step 6: Tier 1 rules ──────────────────────────────────────────────────
     rule_result: Optional[RuleResult] = apply_rules(row)
     if rule_result is not None:
+        _tier1_recs = {
+            "KONDUKTOR / KERUSAKAN PERALATAN": (
+                "Lakukan inspeksi mekanik pada tower dan konduktor di zona operasi rele. "
+                "Periksa kondisi joint, klem, dan struktur tower."
+            ),
+            "GANGGUAN PERMANEN": (
+                "Periksa kondisi jalur transmisi di zona gangguan. "
+                "Verifikasi rekaman AR dan data operasi sebelum memastikan penyebab."
+            ),
+        }
         return ClassificationResult(
             label=rule_result.label,
             confidence=rule_result.confidence,
             tier=1,
             rule_name=rule_result.rule_name,
             evidence=rule_result.evidence + _unknown_prot_caveat,
+            recommendation=_tier1_recs.get(
+                rule_result.label,
+                "Kumpulkan data pendukung untuk menentukan penyebab gangguan."
+            ),
             features=row,
         )
 
@@ -213,7 +263,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         proba = clf.predict_proba(X)[0]
 
         if pred == 1:   # transient fault
-            confidence = float(proba[1])
+            confidence  = float(proba[1])
             likelihoods = _transient_cause_likelihoods(row)
             return ClassificationResult(
                 label="GANGGUAN TRANSIEN",
@@ -230,22 +280,27 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                     f"— konfirmasi via data cuaca atau inspeksi lapangan."
                     + _unknown_prot_caveat
                 ),
+                recommendation=_transient_recommendation(row),
                 features=row,
             )
         else:
             confidence = float(proba[0])
             return ClassificationResult(
-                label="NON-PETIR — PERLU INVESTIGASI",
+                label="GANGGUAN PERMANEN — PERLU INVESTIGASI",
                 confidence=confidence,
                 tier=2,
                 rule_name="petir_decision_tree_non_petir",
                 evidence=(
-                    f"Classifier ML: bukan PETIR (prob non-PETIR={confidence:.0%})  "
+                    f"Classifier ML: bukan transien (prob={confidence:.0%})  "
                     f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
                     f"fault_count={row.get('fault_count', '?')}  "
                     f"— penyebab spesifik belum dapat ditentukan "
                     f"(LAYANG/POHON/HEWAN/BENDA ASING butuh lebih banyak data latih)."
                     + _unknown_prot_caveat
+                ),
+                recommendation=(
+                    "Kumpulkan data pendukung (cuaca, CCTV, laporan patroli) "
+                    "untuk menentukan penyebab gangguan ini."
                 ),
                 features=row,
             )
@@ -259,6 +314,10 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         evidence=(
             "Tidak ada aturan Tier 1 yang cocok dan model ML belum tersedia — jalankan models/train.py"
             + _unknown_prot_caveat
+        ),
+        recommendation=(
+            "Kumpulkan data pendukung (cuaca, CCTV, laporan patroli) "
+            "untuk menentukan penyebab gangguan ini."
         ),
         features=row,
     )

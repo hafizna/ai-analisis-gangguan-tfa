@@ -58,7 +58,7 @@ def apply_rules(row: dict) -> Optional[RuleResult]:
                 f"fault_count={fault_count}, fasa={faulted_phases}, "
                 f"dur={duration_ms:.0f}ms - perubahan fasa saat AR, "
                 "diduga kerusakan mekanik (konduktor/tower). "
-                "Periksa timing antar gangguan sebelum menyimpulkan."
+                "Verifikasi dengan rekaman AR dan catatan operasi."
             ),
         )
 
@@ -73,7 +73,7 @@ def apply_rules(row: dict) -> Optional[RuleResult]:
             evidence=(
                 f"trip_type=three_pole, reclose_successful=False - "
                 "gangguan permanen 3-fasa, AR gagal. "
-                "Diduga kerusakan mekanik/konduktor, perlu investigasi lapangan."
+                "Diduga kerusakan mekanik/konduktor — verifikasi kondisi jalur diperlukan."
             ),
         )
 
@@ -87,8 +87,7 @@ def apply_rules(row: dict) -> Optional[RuleResult]:
             rule_name="explicit_failed_reclose",
             evidence=(
                 f"reclose_successful=False - gangguan permanen, AR gagal. "
-                "Penyebab spesifik belum dapat ditentukan dari rekaman ini. "
-                "Kirim tim lapangan."
+                "Penyebab spesifik belum dapat ditentukan dari rekaman ini saja."
             ),
         )
 
