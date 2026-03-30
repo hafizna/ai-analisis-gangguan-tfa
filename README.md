@@ -1,4 +1,4 @@
-# AI Analisis Gangguan Transmisi — UIT JBT
+# AI Analisis Gangguan Transmisi
 
 Sistem klasifikasi otomatis penyebab gangguan saluran transmisi berbasis analisis rekaman DFR (COMTRADE IEEE C37.111).
 
