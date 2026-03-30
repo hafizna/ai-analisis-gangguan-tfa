@@ -1,136 +1,203 @@
 {% extends "base.html" %}
-{% block title %}Unggah File COMTRADE{% endblock %}
+{% block title %}Unggah File — TFA{% endblock %}
+{% block topbar_title %}Unggah File COMTRADE{% endblock %}
+{% block topbar_sub %}Klasifikasi penyebab gangguan berbasis AI{% endblock %}
+{% block nav_upload %}active{% endblock %}
 
 {% block extra_css %}
-.upload-section { max-width: 680px; margin: 0 auto; }
-.upload-box {
-    border: 3px dashed var(--border-color); border-radius: 12px;
-    padding: 50px 40px; text-align: center; margin: 24px 0;
-    background: var(--bg-card); transition: all 0.3s;
+.upload-wrap {
+    max-width: 620px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
 }
-.upload-box.dragover { border-color: var(--accent); background: rgba(59,130,246,0.08); }
-.file-label {
-    display: inline-block; padding: 10px 20px; background: var(--accent);
-    color: white; border-radius: 8px; cursor: pointer;
-    font-weight: 600; margin: 8px 4px; transition: all 0.2s;
-}
-.file-label:hover { background: #2563eb; transform: translateY(-2px); }
-.file-input { display: none; }
-.file-info {
-    margin-top: 16px; padding: 14px; background: var(--bg-card);
-    border-radius: 8px; border: 1px solid var(--border-color);
-}
-.file-name { font-weight: 600; color: var(--text-primary); margin: 4px 0; }
-.file-size { color: var(--text-secondary); font-size: 13px; }
 .info-card {
-    background: rgba(59,130,246,0.08); border-left: 4px solid var(--accent);
-    padding: 18px; margin: 18px 0; border-radius: 8px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 18px 20px;
 }
-.info-card h3 { color: var(--accent-dark); margin-bottom: 10px; }
-[data-theme="dark"] .info-card h3 { color: #60a5fa; }
-.info-card ul  { margin-left: 20px; color: var(--text-primary); }
-.info-card li  { margin: 7px 0; }
+.info-card h4 {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px;
+}
+.info-card ul { margin-left: 18px; }
+.info-card li { font-size: 13px; color: var(--text); margin: 5px 0; line-height: 1.5; }
+.info-card a  { color: var(--accent); font-weight: 600; text-decoration: none; }
+.info-card a:hover { text-decoration: underline; }
+
+.drop-zone {
+    background: var(--panel-bg);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 48px 32px;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: default;
+}
+.drop-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(59,130,246,0.05);
+}
+.drop-icon { font-size: 40px; margin-bottom: 14px; opacity: 0.5; }
+.drop-zone h3 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.drop-zone p  { font-size: 13px; color: var(--text-muted); margin-bottom: 18px; }
+.file-btns { display: flex; justify-content: center; gap: 10px; }
+.file-pick {
+    display: inline-block; padding: 9px 18px;
+    background: var(--accent); color: white;
+    border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 600;
+    transition: background 0.15s;
+}
+.file-pick:hover { background: #2563eb; }
+.file-input { display: none; }
+
+.file-info-box {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; margin-top: 12px;
+    display: none;
+}
+.file-row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+.file-row-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.file-row-size { font-size: 12px; color: var(--text-muted); }
+
+.submit-row { text-align: center; margin-top: 4px; }
+
+.analysis-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+}
+.analysis-card h4 {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px;
+}
+.analysis-items { display: flex; flex-direction: column; gap: 8px; }
+.analysis-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    font-size: 13px; color: var(--text); line-height: 1.5;
+}
+.analysis-item::before {
+    content: '→'; color: var(--accent); font-weight: 700;
+    flex-shrink: 0; margin-top: 1px;
+}
 {% endblock %}
 
 {% block content %}
-<div class="header">
-    <h1>Unggah File COMTRADE</h1>
-    <p>Klasifikasi penyebab gangguan berbasis AI</p>
-</div>
+<div class="upload-wrap">
 
-<div class="content">
-    <div class="upload-section">
-        <div class="info-card">
-            <h3>File yang Diperlukan</h3>
-            <ul>
-                <li><strong>.cfg</strong> — file konfigurasi COMTRADE</li>
-                <li><strong>.dat</strong> — file data (nama sama dengan .cfg)</li>
-            </ul>
-            <p style="margin-top:12px; color:var(--text-primary);">
-                Atau gunakan <a href="{{ url_for('browse') }}" style="color:var(--accent); font-weight:600;">Pilih Rekaman</a>
-                untuk memilih langsung dari folder raw_data tanpa perlu unggah.
-            </p>
-        </div>
+    <div class="info-card">
+        <h4>File yang Diperlukan</h4>
+        <ul>
+            <li><strong>.cfg</strong> — file konfigurasi COMTRADE</li>
+            <li><strong>.dat</strong> — file data (nama sama dengan .cfg)</li>
+        </ul>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:10px;">
+            Atau gunakan
+            <a href="{{ url_for('browse') }}">Pilih Rekaman</a>
+            untuk memilih langsung dari folder tanpa mengunggah.
+        </p>
+    </div>
 
-        <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data">
-            <div class="upload-box" id="dropZone">
-                <div style="font-size:44px; margin-bottom:16px;">📤</div>
-                <h3 style="color:var(--text-primary);">Drag &amp; Drop File di Sini</h3>
-                <p style="margin:12px 0; color:var(--text-secondary);">atau pilih file</p>
-                <label for="cfg_file" class="file-label">Pilih .cfg</label>
+    <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data">
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-icon">📤</div>
+            <h3>Seret & Lepas File di Sini</h3>
+            <p>atau pilih file secara manual</p>
+            <div class="file-btns">
+                <label for="cfg_file" class="file-pick">Pilih .cfg</label>
                 <input type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" class="file-input" required>
-                <label for="dat_file" class="file-label">Pilih .dat</label>
+                <label for="dat_file" class="file-pick">Pilih .dat</label>
                 <input type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" class="file-input" required>
             </div>
+        </div>
 
-            <div id="fileInfo" class="file-info" style="display:none;">
-                <div id="cfgInfo"></div>
-                <div id="datInfo"></div>
+        <div class="file-info-box" id="fileInfo">
+            <div id="cfgRow" class="file-row" style="display:none;">
+                <span style="font-size:16px;">📄</span>
+                <div>
+                    <div class="file-row-name" id="cfgName"></div>
+                    <div class="file-row-size" id="cfgSize"></div>
+                </div>
             </div>
-
-            <div style="text-align:center; margin-top:28px;">
-                <button type="submit" class="btn btn-primary" id="analyzeBtn" disabled>
-                    ⚡ Analisis Gangguan
-                </button>
+            <div id="datRow" class="file-row" style="display:none;">
+                <span style="font-size:16px;">📊</span>
+                <div>
+                    <div class="file-row-name" id="datName"></div>
+                    <div class="file-row-size" id="datSize"></div>
+                </div>
             </div>
-        </form>
+        </div>
 
-        <div class="info-card" style="margin-top:36px;">
-            <h3>Yang dianalisis sistem</h3>
-            <ul>
-                <li><strong>Aturan deterministik (Tier 1)</strong> — perubahan fasa saat AR, trip 3-fasa gagal reclose</li>
-                <li><strong>Classifier ML (Tier 2)</strong> — pola di/dt, arus puncak, rasio i0/i1 untuk deteksi gangguan transien</li>
-                <li><strong>Estimasi penyebab (heuristik)</strong> — persentase kemungkinan PETIR / Layang / Hewan / Benda Asing / Pohon</li>
-            </ul>
+        <div class="submit-row" style="margin-top:16px;">
+            <button type="submit" class="btn btn-primary" id="analyzeBtn" disabled style="padding:11px 32px; font-size:15px;">
+                Analisis Gangguan
+            </button>
+        </div>
+    </form>
+
+    <div class="analysis-card">
+        <h4>Yang Dianalisis Sistem</h4>
+        <div class="analysis-items">
+            <div class="analysis-item"><strong>Aturan deterministik (Layer 1)</strong> — perubahan fasa saat AR, trip 3-fasa gagal reclose</div>
+            <div class="analysis-item"><strong>Konfirmasi transien (Layer 0)</strong> — AR berhasil dengan arus nyata langsung dikategorikan transien</div>
+            <div class="analysis-item"><strong>Classifier ML (Layer 2)</strong> — pola di/dt, arus puncak, rasio i0/i1</div>
+            <div class="analysis-item"><strong>Estimasi penyebab (heuristik)</strong> — persentase kemungkinan PETIR / Layang / Hewan / Benda Asing / Pohon</div>
         </div>
     </div>
-</div>
 
-<div class="footer">Sistem Klasifikasi Penyebab Gangguan DFR | Hanya mendukung rele jarak (DISTANCE)</div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-const cfgInput   = document.getElementById('cfg_file');
-const datInput   = document.getElementById('dat_file');
-const analyzeBtn = document.getElementById('analyzeBtn');
-const fileInfo   = document.getElementById('fileInfo');
-const cfgInfo    = document.getElementById('cfgInfo');
-const datInfo    = document.getElementById('datInfo');
-const dropZone   = document.getElementById('dropZone');
+const cfgInput  = document.getElementById('cfg_file');
+const datInput  = document.getElementById('dat_file');
+const analyzeBtn= document.getElementById('analyzeBtn');
+const fileInfo  = document.getElementById('fileInfo');
+const dropZone  = document.getElementById('dropZone');
 
-function fmt(bytes) {
-    const k = 1024, s = ['B','KB','MB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + s[i];
+function fmt(b) {
+    const k=1024, s=['B','KB','MB'];
+    const i=Math.floor(Math.log(b)/Math.log(k));
+    return (b/Math.pow(k,i)).toFixed(1)+' '+s[i];
 }
-
 function update() {
-    const c = cfgInput.files[0], d = datInput.files[0];
-    if (c || d) fileInfo.style.display = 'block';
-    if (c) cfgInfo.innerHTML = `<div class="file-name">📄 ${c.name}</div><div class="file-size">${fmt(c.size)}</div>`;
-    if (d) datInfo.innerHTML = `<div class="file-name">📊 ${d.name}</div><div class="file-size">${fmt(d.size)}</div>`;
-    analyzeBtn.disabled = !(c && d);
+    const c=cfgInput.files[0], d=datInput.files[0];
+    if (c||d) fileInfo.style.display='block';
+    if (c) {
+        document.getElementById('cfgRow').style.display='flex';
+        document.getElementById('cfgName').textContent=c.name;
+        document.getElementById('cfgSize').textContent=fmt(c.size);
+    }
+    if (d) {
+        document.getElementById('datRow').style.display='flex';
+        document.getElementById('datName').textContent=d.name;
+        document.getElementById('datSize').textContent=fmt(d.size);
+    }
+    analyzeBtn.disabled=!(c&&d);
 }
-
 cfgInput.addEventListener('change', update);
 datInput.addEventListener('change', update);
 
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e => {
+dropZone.addEventListener('dragover', e=>{e.preventDefault(); dropZone.classList.add('dragover');});
+dropZone.addEventListener('dragleave', ()=>dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e=>{
     e.preventDefault(); dropZone.classList.remove('dragover');
     for (let f of e.dataTransfer.files) {
-        const dt = new DataTransfer(); dt.items.add(f);
-        if (f.name.toLowerCase().endsWith('.cfg')) cfgInput.files = dt.files;
-        if (f.name.toLowerCase().endsWith('.dat')) datInput.files = dt.files;
+        const dt=new DataTransfer(); dt.items.add(f);
+        if (f.name.toLowerCase().endsWith('.cfg')) { cfgInput.files=dt.files; }
+        if (f.name.toLowerCase().endsWith('.dat')) { datInput.files=dt.files; }
     }
     update();
 });
-
-document.getElementById('uploadForm').addEventListener('submit', () => {
-    analyzeBtn.disabled = true;
-    analyzeBtn.innerHTML = '⏳ Menganalisis...';
+document.getElementById('uploadForm').addEventListener('submit',()=>{
+    analyzeBtn.disabled=true;
+    analyzeBtn.textContent='Menganalisis...';
 });
 </script>
 {% endblock %}

@@ -3,152 +3,253 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}AI Analisis Gangguan — TFA{% endblock %}</title>
+    <title>{% block title %}TFA — Fault Analyzer{% endblock %}</title>
     <style>
-        /* ── Tema (variabel CSS) ─────────────────────────────────────────────── */
+        /* ── Reset ────────────────────────────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        /* ── Theme tokens ─────────────────────────────────────────────────────── */
         :root {
-            --bg-body:        linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
-            --bg-nav:         rgba(255,255,255,0.96);
-            --bg-card:        #ffffff;
-            --text-primary:   #1e293b;
-            --text-secondary: #64748b;
-            --text-nav:       #4a5568;
-            --text-brand:     #1e3a8a;
-            --border-color:   #e2e8f0;
-            --shadow:         rgba(0,0,0,0.25);
-            --footer-border:  #e5e7eb;
-            --footer-text:    #6b7280;
-            --accent:         #3b82f6;
-            --accent-dark:    #1e3a8a;
+            --sidebar-bg:    #0b1120;
+            --sidebar-text:  #94a3b8;
+            --sidebar-hover: rgba(255,255,255,0.07);
+            --sidebar-active:#1e293b;
+            --brand-amber:   #f59e0b;
+
+            --main-bg:       #f1f5f9;
+            --panel-bg:      #ffffff;
+            --card-bg:       #f8fafc;
+            --border:        #e2e8f0;
+            --text:          #0f172a;
+            --text-muted:    #64748b;
+            --accent:        #3b82f6;
+            --accent-dark:   #1e3a8a;
+            --green:         #10b981;
+            --amber:         #f59e0b;
+            --red:           #ef4444;
+            --topbar-bg:     #ffffff;
+            --topbar-border: #e2e8f0;
         }
         [data-theme="dark"] {
-            --bg-body:        linear-gradient(135deg, #060d1f 0%, #0f172a 100%);
-            --bg-nav:         rgba(15,23,42,0.97);
-            --bg-card:        #1e293b;
-            --text-primary:   #e2e8f0;
-            --text-secondary: #94a3b8;
-            --text-nav:       #94a3b8;
-            --text-brand:     #60a5fa;
-            --border-color:   #334155;
-            --shadow:         rgba(0,0,0,0.55);
-            --footer-border:  #334155;
-            --footer-text:    #64748b;
-            --accent:         #3b82f6;
-            --accent-dark:    #1e40af;
+            --main-bg:       #0f172a;
+            --panel-bg:      #1e293b;
+            --card-bg:       #1e293b;
+            --border:        #334155;
+            --text:          #e2e8f0;
+            --text-muted:    #94a3b8;
+            --topbar-bg:     #1e293b;
+            --topbar-border: #334155;
         }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        /* ── App shell ────────────────────────────────────────────────────────── */
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-            background: var(--bg-body);
+            background: var(--main-bg);
             min-height: 100vh;
-            padding: 20px;
-            transition: background 0.3s;
-        }
-        .navbar {
-            background: var(--bg-nav);
-            padding: 14px 28px;
-            border-radius: 12px;
-            margin-bottom: 24px;
             display: flex;
-            justify-content: space-between;
+        }
+
+        /* ── Sidebar ──────────────────────────────────────────────────────────── */
+        .sidebar {
+            width: 200px;
+            min-width: 200px;
+            background: var(--sidebar-bg);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            top: 0; left: 0; bottom: 0;
+            z-index: 100;
+        }
+        .sidebar-brand {
+            padding: 24px 20px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .brand-icon {
+            font-size: 22px;
+            margin-bottom: 6px;
+            color: var(--brand-amber);
+        }
+        .brand-name {
+            font-size: 20px;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 0.04em;
+        }
+        .brand-sub {
+            font-size: 10px;
+            font-weight: 600;
+            color: #475569;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-top: 1px;
+        }
+
+        .sidebar-section {
+            padding: 20px 12px 4px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #334155;
+        }
+        .sidebar-nav { padding: 4px 8px; flex: 1; }
+        .nav-item {
+            display: flex;
             align-items: center;
-            box-shadow: 0 4px 12px var(--shadow);
-            backdrop-filter: blur(8px);
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            color: var(--sidebar-text);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.15s;
+            margin-bottom: 2px;
         }
-        .navbar-brand { font-size: 19px; font-weight: 700; color: var(--text-brand); }
-        .navbar-right  { display: flex; align-items: center; gap: 20px; }
-        .navbar-links { display: flex; gap: 20px; }
-        .navbar-links a { color: var(--text-nav); text-decoration: none; font-weight: 500; font-size: 14px; }
-        .navbar-links a:hover { color: var(--accent); }
+        .nav-item:hover { background: var(--sidebar-hover); color: #ffffff; }
+        .nav-item.active { background: var(--sidebar-active); color: #ffffff; }
+        .nav-icon { font-size: 15px; width: 18px; text-align: center; }
 
-        /* Dark mode toggle */
-        .theme-toggle {
-            background: none; border: 2px solid var(--border-color);
-            border-radius: 20px; padding: 5px 12px; cursor: pointer;
-            font-size: 16px; display: flex; align-items: center; gap: 6px;
-            color: var(--text-nav); transition: all 0.2s;
+        .sidebar-footer {
+            padding: 16px 16px 20px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+            font-size: 11px;
+            color: #334155;
+            line-height: 1.6;
         }
-        .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
-        .theme-toggle .toggle-label { font-size: 12px; font-weight: 600; }
+        .sidebar-footer strong { color: #475569; display: block; margin-bottom: 2px; }
 
-        .container {
-            max-width: 1100px;
-            margin: 0 auto;
-            background: var(--bg-card);
-            border-radius: 16px;
-            box-shadow: 0 20px 60px var(--shadow);
-            overflow: hidden;
+        /* ── Main area ────────────────────────────────────────────────────────── */
+        .main-wrap {
+            margin-left: 200px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
         }
-        .header {
-            background: linear-gradient(135deg, var(--accent-dark) 0%, var(--accent) 100%);
-            color: white;
-            padding: 36px 40px;
-            text-align: center;
+
+        /* ── Top bar ──────────────────────────────────────────────────────────── */
+        .topbar {
+            background: var(--topbar-bg);
+            border-bottom: 1px solid var(--topbar-border);
+            padding: 0 28px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 50;
         }
-        .header h1 { font-size: 27px; margin-bottom: 8px; }
-        .header p  { font-size: 15px; opacity: 0.88; }
-        .content   { padding: 36px 40px; color: var(--text-primary); }
+        .topbar-title { font-size: 15px; font-weight: 700; color: var(--text); }
+        .topbar-sub   { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+        .topbar-right { display: flex; align-items: center; gap: 16px; }
+
+        .status-dot {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 12px; font-weight: 600; color: #10b981;
+        }
+        .status-dot::before {
+            content: ''; width: 7px; height: 7px;
+            background: #10b981; border-radius: 50%;
+            box-shadow: 0 0 6px #10b981;
+        }
+
+        .theme-btn {
+            background: none; border: 1px solid var(--border);
+            border-radius: 6px; padding: 5px 10px; cursor: pointer;
+            font-size: 13px; color: var(--text-muted);
+            transition: all 0.15s;
+        }
+        .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* ── Page content ─────────────────────────────────────────────────────── */
+        .page-content {
+            flex: 1;
+            padding: 28px;
+            color: var(--text);
+        }
+
+        /* ── Shared components ────────────────────────────────────────────────── */
         .btn {
-            padding: 11px 22px; border: none; border-radius: 8px;
-            font-size: 15px; font-weight: 600; cursor: pointer;
-            transition: all 0.2s; text-decoration: none; display: inline-block;
+            padding: 10px 20px; border: none; border-radius: 8px;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+            transition: all 0.15s; text-decoration: none; display: inline-block;
         }
-        .btn-primary   { background: #3b82f6; color: white; }
-        .btn-primary:hover   { background: #2563eb; transform: translateY(-2px); }
-        .btn-success   { background: #10b981; color: white; }
-        .btn-success:hover   { background: #059669; transform: translateY(-2px); }
-        .btn-secondary { background: #6b7280; color: white; }
-        .btn-secondary:hover { background: #4b5563; }
-        .footer {
-            text-align: center; padding: 16px;
-            color: var(--footer-text); font-size: 13px;
-            border-top: 1px solid var(--footer-border);
-        }
+        .btn-primary   { background: var(--accent); color: white; }
+        .btn-primary:hover   { background: #2563eb; }
+        .btn-success   { background: var(--green); color: white; }
+        .btn-success:hover   { background: #059669; }
+        .btn-secondary { background: #64748b; color: white; }
+        .btn-secondary:hover { background: #475569; }
+        .btn-outline {
+            background: transparent; border: 1.5px solid var(--border);
+            color: var(--text); }
+        .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
         {% block extra_css %}{% endblock %}
     </style>
 </head>
 <body>
-    <div class="navbar">
-        <div class="navbar-brand">⚡ AI Analisis Gangguan — TFA</div>
-        <div class="navbar-right">
-            <div class="navbar-links">
-                <a href="{{ url_for('index') }}">Unggah File</a>
-                <a href="{{ url_for('browse') }}">Pilih Rekaman</a>
-                <a href="{{ url_for('history') }}">Riwayat</a>
-            </div>
-            <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Ganti tema">
-                <span id="themeIcon">🌙</span>
-                <span class="toggle-label" id="themeLabel">Gelap</span>
-            </button>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-icon">⚡</div>
+            <div class="brand-name">TFA</div>
+            <div class="brand-sub">Fault Analyzer</div>
         </div>
+        <div class="sidebar-section">Menu</div>
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('index') }}"   class="nav-item {% block nav_upload %}{% endblock %}">
+                <span class="nav-icon">↑</span> Unggah File
+            </a>
+            <a href="{{ url_for('browse') }}"  class="nav-item {% block nav_browse %}{% endblock %}">
+                <span class="nav-icon">▣</span> Pilih Rekaman
+            </a>
+            <a href="{{ url_for('history') }}" class="nav-item {% block nav_history %}{% endblock %}">
+                <span class="nav-icon">∿</span> Riwayat
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <strong>Klasifikasi Penyebab Gangguan</strong>
+            Berbasis AI
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main-wrap">
+        <header class="topbar">
+            <div>
+                <div class="topbar-title">{% block topbar_title %}AI Analisis Gangguan{% endblock %}</div>
+                <div class="topbar-sub">{% block topbar_sub %}{% endblock %}</div>
+            </div>
+            <div class="topbar-right">
+                <div class="status-dot">Sistem aktif</div>
+                <button class="theme-btn" onclick="toggleTheme()" id="themeBtn">🌙 Gelap</button>
+            </div>
+        </header>
+
+        <main class="page-content">
+            {% block content %}{% endblock %}
+        </main>
     </div>
-    <div class="container">
-        {% block content %}{% endblock %}
-    </div>
-    {% block extra_js %}{% endblock %}
+
     <script>
         (function() {
             const saved = localStorage.getItem('theme') || 'light';
-            applyTheme(saved);
+            applyTheme(saved, false);
         })();
-
-        function applyTheme(theme) {
+        function applyTheme(theme, save) {
             document.documentElement.setAttribute('data-theme', theme);
-            const icon  = document.getElementById('themeIcon');
-            const label = document.getElementById('themeLabel');
-            if (icon && label) {
-                if (theme === 'dark') { icon.textContent = '☀️'; label.textContent = 'Terang'; }
-                else                  { icon.textContent = '🌙'; label.textContent = 'Gelap';  }
-            }
+            const btn = document.getElementById('themeBtn');
+            if (btn) btn.textContent = theme === 'dark' ? '☀️ Terang' : '🌙 Gelap';
+            if (save) localStorage.setItem('theme', theme);
         }
-
         function toggleTheme() {
-            const current = document.documentElement.getAttribute('data-theme') || 'light';
-            const next = current === 'dark' ? 'light' : 'dark';
-            localStorage.setItem('theme', next);
-            applyTheme(next);
+            const cur = document.documentElement.getAttribute('data-theme') || 'light';
+            applyTheme(cur === 'dark' ? 'light' : 'dark', true);
         }
     </script>
+    {% block extra_js %}{% endblock %}
 </body>
 </html>

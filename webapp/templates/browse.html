@@ -1,92 +1,103 @@
 {% extends "base.html" %}
-{% block title %}Pilih Rekaman{% endblock %}
+{% block title %}Pilih Rekaman — TFA{% endblock %}
+{% block topbar_title %}Pilih Rekaman{% endblock %}
+{% block topbar_sub %}Analisis langsung dari folder rekaman{% endblock %}
+{% block nav_browse %}active{% endblock %}
 
 {% block extra_css %}
 .filter-bar {
-    display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;
-    align-items: center;
+    display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;
 }
-.filter-bar select, .filter-bar input {
-    padding: 8px 12px; border: 2px solid #cbd5e0; border-radius: 8px;
-    font-size: 14px; background: white;
+.filter-control {
+    padding: 8px 12px; border: 1.5px solid var(--border);
+    border-radius: 8px; font-size: 13px;
+    background: var(--panel-bg); color: var(--text);
+    transition: border-color 0.15s;
 }
-.filter-bar select:focus, .filter-bar input:focus {
-    outline: none; border-color: #3b82f6;
-}
+.filter-control:focus { outline: none; border-color: var(--accent); }
+.filter-count { font-size: 12px; color: var(--text-muted); margin-left: auto; }
 
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th {
-    background: #1e3a8a; color: white;
-    padding: 10px 12px; text-align: left; font-weight: 600;
+.table-wrap {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+.table-wrap table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table-wrap th {
+    background: #0b1120; color: #94a3b8;
+    padding: 11px 14px; text-align: left; font-size: 11px;
+    font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
     position: sticky; top: 0;
 }
-td { padding: 9px 12px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
-tr:hover td { background: #eff6ff; cursor: pointer; }
+.table-wrap td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    color: var(--text); vertical-align: middle;
+}
+.table-wrap tr:last-child td { border-bottom: none; }
+.table-wrap tr:hover td { background: rgba(59,130,246,0.04); }
 
 .label-badge {
-    display: inline-block; padding: 2px 9px; border-radius: 12px;
+    display: inline-block; padding: 2px 9px; border-radius: 20px;
     font-size: 11px; font-weight: 700; text-transform: uppercase;
 }
-.label-petir     { background: #fef9c3; color: #854d0e; }
-.label-layang    { background: #e0e7ff; color: #3730a3; }
-.label-konduktor { background: #fee2e2; color: #991b1b; }
-.label-pohon     { background: #dcfce7; color: #166534; }
-.label-hewan     { background: #fce7f3; color: #9d174d; }
-.label-benda     { background: #f3f4f6; color: #374151; }
+.label-petir     { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.label-layang    { background: rgba(139,92,246,0.15); color: #8b5cf6; }
+.label-konduktor { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.label-pohon     { background: rgba(16,185,129,0.15); color: #10b981; }
+.label-hewan     { background: rgba(236,72,153,0.15); color: #ec4899; }
+.label-benda     { background: rgba(100,116,139,0.15);color: #94a3b8; }
 
 .btn-analyze {
-    padding: 6px 14px; background: #3b82f6; color: white;
+    padding: 5px 14px; background: var(--accent); color: white;
     border: none; border-radius: 6px; font-size: 12px;
     font-weight: 600; cursor: pointer; white-space: nowrap;
 }
 .btn-analyze:hover { background: #2563eb; }
 
-.count-bar {
-    background: #eff6ff; border-radius: 8px; padding: 12px 16px;
-    margin-bottom: 16px; font-size: 13px; color: #1e40af;
+.offline-card {
+    background: var(--panel-bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 48px; text-align: center;
 }
+.offline-card h3 { font-size: 18px; font-weight: 700; color: var(--text); margin: 12px 0 8px; }
+.offline-card p  { font-size: 14px; color: var(--text-muted); line-height: 1.6; max-width: 440px; margin: 0 auto 20px; }
 {% endblock %}
 
 {% block content %}
-<div class="header">
-    <h1>Pilih Rekaman</h1>
-    <p>Analisis langsung dari folder raw_data — tanpa perlu unggah file</p>
+
+{% if offline_mode %}
+<div class="offline-card">
+    <div style="font-size:40px; opacity:0.4;">📂</div>
+    <h3>Rekaman tidak tersedia</h3>
+    <p>
+        Folder rekaman (<code>raw_data/</code>) tidak ditemukan di lingkungan ini.
+        Gunakan <strong>Unggah File</strong> untuk menganalisis file COMTRADE secara langsung.
+    </p>
+    <a href="{{ url_for('index') }}" class="btn btn-primary">Unggah File COMTRADE</a>
 </div>
 
-<div class="content">
-    <div class="filter-bar">
-        <select id="filterUpt" onchange="filterTable()">
-            <option value="">Semua UPT</option>
-            {% for upt in upts %}
-            <option value="{{ upt }}">{{ upt }}</option>
-            {% endfor %}
-        </select>
-        <select id="filterLabel" onchange="filterTable()">
-            <option value="">Semua Label</option>
-            {% for lbl in labels %}
-            <option value="{{ lbl }}">{{ lbl }}</option>
-            {% endfor %}
-        </select>
-        <input type="text" id="filterText" placeholder="Cari nama GI / file..."
-               oninput="filterTable()" style="flex:1; min-width:200px;">
-        <span id="countDisplay" style="color:#6b7280; font-size:13px;"></span>
-    </div>
+{% else %}
+<div class="filter-bar">
+    <select id="filterUpt" class="filter-control" onchange="filterTable()">
+        <option value="">Semua UPT</option>
+        {% for upt in upts %}
+        <option value="{{ upt }}">{{ upt }}</option>
+        {% endfor %}
+    </select>
+    <select id="filterLabel" class="filter-control" onchange="filterTable()">
+        <option value="">Semua Label</option>
+        {% for lbl in labels %}
+        <option value="{{ lbl }}">{{ lbl }}</option>
+        {% endfor %}
+    </select>
+    <input type="text" id="filterText" class="filter-control"
+           placeholder="Cari nama GI / file..." oninput="filterTable()"
+           style="flex:1; min-width:200px;">
+    <span id="countDisplay" class="filter-count"></span>
+</div>
 
-    {% if offline_mode %}
-    <div style="background:#eff6ff; border:2px solid #3b82f6; border-radius:12px;
-                padding:28px; margin-bottom:24px; text-align:center;">
-        <div style="font-size:40px; margin-bottom:12px;">☁️</div>
-        <h2 style="color:#1e40af; margin-bottom:10px;">Mode Demo / Cloud</h2>
-        <p style="color:#1e3a8a; line-height:1.7;">
-            Folder rekaman (<code>raw_data/</code>) tidak tersedia di lingkungan ini.<br>
-            Gunakan menu <strong>Unggah File</strong> untuk menganalisis file COMTRADE Anda sendiri.
-        </p>
-        <a href="{{ url_for('index') }}" class="btn btn-primary" style="margin-top:16px;">
-            Unggah File COMTRADE
-        </a>
-    </div>
-    {% elif events %}
-    <div style="overflow-x:auto; max-height:65vh; overflow-y:auto;">
+{% if events %}
+<div class="table-wrap" style="max-height:calc(100vh - 220px); overflow-y:auto;">
     <table id="eventsTable">
         <thead>
             <tr>
@@ -96,7 +107,7 @@ tr:hover td { background: #eff6ff; cursor: pointer; }
                 <th>Label</th>
                 <th>Nama Kejadian</th>
                 <th>File</th>
-                <th>Aksi</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -106,17 +117,18 @@ tr:hover td { background: #eff6ff; cursor: pointer; }
         {% elif 'layang' in lbl_lower %}{% set bc = 'label-layang' %}
         {% elif 'konduktor' in lbl_lower %}{% set bc = 'label-konduktor' %}
         {% elif 'pohon' in lbl_lower %}{% set bc = 'label-pohon' %}
-        {% elif 'hewan' in lbl_lower or 'ular' in lbl_lower or 'babi' in lbl_lower %}{% set bc = 'label-hewan' %}
+        {% elif 'hewan' in lbl_lower %}{% set bc = 'label-hewan' %}
         {% else %}{% set bc = 'label-benda' %}{% endif %}
-        <tr data-upt="{{ ev.upt }}" data-label="{{ ev.label }}"
+        <tr data-upt="{{ ev.upt }}"
+            data-label="{{ ev.label }}"
             data-text="{{ ev.gi | lower }} {{ ev.filename | lower }} {{ ev.month | lower }}">
-            <td>{{ ev.upt }}</td>
-            <td>{{ ev.year }}</td>
-            <td style="white-space:nowrap; color:#6b7280; font-size:12px;">{{ ev.month }}</td>
+            <td style="color:var(--text-muted); font-size:12px;">{{ ev.upt }}</td>
+            <td style="color:var(--text-muted); font-size:12px;">{{ ev.year }}</td>
+            <td style="color:var(--text-muted); font-size:12px; white-space:nowrap;">{{ ev.month }}</td>
             <td><span class="label-badge {{ bc }}">{{ ev.label }}</span></td>
-            <td style="max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+            <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
                 title="{{ ev.gi }}">{{ ev.gi }}</td>
-            <td style="font-family:monospace; font-size:12px; color:#6b7280;">{{ ev.filename }}</td>
+            <td style="font-family:monospace; font-size:11px; color:var(--text-muted);">{{ ev.filename }}</td>
             <td>
                 <form method="POST" action="{{ url_for('analyze_from_browse') }}" style="margin:0;">
                     <input type="hidden" name="cfg_path" value="{{ ev.cfg_path }}">
@@ -127,48 +139,35 @@ tr:hover td { background: #eff6ff; cursor: pointer; }
         {% endfor %}
         </tbody>
     </table>
-    </div>
-    {% else %}
-    <div style="text-align:center; padding:60px; color:#9ca3af;">
-        <div style="font-size:48px; margin-bottom:16px;">📂</div>
-        <p>Tidak ada rekaman berlabel ditemukan di raw_data/</p>
-    </div>
-    {% endif %}
 </div>
+{% else %}
+<div style="text-align:center; padding:60px; color:var(--text-muted);">
+    <div style="font-size:40px; margin-bottom:12px; opacity:0.3;">📂</div>
+    <p>Tidak ada rekaman berlabel ditemukan di raw_data/</p>
+</div>
+{% endif %}
+{% endif %}
 
-<div class="footer">
-    Sistem Klasifikasi Penyebab Gangguan DFR — UIT JBT
-</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-const rows = Array.from(document.querySelectorAll('#eventsTable tbody tr'));
-
+const rows = Array.from(document.querySelectorAll('#eventsTable tbody tr') || []);
 function filterTable() {
     const upt   = document.getElementById('filterUpt').value.toLowerCase();
     const label = document.getElementById('filterLabel').value.toLowerCase();
     const text  = document.getElementById('filterText').value.toLowerCase();
-
     let visible = 0;
     rows.forEach(row => {
-        const rowUpt   = row.dataset.upt.toLowerCase();
-        const rowLabel = row.dataset.label.toLowerCase();
-        const rowText  = row.dataset.text;
-
-        const match = (!upt   || rowUpt.includes(upt))
-                   && (!label || rowLabel.includes(label))
-                   && (!text  || rowText.includes(text));
-
+        const match = (!upt   || row.dataset.upt.toLowerCase().includes(upt))
+                   && (!label || row.dataset.label.toLowerCase().includes(label))
+                   && (!text  || row.dataset.text.includes(text));
         row.style.display = match ? '' : 'none';
         if (match) visible++;
     });
-
-    document.getElementById('countDisplay').textContent =
-        visible + ' dari ' + rows.length + ' rekaman';
+    const el = document.getElementById('countDisplay');
+    if (el) el.textContent = visible + ' dari ' + rows.length + ' rekaman';
 }
-
-// Init count
 filterTable();
 </script>
 {% endblock %}

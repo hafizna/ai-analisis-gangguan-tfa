@@ -1,31 +1,52 @@
 {% extends "base.html" %}
-{% block title %}Proteksi Belum Didukung{% endblock %}
+{% block title %}Tidak Dapat Dianalisis — TFA{% endblock %}
+{% block topbar_title %}Rekaman Tidak Dapat Dianalisis{% endblock %}
+{% block topbar_sub %}{{ filename }}{% endblock %}
+
+{% block extra_css %}
+.error-wrap { max-width: 580px; margin: 40px auto; }
+.error-icon {
+    width: 64px; height: 64px; border-radius: 50%;
+    background: rgba(245,158,11,0.12);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; margin-bottom: 20px;
+}
+.reason-card {
+    background: var(--panel-bg); border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    border-radius: 10px; padding: 20px 22px; margin-bottom: 14px;
+}
+.reason-card h3 { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.reason-card p  { font-size: 13px; color: var(--text-muted); line-height: 1.7; }
+
+.tips-card {
+    background: var(--panel-bg); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 20px 22px; margin-bottom: 24px;
+}
+.tips-card h4 {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px;
+}
+.tips-card ul { margin-left: 18px; }
+.tips-card li { font-size: 13px; color: var(--text); line-height: 1.7; margin: 4px 0; }
+
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+{% endblock %}
 
 {% block content %}
-<div class="header">
-    <h1>Rekaman Tidak Dapat Dianalisis</h1>
-    <p>{{ filename }}</p>
-</div>
+<div class="error-wrap">
+    <div class="error-icon">⚠</div>
 
-<div class="content" style="text-align:center; padding: 50px 40px;">
-
-    <div style="font-size:56px; margin-bottom:20px;">⚠️</div>
-
-    <div style="background:#fef3c7; border:2px solid #f59e0b; border-radius:12px;
-                padding:28px 36px; max-width:600px; margin:0 auto 32px; text-align:left;">
-        <h2 style="color:#92400e; margin-bottom:12px; font-size:18px;">
-            {{ reason_title }}
-        </h2>
-        <p style="color:#78350f; line-height:1.7; font-size:15px;">
-            {{ reason_detail }}
-        </p>
+    <div class="reason-card">
+        <h3>{{ reason_title }}</h3>
+        <p>{{ reason_detail }}</p>
     </div>
 
     {% if tips %}
-    <div style="background:#eff6ff; border:2px solid #3b82f6; border-radius:12px;
-                padding:20px 28px; max-width:600px; margin:0 auto 32px; text-align:left;">
-        <h3 style="color:#1e40af; margin-bottom:10px; font-size:15px;">Informasi Tambahan</h3>
-        <ul style="color:#1e3a8a; line-height:1.8; padding-left:20px;">
+    <div class="tips-card">
+        <h4>Informasi Tambahan</h4>
+        <ul>
             {% for tip in tips %}
             <li>{{ tip }}</li>
             {% endfor %}
@@ -33,11 +54,9 @@
     </div>
     {% endif %}
 
-    <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
-        <a href="{{ url_for('browse') }}" class="btn btn-primary">Pilih Rekaman Lain</a>
-        <a href="{{ url_for('index') }}" class="btn btn-secondary">Unggah File Baru</a>
+    <div class="btn-row">
+        <a href="{{ url_for('index') }}" class="btn btn-primary">Unggah File Lain</a>
+        <a href="{{ url_for('browse') }}" class="btn btn-outline">Pilih Rekaman</a>
     </div>
 </div>
-
-<div class="footer">AI Analisis Gangguan — TFA</div>
 {% endblock %}

@@ -1,68 +1,86 @@
 {% extends "base.html" %}
-{% block title %}Riwayat Analisis{% endblock %}
+{% block title %}Riwayat Analisis — TFA{% endblock %}
+{% block topbar_title %}Riwayat Analisis{% endblock %}
+{% block topbar_sub %}Semua analisis yang sudah dikonfirmasi{% endblock %}
+{% block nav_history %}active{% endblock %}
 
 {% block extra_css %}
 .stats-row {
-    display: flex; gap: 16px; margin-bottom: 28px; flex-wrap: wrap;
+    display: flex; gap: 14px; margin-bottom: 24px; flex-wrap: wrap;
 }
 .stat-card {
-    background: rgba(59,130,246,0.08); border-radius: 10px;
-    padding: 18px 24px; flex: 1; min-width: 140px; text-align: center;
-    border: 1px solid var(--border-color);
+    background: var(--panel-bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 24px;
+    flex: 1; min-width: 130px; text-align: center;
 }
-.stat-value { font-size: 32px; font-weight: 800; color: var(--accent-dark); }
-[data-theme="dark"] .stat-value { color: #60a5fa; }
-.stat-label { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+.stat-value {
+    font-size: 34px; font-weight: 800; color: var(--accent);
+}
+.stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; font-weight: 600; }
 
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th {
-    background: var(--accent-dark); color: white;
-    padding: 10px 12px; text-align: left; font-weight: 600;
+.table-wrap {
+    background: var(--panel-bg); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden;
 }
-td { padding: 9px 12px; border-bottom: 1px solid var(--border-color); vertical-align: top; color: var(--text-primary); }
-tr:hover td { background: rgba(59,130,246,0.05); }
+.table-wrap table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table-wrap th {
+    background: #0b1120; color: #94a3b8;
+    padding: 10px 14px; text-align: left;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.07em; text-transform: uppercase;
+}
+.table-wrap td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    color: var(--text); vertical-align: middle;
+}
+.table-wrap tr:last-child td { border-bottom: none; }
+.table-wrap tr:hover td { background: rgba(59,130,246,0.04); }
 
 .badge {
-    display: inline-block; padding: 2px 9px; border-radius: 12px;
-    font-size: 12px; font-weight: 700;
+    display: inline-block; padding: 2px 9px; border-radius: 20px;
+    font-size: 11px; font-weight: 700;
 }
-.badge-transien  { background: #fef9c3; color: #854d0e; }
-.badge-konduktor { background: #fee2e2; color: #991b1b; }
-.badge-unknown   { background: #f3f4f6; color: #6b7280; }
-.badge-other     { background: #e0e7ff; color: #3730a3; }
+.badge-transien  { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.badge-permanen  { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.badge-konduktor { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.badge-other     { background: rgba(100,116,139,0.15);color: #94a3b8; }
 
 .correct-yes { color: #10b981; font-weight: 700; }
 .correct-no  { color: #ef4444; font-weight: 700; }
 
-.tier-1 { background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
-.tier-2 { background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.tier-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 20px;
+    font-size: 11px; font-weight: 700;
+}
+.tier-1 { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.tier-2 { background: rgba(59,130,246,0.15); color: #60a5fa; }
+
+.empty-state {
+    text-align: center; padding: 64px 32px; color: var(--text-muted);
+}
+.empty-state .empty-icon { font-size: 40px; opacity: 0.3; margin-bottom: 14px; }
+.empty-state p { font-size: 14px; margin-bottom: 20px; }
 {% endblock %}
 
 {% block content %}
-<div class="header">
-    <h1>Riwayat Analisis</h1>
-    <p>Semua analisis yang sudah dikonfirmasi — terbaru di atas</p>
+
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-value">{{ total }}</div>
+        <div class="stat-label">Total Dianalisis</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:#10b981;">{{ correct }}</div>
+        <div class="stat-label">Prediksi Tepat</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ accuracy }}%</div>
+        <div class="stat-label">Akurasi</div>
+    </div>
 </div>
 
-<div class="content">
-
-    <div class="stats-row">
-        <div class="stat-card">
-            <div class="stat-value">{{ total }}</div>
-            <div class="stat-label">Total Dianalisis</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ correct }}</div>
-            <div class="stat-label">Prediksi Tepat</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ accuracy }}%</div>
-            <div class="stat-label">Akurasi</div>
-        </div>
-    </div>
-
-    {% if rows %}
-    <div style="overflow-x:auto;">
+{% if rows %}
+<div class="table-wrap" style="max-height:calc(100vh - 260px); overflow-y:auto;">
     <table>
         <thead>
             <tr>
@@ -75,7 +93,7 @@ tr:hover td { background: rgba(59,130,246,0.05); }
                 <th>Tier</th>
                 <th>Zona</th>
                 <th>Fasa</th>
-                <th>Durasi (ms)</th>
+                <th>Durasi</th>
                 <th>AR</th>
                 <th>Keyakinan</th>
             </tr>
@@ -85,47 +103,44 @@ tr:hover td { background: rgba(59,130,246,0.05); }
         {% set lbl = r.predicted_label | upper %}
         {% if 'TRANSIEN' in lbl %}{% set bc = 'badge-transien' %}
         {% elif 'KONDUKTOR' in lbl %}{% set bc = 'badge-konduktor' %}
-        {% elif 'PERLU' in lbl or lbl == 'UNKNOWN' %}{% set bc = 'badge-unknown' %}
+        {% elif 'PERMANEN' in lbl %}{% set bc = 'badge-permanen' %}
         {% else %}{% set bc = 'badge-other' %}{% endif %}
         <tr>
-            <td style="white-space:nowrap;">{{ r.timestamp }}</td>
+            <td style="white-space:nowrap; color:var(--text-muted); font-size:12px;">{{ r.timestamp }}</td>
             <td>{{ r.station }}</td>
-            <td style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+            <td style="max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                       font-family:monospace; font-size:11px; color:var(--text-muted);"
                 title="{{ r.filename }}">{{ r.filename }}</td>
             <td><span class="badge {{ bc }}">{{ r.predicted_label }}</span></td>
-            <td>{{ r.confirmed_label }}</td>
+            <td style="font-size:12px; color:var(--text-muted);">{{ r.confirmed_label }}</td>
             <td>
-                {% if r.correct == 'True' %}
-                    <span class="correct-yes">✓</span>
-                {% else %}
-                    <span class="correct-no">✗</span>
-                {% endif %}
+                {% if r.correct == 'True' %}<span class="correct-yes">✓</span>
+                {% else %}<span class="correct-no">✗</span>{% endif %}
             </td>
             <td>
-                {% if r.tier == '1' %}<span class="tier-1">Aturan</span>
-                {% else %}<span class="tier-2">ML</span>{% endif %}
+                {% if r.tier == '1' %}<span class="tier-pill tier-1">Aturan</span>
+                {% else %}<span class="tier-pill tier-2">ML</span>{% endif %}
             </td>
-            <td>{{ r.zone }}</td>
-            <td>{{ r.phases }}</td>
-            <td>{{ r.duration_ms | float | round(0) | int }}</td>
-            <td>{{ r.reclose_ok }}</td>
-            <td>{{ (r.predicted_conf | float * 100) | round(0) | int }}%</td>
+            <td style="font-size:12px;">{{ r.zone }}</td>
+            <td style="font-size:12px;">{{ r.phases }}</td>
+            <td style="font-size:12px;">{{ r.duration_ms | float | round(0) | int }} ms</td>
+            <td style="font-size:12px;">{{ r.reclose_ok }}</td>
+            <td style="font-size:12px;">{{ (r.predicted_conf | float * 100) | round(0) | int }}%</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
-    </div>
-    {% else %}
-    <div style="text-align:center; padding:60px; color:var(--text-secondary);">
-        <div style="font-size:48px; margin-bottom:16px;">📋</div>
-        <p>Belum ada analisis yang dikonfirmasi. Unggah file COMTRADE untuk memulai.</p>
-    </div>
-    {% endif %}
-
-    <div style="margin-top:24px;">
-        <a href="{{ url_for('index') }}" class="btn btn-primary">Analisis File Baru</a>
-    </div>
+</div>
+<div style="margin-top:16px;">
+    <a href="{{ url_for('index') }}" class="btn btn-primary">Analisis File Baru</a>
 </div>
 
-<div class="footer">Sistem Klasifikasi Penyebab Gangguan DFR — UIT JBT</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">📋</div>
+    <p>Belum ada analisis yang dikonfirmasi.</p>
+    <a href="{{ url_for('index') }}" class="btn btn-primary">Mulai Analisis</a>
+</div>
+{% endif %}
+
 {% endblock %}

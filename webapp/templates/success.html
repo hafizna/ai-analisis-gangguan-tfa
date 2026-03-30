@@ -1,24 +1,33 @@
 {% extends "base.html" %}
-{% block title %}Tersimpan{% endblock %}
+{% block title %}Tersimpan — TFA{% endblock %}
+{% block topbar_title %}Konfirmasi Tersimpan{% endblock %}
+
+{% block extra_css %}
+.success-wrap {
+    max-width: 500px; margin: 60px auto; text-align: center;
+}
+.success-icon {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: rgba(16,185,129,0.12);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; margin: 0 auto 24px;
+}
+.success-wrap h2 { font-size: 22px; font-weight: 800; color: var(--text); margin-bottom: 10px; }
+.success-wrap p  { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 28px; }
+.btn-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+{% endblock %}
 
 {% block content %}
-<div class="header">
-    <h1>Konfirmasi Tersimpan</h1>
-    <p>Label gangguan berhasil dicatat.</p>
-</div>
-
-<div class="content" style="text-align:center; padding: 60px 40px;">
-    <div style="font-size:64px; margin-bottom:24px;">✅</div>
-    <h2 style="color:var(--accent-dark); margin-bottom:12px;">Label berhasil disimpan</h2>
-    <p style="color:var(--text-secondary); margin-bottom:36px;">
-        Konfirmasi penyebab gangguan sudah ditambahkan ke riwayat.<br>
+<div class="success-wrap">
+    <div class="success-icon">✓</div>
+    <h2>Label berhasil disimpan</h2>
+    <p>
+        Konfirmasi penyebab gangguan sudah dicatat ke riwayat.<br>
         Semakin banyak label terkumpul, model dapat dilatih ulang dengan akurasi lebih baik.
     </p>
-    <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
+    <div class="btn-row">
         <a href="{{ url_for('index') }}" class="btn btn-primary">Analisis File Lain</a>
-        <a href="{{ url_for('history') }}" class="btn btn-secondary">Lihat Riwayat</a>
+        <a href="{{ url_for('history') }}" class="btn btn-outline">Lihat Riwayat</a>
     </div>
 </div>
-
-<div class="footer">Sistem Klasifikasi Penyebab Gangguan DFR — UIT JBT</div>
 {% endblock %}
