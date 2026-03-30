@@ -57,24 +57,27 @@ FEATURE_COLS = [
 # Tier 1 rule signatures — rows matching these were already classified by rules,
 # so we exclude them from the Tier 2 training set.
 def is_tier1_handled(row) -> bool:
-    """Return True if a Tier 1 rule would fire on this row."""
+    """Return True if a Tier 1 rule would fire on this row. Must stay in sync with rules.py."""
     fault_count    = int(row.get("fault_count", 1))
     faulted_phases = str(row.get("faulted_phases", ""))
     duration_ms    = float(row.get("fault_duration_ms", 0))
     reclose_ok     = row.get("reclose_successful")
     trip_type      = str(row.get("trip_type", ""))
+    peak_i         = float(row.get("peak_fault_current_a", 0) or 0)
 
-    phase_count    = faulted_phases.count("+") + 1 if faulted_phases else 1
+    phase_count       = faulted_phases.count("+") + 1 if faulted_phases else 1
+    reclose_failed    = (reclose_ok is False or str(reclose_ok) == "False")
+    reclose_succeeded = (reclose_ok is True  or str(reclose_ok) == "True")
 
-    # Rule 1 — KONDUKTOR phase change
-    if fault_count >= 2 and phase_count == 2 and duration_ms > 80:
+    # Rule 1 — KONDUKTOR phase change (only when reclose did NOT succeed and count is sane)
+    if (fault_count >= 2 and fault_count <= 20 and phase_count == 2
+            and duration_ms > 80 and not reclose_succeeded):
         return True
-    # Rule 2 — three-pole failed reclose
-    reclose_failed = (reclose_ok is False or str(reclose_ok) == "False")
-    if reclose_failed and trip_type == "three_pole":
+    # Rule 2 — three-pole failed reclose (requires meaningful fault current)
+    if reclose_failed and trip_type == "three_pole" and peak_i > 50:
         return True
-    # Rule 3 — any failed reclose
-    if reclose_failed:
+    # Rule 3 — any failed reclose (requires real fault duration and current)
+    if reclose_failed and duration_ms > 10 and peak_i > 100:
         return True
     return False
 

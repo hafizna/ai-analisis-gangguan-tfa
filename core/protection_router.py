@@ -551,6 +551,7 @@ def _check_auto_reclose_attempted(status_names: List[str], status_dict: dict) ->
         'CB1.79.INPROG', '.79.INPROG',      # PCS900: "CB1.79.Inprog"
         'AR CLOSE CMD', 'LINE CLOSURE',      # ABB REL: "AR CLOSE Cmd.", "Line closure"
         '1POLE OPEN', '1POLE OPEN L',       # ABB REL: "1pole open L2"
+        '1-POLE OPEN',                      # Siemens 7SA: "CB1:Circuit break.:Position 1-pole phsA:open"
     ]
     for name in status_names:
         name_upper = name.upper()
@@ -559,10 +560,14 @@ def _check_auto_reclose_attempted(status_names: List[str], status_dict: dict) ->
             if len(samples) > 0 and samples.sum() > 0:
                 return True
 
-    # "Any Pole Dead" / "All Pole Dead" going 0→1→0 means CB opened then reclosed
+    # "Any Pole Dead" / "All Pole Dead" / "Position*open" going 0→1→0 = CB opened then reclosed
     for name in status_names:
         name_upper = name.upper()
-        if any(k in name_upper for k in ['POLE DEAD', 'ANY POLE', 'ALL POLE']):
+        is_pole_open = (
+            any(k in name_upper for k in ['POLE DEAD', 'ANY POLE', 'ALL POLE'])
+            or ('POSITION' in name_upper and 'OPEN' in name_upper)  # Siemens 7SA CB position
+        )
+        if is_pole_open:
             samples = status_dict.get(name, [])
             if len(samples) > 1:
                 vals = _np.array(samples, dtype=int)
@@ -590,30 +595,50 @@ def _check_auto_reclose_successful(status_names: List[str], status_dict: dict) -
         'SUCC_RCLS', '.79.SUCC',                   # PCS900: "CB1.79.Succ_Rcls"
     ]
     # Explicit failure channels
+    # NOTE: PERM_TRP intentionally excluded — in NR PCS900, "CB1.79.Perm_Trp1P/3P"
+    # means "permission to trip" (mode flag), NOT a failed reclose. The correct
+    # PCS900 failure channel is CB1.79.Fail_Rcls, covered by FAIL_RCLS below.
     failure_keywords = [
         'AR FAIL', 'AR LOCKOUT', 'AR FINAL',       # NARI: "AR Fail", "AR Lockout", "AR Final Trip"
         '79 FINAL', 'FINAL TRIP',                  # External DFR: "79 FINAL TRIP UNGARAN 1"
         'TOR', 'TRIP ON RECLOSE',                  # Alstom: trip-on-reclose
-        'FAIL_RCLS', 'PERM_TRP', '.79.FAIL',       # PCS900: "CB1.79.Fail_Rcls", "CB1.79.Perm_Trp1P"
+        'FAIL_RCLS', '.79.FAIL',                   # PCS900: "CB1.79.Fail_Rcls"
         'SOTF/TOR',                                 # Seen in Rawalo case
+        'LOCKOUT',                                  # Generic lockout = AR exhausted
     ]
 
     import numpy as _np
+
+    # Collect all matching channels first — success takes priority over failure.
+    # (Do not short-circuit on first failure: a success signal later in the list
+    #  should override a mode/status signal that superficially looks like failure.)
+    found_success = False
+    found_failure = False
+
     for name in status_names:
         name_upper = name.upper()
         samples = status_dict.get(name, [])
         if len(samples) == 0 or samples.sum() == 0:
             continue
 
-        if any(k in name_upper for k in failure_keywords):
-            return False
         if any(k in name_upper for k in success_keywords):
-            return True
+            found_success = True
+        if any(k in name_upper for k in failure_keywords):
+            found_failure = True
 
-    # "Any/All Pole Dead" going 0→1→0 means CB reclosed successfully
+    if found_success:
+        return True      # explicit success overrides any ambiguous failure flags
+    if found_failure:
+        return False
+
+    # "Any/All Pole Dead" or "Position*open" going 0→1→0 means CB reclosed successfully
     for name in status_names:
         name_upper = name.upper()
-        if any(k in name_upper for k in ['POLE DEAD', 'ANY POLE', 'ALL POLE']):
+        is_pole_open = (
+            any(k in name_upper for k in ['POLE DEAD', 'ANY POLE', 'ALL POLE'])
+            or ('POSITION' in name_upper and 'OPEN' in name_upper)  # Siemens 7SA
+        )
+        if is_pole_open:
             samples = status_dict.get(name, [])
             if len(samples) > 1:
                 vals = _np.array(samples, dtype=int)

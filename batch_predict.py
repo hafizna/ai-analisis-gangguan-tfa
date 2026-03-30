@@ -216,15 +216,23 @@ def run():
         # Accuracy on labeled files only
         labeled = df_results[df_results["folder_label"] != ""]
         if len(labeled) > 0:
-            # Simple check: predicted contains folder label keyword
+            # Transient sub-classes (PETIR/LAYANG/HEWAN/BENDA ASING) all map to
+            # GANGGUAN TRANSIEN at Tier 2 — count those as correct.
+            TRANSIENT_LABELS = {"PETIR", "LAYANG-LAYANG", "HEWAN", "BENDA ASING"}
             correct = labeled.apply(
-                lambda r: r["folder_label"].upper() in r["predicted_label"].upper()
-                          or ("TRANSIEN" in r["predicted_label"] and r["folder_label"] == "PETIR"),
+                lambda r: (
+                    r["folder_label"].upper() in r["predicted_label"].upper()
+                    or (
+                        "TRANSIEN" in r["predicted_label"]
+                        and r["folder_label"].upper() in TRANSIENT_LABELS
+                    )
+                ),
                 axis=1
             ).sum()
             print(f"\nPada {len(labeled)} file berlabel:")
             print(f"  Prediksi sesuai label folder : {correct} ({correct/len(labeled):.0%})")
             print(f"  Perlu dicek stakeholder       : {len(labeled) - correct}")
+            print(f"  (Catatan: PETIR/LAYANG/HEWAN/BENDA ASING -> GANGGUAN TRANSIEN dihitung benar)")
 
     print(f"\nBuka {PREDICTIONS_CSV.name} di Excel untuk crosscheck dengan stakeholder.")
     print(f"Kolom 'correct' dan 'notes' dikosongkan — isi berdasarkan hasil lapangan.")

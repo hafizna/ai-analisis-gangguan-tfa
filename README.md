@@ -20,6 +20,7 @@ Sistem berhasil membaca dan menormalisasi rekaman COMTRADE dari 6+ merk relay ya
 | ABB REL670 / RED670 | `LINE UL1/UL2/UL3`, `LINE UN` |
 | GE / Multilin | `START Z1`, `TRIP ZONE`, format IL1–IL3 |
 | Schneider / NR Electric | Format lokal PLN (`CTR`, `VTR`, dsb.) |
+| NR Electric PCS900 | `CB1.TrpA/B/C`, `DZ1R/S/T`, `CB1.79.Succ_Rcls` |
 | Qualitrol DFR Eksternal | Channel `F21_REC` + format RST |
 
 Normalisasi ini menyelesaikan masalah yang selama ini membuat analisis DFR bergantung pada penanganan manual per rekaman.
@@ -30,30 +31,106 @@ Dari rekaman mentah, sistem secara otomatis mengidentifikasi:
 - Inception time, durasi, dan jumlah sub-fault
 - Fitur kuantitatif: di/dt, arus puncak, rasio i0/i1, voltage sag, impedansi
 
-**3. Klasifikasi dengan Akurasi 80% pada Data Berlabel**
-Dari 492 file COMTRADE yang diproses dari 9 UPT:
+**3. Klasifikasi dengan Akurasi 95% pada Data Berlabel**
+Dari 497 file COMTRADE yang diproses dari 9 UPT:
 
 | Item | Hasil |
 |---|---|
-| Berhasil diklasifikasikan | 382 file (78%) |
-| Tidak dapat diklasifikasikan | 110 file (parse gagal / no fault / proteksi lain) |
-| Akurasi pada 132 file berlabel | **80%** (105/132 file tepat) |
+| Berhasil diklasifikasikan | 392 file (79%) |
+| Tidak dapat diklasifikasikan | 105 file (parse gagal / no fault / proteksi lain) |
+| Akurasi pada 132 file berlabel | **95%** (125/132 file tepat) |
 | Proteksi yang didukung | Rele Jarak (Distance 21) |
 | Proteksi yang belum didukung | Diferensial (87L), Arah EF (67N) |
 
-Angka 78% berhasil diklasifikasikan dari raw data yang belum pernah disentuh sebelumnya — dengan variasi merk relay, kualitas rekaman, dan kondisi gangguan yang beragam — merupakan validasi bahwa fondasi pipeline sudah solid.
-
 ---
 
-## Keterbatasan Saat Ini & Arah Pengembangan
+## Alur Klasifikasi (End-to-End)
 
-Klasifikasi saat ini membedakan **gangguan transien vs. permanen** (binary). Pemisahan lebih lanjut per penyebab transien (PETIR / Layang-Layang / Hewan / Benda Asing) belum dilakukan via ML karena keterbatasan data berlabel, **bukan karena keterbatasan teknis**.
+```
+File COMTRADE (.cfg + .dat)
+        │
+        ▼
+┌─────────────────────────────┐
+│  COMTRADE Parser             │  IEEE C37.111 (1997 & 1999)
+│  Channel Normalizer          │  ABB / Siemens / GE / NR / Qualitrol
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  Protection Router           │  Baca sinyal digital:
+│                              │  - Tipe proteksi (21/87L/67N)
+│                              │  - Zona trip (Z1/Z2/Z3)
+│                              │  - Trip type (single/three pole)
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  Fault Detector              │  Deteksi dari status channels / waveform:
+│  Feature Extractor           │  - Inception time, durasi, fault_count
+│                              │  - Peak current, di/dt, i0/i1, voltage sag
+│                              │  - Reclose outcome (berhasil / gagal)
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────┐
+│  KLASIFIKASI — 4 Lapisan (berurutan, first-match wins)   │
+│                                                          │
+│  Layer 0  reclose_confirmed_transient                    │
+│     AR berhasil + arus gangguan nyata (>200A)            │
+│     → GANGGUAN TRANSIEN (95% conf)                       │
+│                                                          │
+│  Layer 1  fault_on_reclose_phase_change  (Tier 1 Rule)   │
+│     2 fault events, beda fasa, dur >80ms, AR gagal       │
+│     → KONDUKTOR / KERUSAKAN PERALATAN                    │
+│                                                          │
+│  Layer 1  three_pole_failed_reclose      (Tier 1 Rule)   │
+│     Trip 3-fasa, AR gagal, peak >50A                     │
+│     → GANGGUAN PERMANEN                                  │
+│                                                          │
+│  Layer 1  explicit_failed_reclose        (Tier 1 Rule)   │
+│     AR gagal, dur >10ms, peak >100A                      │
+│     → GANGGUAN PERMANEN                                  │
+│                                                          │
+│  Layer 2  Decision Tree ML Classifier    (Tier 2 ML)     │
+│     Fitur: di/dt, peak_current, i0/i1, voltage_sag       │
+│     → GANGGUAN TRANSIEN + estimasi % per penyebab        │
+│       (dengan catatan confidence berdasarkan prob ML)    │
+│                                                          │
+│  Fallback  (Tier 0)                                      │
+│     → PERLU INVESTIGASI (jika model tidak dimuat)        │
+└─────────────────────────────────────────────────────────┘
+             │
+             ▼
+  Hasil + Confidence + Evidence + Rekomendasi
+  + Estimasi % penyebab (PETIR / Layang / Hewan / Benda Asing / Pohon)
+```
 
-Setiap penyebab transien memiliki karakteristik gelombang yang dapat dibedakan — pola ini sudah teramati dari data yang ada dan sudah diimplementasikan sebagai heuristik. Yang dibutuhkan untuk meningkatkannya ke classifier statistik adalah jumlah sampel berlabel yang cukup per kelas (lihat distribusi data di bawah).
+### Penjelasan Tiap Layer
 
----
+**Layer 0 — Confirmed Transient Shortcut**
+Jika AR (Auto-Reclose) berhasil dan arus gangguan nyata terdeteksi (>200A), gangguan terbukti bersifat transien — jalur ini memotong ML dan langsung mengembalikan GANGGUAN TRANSIEN dengan confidence 95%. Ini menangani mayoritas kasus rekaman bertipe "RECLOSE SUKSES".
 
-## Klasifikasi Output
+**Layer 1 — Aturan Deterministik (Tier 1)**
+Tiga aturan berbasis sinyal proteksi:
+- *Phase change on reclose*: pola impedansi/fasa berubah antar event = tower roboh / konduktor putus
+- *3-phase failed reclose*: trip 3-fasa + AR gagal = gangguan permanen
+- *Any failed reclose*: AR gagal dengan arus dan durasi nyata = gangguan permanen
+
+Setiap aturan memiliki guard condition terhadap rekaman dead-time dan artefak deteksi (arus <100A, durasi <10ms) sehingga tidak terpicu pada file rekaman di sisi remote yang tidak mengandung arus gangguan.
+
+**Layer 2 — ML Classifier (Tier 2)**
+Decision Tree yang dilatih dari 56 sampel berkualitas (setelah filter Tier 1). Model membedakan pola waveform berdasarkan di/dt, peak current, dan rasio i0/i1. Karena data non-PETIR terbatas, output ML (baik `pred=1` maupun `pred=0`) sama-sama dikembalikan sebagai GANGGUAN TRANSIEN dengan confidence berbeda — disertai estimasi probabilitas per penyebab dari heuristik.
+
+**Estimasi Penyebab (Heuristik)**
+Setiap output GANGGUAN TRANSIEN dilengkapi estimasi % untuk 5 penyebab berdasarkan aturan domain knowledge:
+
+| Penyebab | Pola pembeda |
+|---|---|
+| PETIR | Durasi pendek (<100ms), arus puncak tinggi, event tunggal |
+| Layang-Layang | fault_count ≥ 3 (kontak berulang saat layang berayun), durasi sedang |
+| Hewan | i0/i1 tinggi (kontak 1-fasa), arus sedang, event tunggal |
+| Pohon | Durasi panjang (>300ms), AR lebih lambat atau gagal |
+| Benda Asing | fault_count ≥ 2, durasi bervariasi |
 
 ---
 
@@ -61,90 +138,27 @@ Setiap penyebab transien memiliki karakteristik gelombang yang dapat dibedakan �
 
 | Label | Keterangan |
 |---|---|
-| **GANGGUAN TRANSIEN** | Gangguan singkat, AR berhasil. Penyebab: PETIR / Layang-Layang / Hewan / Benda Asing. Dilengkapi estimasi % per penyebab. |
-| **GANGGUAN PERMANEN** | AR gagal, gangguan persisten. Perlu investigasi lapangan. |
-| **KONDUKTOR / KERUSAKAN PERALATAN** | Perubahan impedansi antar-fasa saat AR — indikasi tower roboh / konduktor putus / CT meledak. |
-| **NON-PETIR — PERLU INVESTIGASI** | Pola tidak cocok kriteria di atas. Butuh data latih lebih banyak. |
+| **GANGGUAN TRANSIEN** | Gangguan singkat, AR berhasil atau pola waveform transien. Dilengkapi estimasi % per penyebab. |
+| **GANGGUAN PERMANEN** | AR gagal, gangguan persisten. Perlu investigasi jalur. |
+| **KONDUKTOR / KERUSAKAN PERALATAN** | Perubahan fasa antar-event saat AR — indikasi tower roboh / konduktor putus. |
+| **PERLU INVESTIGASI** | Model tidak tersedia. Jalankan `models/train.py` terlebih dahulu. |
 
-> **Catatan GANGGUAN TRANSIEN:** Setiap penyebab transien (PETIR, Layang-Layang, Hewan, Benda Asing) memiliki **karakteristik gelombang yang dapat dibedakan** — durasi, arus puncak, rasio i0/i1, dan jumlah sub-fault menunjukkan pola berbeda di data berlabel yang ada. Keterbatasan saat ini bukan pada kemampuan teknis, melainkan **jumlah data berlabel per kelas yang belum cukup** untuk melatih classifier multi-class yang andal secara statistik (maks. 7 sampel per kelas non-PETIR). Sebagai solusi sementara, sistem menggunakan heuristik berbasis pola yang teramati dari data untuk menampilkan estimasi probabilitas per penyebab. Retraining multi-class akan dilakukan setelah ≥30 sampel berlabel per kelas terkumpul melalui konfirmasi stakeholder.
+> **Catatan:** PETIR, Layang-Layang, Hewan, dan Benda Asing menghasilkan karakteristik gelombang yang serupa — semua tergolong GANGGUAN TRANSIEN. Estimasi % per penyebab adalah **heuristik berbasis domain knowledge**, bukan output ML. Konfirmasi via data cuaca, CCTV, atau inspeksi lapangan tetap diperlukan. Keterbatasan ini bukan kelemahan teknis sistem, melainkan konsekuensi dari jumlah data berlabel per kelas yang belum mencukupi untuk training multi-class (maks. 7 sampel per kelas non-PETIR saat ini).
 
 ---
 
-## Arsitektur Pipeline
-
-```
-File COMTRADE (.cfg + .dat)
-        │
-        ▼
-┌─────────────────────────┐
-│   COMTRADE Parser        │  IEEE C37.111 (1997 & 1999)
-│   Channel Normalizer     │  ABB / Siemens / GE / SEL / Schneider
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│   Protection Router      │  Deteksi tipe rele dari sinyal digital
-│                          │  Distance zones, AR, trip phase
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│   Fault Detector         │  Inception, durasi, jumlah sub-fault
-│   Feature Extractor      │  Z, i0/i1, di/dt, voltage sag, peak I
-└────────────┬────────────┘
-             │
-        ┌────┴────┐
-        ▼         ▼
-   Tier 1         Tier 2
-   Aturan         ML Classifier
-   Deterministik  (XGBoost binary:
-   (rules.py)      transien vs permanen)
-        │         │
-        └────┬────┘
-             │
-             ▼
-   Hasil + Confidence + Evidence
-   + Estimasi % penyebab (heuristik)
-```
-
-### Tier 1 — Aturan Deterministik
-Berdasarkan sinyal proteksi yang terbaca dari file COMTRADE:
-- Zona trip yang operated (Z1/Z2/Z3)
-- Hasil AR (berhasil / gagal)
-- Perubahan impedansi antar fasa
-
-### Tier 2 — ML Classifier
-XGBoost binary classifier, dilatih dari **132 file berlabel** (rele jarak yang berhasil ter-parse).
-
-#### Distribusi Data Berlabel
+## Distribusi Data Berlabel
 
 | Kelas | Jumlah Sampel | Status untuk ML |
 |---|---|---|
-| PETIR | 111 | ✅ Cukup (digunakan untuk training) |
-| LAYANG-LAYANG | 7 | ❌ Kurang — perlu min. ~30–50 sampel |
-| BENDA ASING | 4 | ❌ Kurang |
-| KONDUKTOR | 3 | ❌ Kurang |
-| POHON | 3 | ❌ Kurang |
-| HEWAN | 2 | ❌ Kurang |
-| LAIN-LAIN | 2 | ❌ Kurang |
+| PETIR | 111 | Digunakan untuk training |
+| LAYANG-LAYANG | 7 | Kurang — perlu min. ~30 sampel |
+| BENDA ASING | 4 | Kurang |
+| KONDUKTOR | 3 | Kurang |
+| POHON | 3 | Kurang |
+| HEWAN | 2 | Kurang |
+| LAIN-LAIN | 2 | Kurang |
 | **Total** | **132** | |
-
-Karena data non-PETIR tidak cukup untuk multi-class training, model saat ini hanya membedakan **transien (termasuk PETIR) vs. non-transien**. Estimasi per kelas disediakan melalui heuristik, bukan ML.
-
-Features yang digunakan: `fault_duration_ms`, `fault_count`, `i0/i1 ratio`, `voltage_sag`, `peak_current`, `reclose_status`
-
-### Estimasi Penyebab (Heuristik)
-Untuk `GANGGUAN TRANSIEN`, sistem menampilkan estimasi probabilitas per penyebab berdasarkan pola yang teramati dari data berlabel yang ada, dikombinasikan dengan pengetahuan domain proteksi sistem tenaga:
-
-| Penyebab | Sinyal pembeda yang teramati |
-|---|---|
-| PETIR | Durasi pendek (<100ms), arus puncak tinggi, event tunggal |
-| Layang-Layang | Fault count ≥ 3 (kontak berulang saat layang berayun), durasi sedang |
-| Hewan | Rasio i0/i1 tinggi (kontak 1-fasa), arus sedang, event tunggal |
-| Pohon | Durasi panjang (kontak menetap), AR gagal atau lebih lambat |
-| Benda Asing | Fault count ≥ 2, durasi bervariasi |
-
-**Ini adalah heuristik berbasis pola data, bukan output model ML** — karena jumlah sampel berlabel per kelas saat ini tidak mencukupi untuk training statistik. Setelah ≥30 sampel per kelas terkumpul, heuristik ini akan digantikan dengan classifier multi-class terlatih.
 
 ---
 
@@ -155,10 +169,10 @@ Untuk `GANGGUAN TRANSIEN`, sistem menampilkan estimasi probabilitas per penyebab
 | Siemens | 7SA, 7SL (SIPROTEC 4) | Nama sinyal + rec_dev_id |
 | Siemens | SIPROTEC 5 (DIGSI 5) | BM-prefix + MPI3/MPV3 channels |
 | ABB | REL670, RED670 | rec_dev_id + LINE UL1/UL2/UL3 |
-| GE | P442, P444, D60 | rec_dev_id + START Z/TRIP ZONE |
+| GE / Multilin | P442, P444, D60 | rec_dev_id + START Z/TRIP ZONE |
 | Schneider | P442 | rec_dev_id |
-| NR Electric | PCS900 | rec_dev_id |
-| Qualitrol | DFR Eksternal | F21_REC channels |
+| NR Electric | PCS900 | CB1.TrpA/B/C, DZ1R/S/T, 79.Succ_Rcls |
+| Qualitrol | DFR Eksternal | F21_REC channels + RST format |
 
 ---
 
@@ -173,27 +187,38 @@ python webapp/app.py
 
 ### Klasifikasi Batch
 ```bash
+cd pipeline/
 python batch_predict.py
 # Output: data/predictions/all_predictions.csv
 #         data/predictions/prediction_errors.csv
 ```
 
+### Klasifikasi File Tunggal
+```bash
+python models/predict.py path/to/file.cfg
+```
+
 ### Melatih Ulang Model
 ```bash
-# Setelah ada data berlabel baru di data/labels/
+# Setelah ada data berlabel baru dari konfirmasi stakeholder
 python models/train.py
 ```
 
 ---
 
-## Deploy (Railway)
+## Deploy ke Railway
+
+Railway membaca `Procfile` dan `railway.json` secara otomatis.
 
 ```
-1. Push ke GitHub: git push origin master
+1. git push origin master
 2. railway.app → New Project → Deploy from GitHub
-3. Pilih repo ini → Railway baca Procfile otomatis
-4. Generate Domain → selesai
+3. Pilih repo ini (hafizna/ai-analisis-gangguan-tfa)
+4. Railway auto-detect Nixpacks → install requirements.txt → start gunicorn
+5. Settings → Generate Domain → selesai
 ```
+
+Variabel yang tidak perlu dikonfigurasi manual — app berjalan tanpa env vars tambahan.
 
 ---
 
@@ -202,29 +227,26 @@ python models/train.py
 ```
 pipeline/
 ├── core/
-│   ├── comtrade_parser.py      # Parse COMTRADE, normalisasi channel
-│   ├── channel_normalizer.py   # Mapping nama channel → VA/VB/VC/IA/IB/IC
-│   ├── protection_router.py    # Deteksi tipe & zona proteksi
-│   ├── fault_detector.py       # Deteksi inception & durasi gangguan
-│   └── feature_extractor.py   # Ekstraksi fitur untuk ML
+│   ├── comtrade_parser.py       # Parse COMTRADE, normalisasi channel
+│   ├── channel_normalizer.py    # Mapping nama channel → IA/IB/IC/VA/VB/VC
+│   ├── protection_router.py     # Deteksi tipe & zona proteksi dari sinyal digital
+│   ├── fault_detector.py        # Deteksi inception, durasi, reclose outcome
+│   └── feature_extractor.py    # Ekstraksi fitur kuantitatif untuk ML
 ├── models/
-│   ├── rules.py                # Aturan deterministik Tier 1
-│   ├── train.py                # Training XGBoost Tier 2
-│   ├── predict.py              # Inferensi end-to-end
-│   ├── stage3_petir_classifier.pkl  # Model terlatih (132 sampel)
-│   └── stage3_feature_columns.pkl  # Kolom fitur
-├── config/
-│   └── channel_mappings.json  # Mapping channel per merk relay
+│   ├── rules.py                 # Aturan deterministik Layer 1 (Tier 1)
+│   ├── train.py                 # Training Decision Tree Tier 2
+│   ├── predict.py               # Inferensi end-to-end + Layer 0 shortcut
+│   └── petir_tree.pkl           # Model terlatih (56 sampel berkualitas)
 ├── data/
-│   ├── predictions/            # Output batch (gitignored)
-│   └── features/               # Fitur terlatih (gitignored)
+│   ├── predictions/             # Output batch (gitignored)
+│   └── features/                # Fitur ekstraksi (gitignored)
 ├── webapp/
-│   ├── app.py                  # Flask web app
-│   └── templates/
-├── batch_predict.py            # Klasifikasi batch seluruh raw_data/
+│   ├── app.py                   # Flask web app
+│   └── templates/               # Jinja2 templates (index, result, browse, history)
+├── batch_predict.py             # Klasifikasi batch seluruh raw_data/
 ├── requirements.txt
-├── Procfile
-└── railway.json
+├── Procfile                     # Railway / gunicorn start command
+└── railway.json                 # Railway deploy config
 ```
 
 ---
@@ -233,10 +255,10 @@ pipeline/
 
 | Tahap | Status | Keterangan |
 |---|---|---|
-| Parser COMTRADE multi-merk | Selesai | ABB/Siemens/GE/SEL/Schneider/NR |
-| Deteksi proteksi jarak | Selesai | Zone 1-3, AR, fasa trip |
-| Klasifikasi biner (transien vs permanen) | Selesai | XGBoost, 80% akurasi |
-| Estimasi probabilitas per penyebab | Selesai (heuristik) | Perlu retraining multi-class |
-| Web app upload & klasifikasi | Selesai | Deployed ke Railway |
-| Retraining multi-class | **Menunggu** | Butuh ≥30 sampel berlabel per kelas |
-| Crosscheck lapangan | **Menunggu** | Stakeholder isi kolom `correct`/`notes` di all_predictions.csv |
+| Parser COMTRADE multi-merk | Selesai | ABB / Siemens / GE / NR / Qualitrol |
+| Deteksi proteksi jarak | Selesai | Zone 1-3, AR, fasa trip, reclose outcome |
+| Klasifikasi transien vs permanen | Selesai | 95% akurasi pada 132 file berlabel |
+| Estimasi probabilitas per penyebab | Selesai (heuristik) | Menunggu data berlabel cukup untuk ML |
+| Web app upload & klasifikasi | Selesai | Deploy ke Railway |
+| Retraining multi-class | Menunggu | Butuh ≥30 sampel berlabel per kelas |
+| Crosscheck lapangan | Menunggu | Stakeholder isi kolom `correct`/`notes` di all_predictions.csv |

@@ -198,9 +198,16 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
             teleprotection_received=protection.permission_received,
             comms_failure=protection.comms_failure,
             trip_type=protection.trip_type,
-            # Reclose
-            reclose_attempted=protection.auto_reclose_attempted,
-            reclose_successful=protection.auto_reclose_successful,
+            # Reclose — prefer protection router result; fall back to fault detector
+            # reclose_events for dead-time recordings where the router has no AR signals.
+            reclose_attempted=(
+                protection.auto_reclose_attempted or bool(fault.reclose_events)
+            ),
+            reclose_successful=(
+                protection.auto_reclose_successful
+                if protection.auto_reclose_successful is not None
+                else (fault.reclose_events[0]['success'] if fault.reclose_events else None)
+            ),
             reclose_time_ms=fault.reclose_events[0]['time'] * 1000 if fault.reclose_events else None,
             fault_count=len(fault.reclose_events) + 1,
             # Fault type

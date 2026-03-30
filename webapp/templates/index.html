@@ -55,8 +55,8 @@
         <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data">
             <div class="upload-box" id="dropZone">
                 <div style="font-size:44px; margin-bottom:16px;">📤</div>
-                <h3 style="color:var(--text-primary);">Seret &amp; Lepas File di Sini</h3>
-                <p style="margin:12px 0; color:var(--text-secondary);">atau</p>
+                <h3 style="color:var(--text-primary);">Drag &amp; Drop File di Sini</h3>
+                <p style="margin:12px 0; color:var(--text-secondary);">atau pilih file</p>
                 <label for="cfg_file" class="file-label">Pilih .cfg</label>
                 <input type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" class="file-input" required>
                 <label for="dat_file" class="file-label">Pilih .dat</label>
@@ -86,7 +86,7 @@
     </div>
 </div>
 
-<div class="footer">Sistem Klasifikasi Penyebab Gangguan DFR — UIT JBT | Hanya mendukung rele jarak (DISTANCE)</div>
+<div class="footer">Sistem Klasifikasi Penyebab Gangguan DFR | Hanya mendukung rele jarak (DISTANCE)</div>
 {% endblock %}
 
 {% block extra_js %}

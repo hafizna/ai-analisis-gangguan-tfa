@@ -50,16 +50,40 @@ def detect_fault(record) -> Optional[FaultEvent]:
         FaultEvent or None if no fault detected
     """
 
+    # Detect dead-time recordings: CB was already open when recording started.
+    # In this case the fault occurred before this recording — no fault current present.
+    # Skip straight to waveform reclose detection; fault duration is not measurable.
+    if _recording_starts_in_dead_time(record):
+        logger.debug("Recording started in CB dead time — fault preceded this file")
+        return _build_dead_time_event(record)
+
     # Try status channel detection first
     fault = _detect_from_status_channels(record)
     if fault and fault.confidence > 0.7:
-        logger.debug(f"Fault detected from status channels: {fault.inception_time:.4f}s")
-        return fault
+        # If status channels found inception but duration is 0 (no clearing edge),
+        # fall through to waveform-based clearing detection.
+        if fault.duration_ms > 0:
+            logger.debug(f"Fault detected from status channels: {fault.inception_time:.4f}s  dur={fault.duration_ms:.1f}ms")
+            return fault
+        logger.debug(f"Status channel found inception at {fault.inception_time:.4f}s but no clearing — trying waveform clearing")
 
-    # Fall back to waveform-based detection
-    fault = _detect_from_waveforms(record)
+    # Fall back to (or supplement with) waveform-based detection
+    wf_fault = _detect_from_waveforms(record)
+    if wf_fault:
+        # If status channel gave us a valid inception, use it but take waveform clearing
+        if fault and fault.duration_ms == 0 and wf_fault.clearing_idx:
+            fault.clearing_idx  = wf_fault.clearing_idx
+            fault.clearing_time = wf_fault.clearing_time
+            fault.duration_ms   = wf_fault.duration_ms
+            fault.faulted_phases = fault.faulted_phases or wf_fault.faulted_phases
+            fault.reclose_events = fault.reclose_events or wf_fault.reclose_events
+            logger.debug(f"Waveform clearing applied: dur={fault.duration_ms:.1f}ms")
+            return fault
+        logger.debug(f"Fault detected from waveforms: {wf_fault.inception_time:.4f}s ({wf_fault.detection_method})")
+        return wf_fault
+
+    # Return status-only result even with 0ms if nothing better found
     if fault:
-        logger.debug(f"Fault detected from waveforms: {fault.inception_time:.4f}s ({fault.detection_method})")
         return fault
 
     logger.warning("No fault detected in recording")
@@ -95,6 +119,91 @@ def _extract_phase_from_name(name_upper: str) -> Optional[str]:
     if name_upper.endswith(' B'): return 'B'
     if name_upper.endswith(' C'): return 'C'
     return None
+
+
+def _recording_starts_in_dead_time(record) -> bool:
+    """
+    Returns True if the CB was already open when the recording started.
+    This happens when an external DFR is triggered by the open-CB signal
+    rather than by the fault itself — the fault is not captured in this file.
+
+    Indicators: a CB-open / pole-dead / 52b channel that is HIGH (=1) from
+    the very first sample and has no rising edge (only a falling edge later
+    when the breaker recloses).
+    """
+    CB_OPEN_KW = ['CB OPEN', 'POLE DEAD', 'ANY POLE', 'ALL POLE', '52B', 'CB1.52B']
+    EXCL_KW    = ['ALARM', 'TEST', 'BLOCK']
+
+    for ch in record.status_channels:
+        nu = ch.name.upper()
+        if any(e in nu for e in EXCL_KW):
+            continue
+        if not any(k in nu for k in CB_OPEN_KW):
+            continue
+        if len(ch.samples) < 10:
+            continue
+        # High from start AND has at least one falling edge (CB eventually reclosed)
+        if ch.samples[0] == 1 and ch.samples[:5].sum() == 5:
+            diff = np.diff(ch.samples)
+            if (diff < 0).any():  # has falling edge = CB reclosed
+                return True
+    return False
+
+
+def _build_dead_time_event(record) -> Optional[FaultEvent]:
+    """
+    Build a minimal FaultEvent for a dead-time recording.
+    Duration is unknown (fault happened before this file).
+    Reclose time is taken from when CB-open signal drops.
+    """
+    CB_OPEN_KW = ['CB OPEN', 'POLE DEAD', 'ANY POLE', 'ALL POLE', '52B', 'CB1.52B']
+    EXCL_KW    = ['ALARM', 'TEST', 'BLOCK']
+
+    reclose_time = None
+    for ch in record.status_channels:
+        nu = ch.name.upper()
+        if any(e in nu for e in EXCL_KW):
+            continue
+        if not any(k in nu for k in CB_OPEN_KW):
+            continue
+        diff = np.diff(ch.samples)
+        falls = np.where(diff < 0)[0]
+        if len(falls):
+            t = record.time[falls[0] + 1] if falls[0] + 1 < len(record.time) else record.time[-1]
+            if reclose_time is None or t < reclose_time:
+                reclose_time = t
+
+    # Also check AR success channel
+    AR_SUCCESS_KW = ['AR SUCC', 'SUCC_RCLS', 'RECLOSE SUCC', '.79.SUCC']
+    for ch in record.status_channels:
+        nu = ch.name.upper()
+        if any(k in nu for k in AR_SUCCESS_KW) and ch.samples.sum() > 0:
+            diff = np.diff(ch.samples)
+            rises = np.where(diff > 0)[0]
+            if len(rises):
+                t = record.time[rises[0] + 1]
+                if reclose_time is None or t < reclose_time:
+                    reclose_time = t
+
+    # Use t=0 as nominal inception (fault was before recording)
+    inception_time = record.time[0]
+
+    # Reclose successful if CB-open dropped (CB closed again)
+    reclose_events = []
+    if reclose_time is not None:
+        reclose_events = [{'time': reclose_time, 'success': True}]
+
+    return FaultEvent(
+        inception_idx=0,
+        inception_time=inception_time,
+        clearing_idx=None,
+        clearing_time=None,
+        duration_ms=0.0,        # genuinely unknown — fault not in this recording
+        detection_method="dead_time_recording",
+        confidence=0.6,
+        faulted_phases=[],
+        reclose_events=reclose_events,
+    )
 
 
 def _detect_from_status_channels(record) -> Optional[FaultEvent]:
@@ -167,6 +276,15 @@ def _detect_from_status_channels(record) -> Optional[FaultEvent]:
 
         # For clearing: find the LAST falling edge within 500ms of the first ON for this channel.
         # This handles external DFR contact bounce (multiple brief pulses = one sustained event).
+        # IMPORTANT: skip channels that represent CB open/dead-time (pole-open position signals)
+        # — those stay high during the entire AR dead time and would inflate fault duration.
+        name_upper_ch = ch.name.upper()
+        is_pole_position = (
+            'POSITION' in name_upper_ch and 'OPEN' in name_upper_ch
+        ) or any(k in name_upper_ch for k in ['POLE DEAD', '1-POLE OPEN', '1POLE OPEN', 'ANY POLE', 'ALL POLE', '52B'])
+        if is_pole_position:
+            continue   # don't use CB-open position channels for fault duration
+
         falling_edges = np.where(transitions < 0)[0]
         later_falls = falling_edges[falling_edges >= rising_edges[0]]
         if len(later_falls) > 0:

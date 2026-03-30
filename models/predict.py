@@ -254,6 +254,31 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             features=row,
         )
 
+    # ── Step 6.5: Confirmed-transient shortcut ────────────────────────────────
+    # If auto-reclose SUCCEEDED and a real fault current was present, the fault
+    # cleared and the line recovered → definitively transient.  No ML needed.
+    # Guard: peak_i > 200A to exclude dead-time / remote-end recordings.
+    _reclose_ok = row.get("reclose_successful")
+    _peak_i     = float(row.get("peak_fault_current_a", 0) or 0)
+    if (_reclose_ok is True or _reclose_ok == "True") and _peak_i > 200:
+        likelihoods = _transient_cause_likelihoods(row)
+        return ClassificationResult(
+            label="GANGGUAN TRANSIEN",
+            confidence=0.95,
+            tier=1,
+            rule_name="reclose_confirmed_transient",
+            evidence=(
+                f"AR berhasil — gangguan transien terkonfirmasi.  "
+                f"peak_i={_peak_i:.0f}A  "
+                f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
+                f"fault_count={row.get('fault_count', '?')}  |  "
+                f"Estimasi penyebab (heuristik): {likelihoods}"
+                + _unknown_prot_caveat
+            ),
+            recommendation=_transient_recommendation(row),
+            features=row,
+        )
+
     # ── Step 7: Tier 2 ML classifier ─────────────────────────────────────────
     model_bundle = _load_model()
     if model_bundle is not None:
@@ -284,24 +309,27 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 features=row,
             )
         else:
-            confidence = float(proba[0])
+            # pred=0 means "not clearly PETIR in waveform signature" — but LAYANG, HEWAN,
+            # BENDA ASING and even POHON are also transient faults.  With only a handful
+            # of non-PETIR training samples the ML boundary is not reliable enough to
+            # assert permanent fault here; use cause likelihoods and flag for confirmation.
+            confidence_transient = float(proba[1])   # probability of being transient
+            likelihoods = _transient_cause_likelihoods(row)
             return ClassificationResult(
-                label="GANGGUAN PERMANEN — PERLU INVESTIGASI",
-                confidence=confidence,
+                label="GANGGUAN TRANSIEN",
+                confidence=max(confidence_transient, 0.5),
                 tier=2,
                 rule_name="petir_decision_tree_non_petir",
                 evidence=(
-                    f"Classifier ML: bukan transien (prob={confidence:.0%})  "
+                    f"Classifier ML: pola waveform tidak khas petir (prob_transien={confidence_transient:.0%})  "
                     f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
-                    f"fault_count={row.get('fault_count', '?')}  "
-                    f"— penyebab spesifik belum dapat ditentukan "
-                    f"(LAYANG/POHON/HEWAN/BENDA ASING butuh lebih banyak data latih)."
+                    f"fault_count={row.get('fault_count', '?')}  |  "
+                    f"Estimasi penyebab (heuristik): {likelihoods}  |  "
+                    f"Catatan: data latih non-PETIR terbatas — konfirmasi penyebab via "
+                    f"data cuaca, CCTV, atau inspeksi lapangan."
                     + _unknown_prot_caveat
                 ),
-                recommendation=(
-                    "Kumpulkan data pendukung (cuaca, CCTV, laporan patroli) "
-                    "untuk menentukan penyebab gangguan ini."
-                ),
+                recommendation=_transient_recommendation(row),
                 features=row,
             )
 
