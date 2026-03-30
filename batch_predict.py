@@ -218,7 +218,7 @@ def run():
         if len(labeled) > 0:
             # Transient sub-classes (PETIR/LAYANG/HEWAN/BENDA ASING) all map to
             # GANGGUAN TRANSIEN at Tier 2 — count those as correct.
-            TRANSIENT_LABELS = {"PETIR", "LAYANG-LAYANG", "HEWAN", "BENDA ASING"}
+            TRANSIENT_LABELS = {"PETIR", "LAYANG-LAYANG", "HEWAN", "BENDA ASING", "LAIN-LAIN"}
             correct = labeled.apply(
                 lambda r: (
                     r["folder_label"].upper() in r["predicted_label"].upper()
@@ -232,7 +232,7 @@ def run():
             print(f"\nPada {len(labeled)} file berlabel:")
             print(f"  Prediksi sesuai label folder : {correct} ({correct/len(labeled):.0%})")
             print(f"  Perlu dicek stakeholder       : {len(labeled) - correct}")
-            print(f"  (Catatan: PETIR/LAYANG/HEWAN/BENDA ASING -> GANGGUAN TRANSIEN dihitung benar)")
+            print(f"  (Catatan: PETIR/LAYANG/HEWAN/BENDA ASING/LAIN-LAIN -> GANGGUAN TRANSIEN dihitung benar)")
 
     print(f"\nBuka {PREDICTIONS_CSV.name} di Excel untuk crosscheck dengan stakeholder.")
     print(f"Kolom 'correct' dan 'notes' dikosongkan — isi berdasarkan hasil lapangan.")
