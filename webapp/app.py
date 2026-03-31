@@ -19,6 +19,7 @@ import re
 import uuid
 import warnings
 import traceback
+import logging
 from collections import Counter
 from pathlib import Path
 from datetime import datetime
@@ -532,6 +533,19 @@ app.secret_key = "dfr-fault-classifier-2026"
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
 app.config["PROPAGATE_EXCEPTIONS"] = False
 IS_LOCAL_DEV = not bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("VERCEL"))
+
+if IS_LOCAL_DEV:
+    app.config["PROPAGATE_EXCEPTIONS"] = True
+    app.logger.setLevel(logging.INFO)
+
+    @app.before_request
+    def _log_request():
+        app.logger.info("REQ %s %s", request.method, request.path)
+
+    @app.after_request
+    def _log_response(resp):
+        app.logger.info("RES %s %s -> %s", request.method, request.path, resp.status_code)
+        return resp
 
 import tempfile
 UPLOAD_DIR  = Path(tempfile.gettempdir()) / "dfr_uploads"
@@ -1332,4 +1346,4 @@ if __name__ == "__main__":
     print("    POST /api/classify  (cfg_file + dat_file)")
     print("    GET  /api/history")
     print("=" * 60)
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    app.run(debug=IS_LOCAL_DEV, use_reloader=False, host="0.0.0.0", port=5000)
