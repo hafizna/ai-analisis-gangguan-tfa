@@ -32,6 +32,8 @@ class AnalogChannel:
     measurement: str            # "voltage" or "current"
     ct_primary: float           # CT/VT primary value from .cfg (metadata only)
     ct_secondary: float         # CT/VT secondary value from .cfg (metadata only)
+    scale_a: float              # Raw COMTRADE channel scale factor "a" (metadata)
+    scale_b: float              # Raw COMTRADE channel offset "b" (metadata)
     samples: np.ndarray         # Waveform in PRIMARY values: kV for voltage, A for current
 
 
@@ -227,6 +229,18 @@ def _parse_analog_channels(com: Comtrade, manufacturer: str, warnings: List[str]
                 ct_primary = float(com.cfg.analog_channels[i].primary)
             if hasattr(com.cfg.analog_channels[i], 'secondary'):
                 ct_secondary = float(com.cfg.analog_channels[i].secondary)
+            scale_a = 1.0
+            scale_b = 0.0
+            if hasattr(com.cfg.analog_channels[i], 'a'):
+                try:
+                    scale_a = float(com.cfg.analog_channels[i].a)
+                except Exception:
+                    scale_a = 1.0
+            if hasattr(com.cfg.analog_channels[i], 'b'):
+                try:
+                    scale_b = float(com.cfg.analog_channels[i].b)
+                except Exception:
+                    scale_b = 0.0
 
             # Handle case where ct_secondary is 0
             if ct_secondary == 0:
@@ -316,6 +330,8 @@ def _parse_analog_channels(com: Comtrade, manufacturer: str, warnings: List[str]
                 measurement=norm['measurement'],
                 ct_primary=ct_primary,
                 ct_secondary=ct_secondary,
+                scale_a=scale_a,
+                scale_b=scale_b,
                 samples=samples_primary
             )
 

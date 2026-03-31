@@ -398,17 +398,17 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         <div class="ctpt-group">
             <label for="ctPrimary">CT</label>
             <div class="ctpt-split">
-                <input type="number" id="ctPrimary" class="ctpt-input" value="{{ analysis.ct_primary or 1 }}" data-default="{{ analysis.cfg_ct_primary or analysis.ct_primary or 1 }}" min="0.001" step="any" placeholder="P">
+                <input type="number" id="ctPrimary" class="ctpt-input" value="{{ analysis.ct_primary or 1 }}" data-default="{{ analysis.ct_primary or 1 }}" min="0.001" step="any" placeholder="P">
                 <span>/</span>
-                <input type="number" id="ctSecondary" class="ctpt-input" value="{{ analysis.ct_secondary or 1 }}" data-default="{{ analysis.cfg_ct_secondary or analysis.ct_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_ct_primary or 2000 }}" data-assumed-s="{{ analysis.assumed_ct_secondary or 1 }}" min="0.001" step="any" placeholder="S">
+                <input type="number" id="ctSecondary" class="ctpt-input" value="{{ analysis.ct_secondary or 1 }}" data-default="{{ analysis.ct_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_ct_primary or 2000 }}" data-assumed-s="{{ analysis.assumed_ct_secondary or 1 }}" min="0.001" step="any" placeholder="S">
             </div>
         </div>
         <div class="ctpt-group">
             <label for="vtPrimary">VT</label>
             <div class="ctpt-split">
-                <input type="number" id="vtPrimary" class="ctpt-input" value="{{ analysis.vt_primary or 1 }}" data-default="{{ analysis.cfg_vt_primary or analysis.vt_primary or 1 }}" min="0.001" step="any" placeholder="P">
+                <input type="number" id="vtPrimary" class="ctpt-input" value="{{ analysis.vt_primary or 1 }}" data-default="{{ analysis.vt_primary or 1 }}" min="0.001" step="any" placeholder="P">
                 <span>/</span>
-                <input type="number" id="vtSecondary" class="ctpt-input" value="{{ analysis.vt_secondary or 1 }}" data-default="{{ analysis.cfg_vt_secondary or analysis.vt_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_vt_primary or 150000 }}" data-assumed-s="{{ analysis.assumed_vt_secondary or 100 }}" min="0.001" step="any" placeholder="S">
+                <input type="number" id="vtSecondary" class="ctpt-input" value="{{ analysis.vt_secondary or 1 }}" data-default="{{ analysis.vt_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_vt_primary or 150000 }}" data-assumed-s="{{ analysis.assumed_vt_secondary or 100 }}" min="0.001" step="any" placeholder="S">
             </div>
         </div>
         <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="useAssumedRatios()">Pakai Asumsi Umum</button>
@@ -419,6 +419,13 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             Rasio terbaca dari COMTRADE:
             CT={% if analysis.cfg_ct_known %}{{ analysis.cfg_ct_primary or 1 }}/{{ analysis.cfg_ct_secondary or 1 }}{% else %}tidak eksplisit (terbaca 1/1){% endif %},
             VT={% if analysis.cfg_vt_known %}{{ analysis.cfg_vt_primary or 1 }}/{{ analysis.cfg_vt_secondary or 1 }}{% else %}tidak eksplisit (terbaca 1/1){% endif %}.
+        </span>
+        <span class="ctpt-status">
+            Acuan rasio default dari parser:
+            CT={{ analysis.ct_primary or 1 }}/{{ analysis.ct_secondary or 1 }}
+            ({% if analysis.ct_ratio_source == 'cfg' %}sumber: metadata cfg{% elif analysis.ct_ratio_source == 'scale' %}sumber: faktor scaling "a" parser{% else %}sumber: asumsi umum{% endif %}),
+            VT={{ analysis.vt_primary or 1 }}/{{ analysis.vt_secondary or 1 }}
+            ({% if analysis.vt_ratio_source == 'cfg' %}sumber: metadata cfg{% elif analysis.vt_ratio_source == 'scale' %}sumber: faktor scaling "a" parser{% else %}sumber: asumsi umum{% endif %}).
         </span>
         <span class="ctpt-status">Catatan: metadata rasio bisa 1/1 meskipun nilai analog sudah benar/primer karena scaling COMTRADE diterapkan saat parsing.</span>
         <span class="ctpt-status">Asumsi umum sistem {{ "%.0f"|format(analysis.assumed_voltage_kv or 150) }} kV: VT {{ "%.0f"|format(analysis.assumed_vt_primary or 150000) }}/{{ "%.0f"|format(analysis.assumed_vt_secondary or 100) }}, CT {{ "%.0f"|format(analysis.assumed_ct_primary or 2000) }}/{{ "%.0f"|format(analysis.assumed_ct_secondary or 1) }}.</span>
