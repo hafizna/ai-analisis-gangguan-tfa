@@ -11,17 +11,20 @@ Jalankan dari folder pipeline/:
 Buka: http://localhost:5000
 """
 
+import os
 import sys
 import csv
 import json
 import re
 import uuid
 import warnings
+import traceback
 from collections import Counter
 from pathlib import Path
 from datetime import datetime
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
 warnings.filterwarnings("ignore")
@@ -527,6 +530,8 @@ app = Flask(__name__,
             static_folder=str(Path(__file__).parent / "static"))
 app.secret_key = "dfr-fault-classifier-2026"
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
+app.config["PROPAGATE_EXCEPTIONS"] = False
+IS_LOCAL_DEV = not bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("VERCEL"))
 
 import tempfile
 UPLOAD_DIR  = Path(tempfile.gettempdir()) / "dfr_uploads"
@@ -566,6 +571,33 @@ FAULT_CATEGORIES = [
     "GANGGUAN PERMANEN",
     "LAIN-LAIN",
 ]
+
+
+@app.errorhandler(Exception)
+def _handle_unexpected_error(e):
+    """
+    Improve local debugging visibility while keeping hosted behavior safe.
+    """
+    if isinstance(e, HTTPException):
+        return e
+
+    app.logger.error("Unhandled exception: %s", e)
+    app.logger.error(traceback.format_exc())
+
+    if IS_LOCAL_DEV:
+        tb_tail = traceback.format_exc().splitlines()[-20:]
+        return jsonify({
+            "error": "internal_server_error",
+            "message": str(e),
+            "path": request.path,
+            "traceback_tail": tb_tail,
+        }), 500
+
+    return (
+        "Internal Server Error: application exception occurred. "
+        "Check platform logs for traceback.",
+        500,
+    )
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
