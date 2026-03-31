@@ -3,6 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <title>Laporan Gangguan — {{ analysis.station_name }} {{ analysis.timestamp }}</title>
+
+<!-- Vercel Web Analytics -->
+<script>
+    window.va = window.va || function () { 
+        (window.vaq = window.vaq || []).push(arguments); 
+    };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
+
 <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body {
