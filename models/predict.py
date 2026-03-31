@@ -313,12 +313,51 @@ def _generate_description(row: dict, result: "ClassificationResult") -> str:
     else:
         lines.append("Status Auto Reclose (AR) tidak teridentifikasi dari rekaman digital.")
 
-    # Line 4: AI prediction
+    # Line 4: AI prediction / likely cause narrative
     conf_pct = result.confidence * 100
-    lines.append(
-        f"Berdasarkan analisis pola gelombang, AI mengklasifikasikan gangguan ini sebagai "
-        f"{result.label} dengan tingkat keyakinan {conf_pct:.0f}%."
-    )
+    label_upper = str(result.label or "").upper()
+    cause_pcts = result.cause_pcts or []
+    is_permanent = ("PERMANEN" in label_upper) or ("KONDUKTOR" in label_upper)
+
+    if (not is_permanent) and ("TRANSIEN" in label_upper) and cause_pcts:
+        top = max(cause_pcts, key=lambda x: float(x.get("pct", 0) or 0))
+        top_name = str(top.get("name", "LAIN-LAIN"))
+        top_pct = float(top.get("pct", 0) or 0)
+
+        # Mention runner-up when the top cause is not dominant.
+        others = sorted(cause_pcts, key=lambda x: -(float(x.get("pct", 0) or 0)))
+        second = others[1] if len(others) > 1 else None
+        second_name = str(second.get("name")) if second else ""
+        second_pct = float(second.get("pct", 0) or 0) if second else 0.0
+
+        if top_name.upper() == "PETIR" and top_pct >= 99.5:
+            lines.append(
+                f"AI mengidentifikasi gangguan ini sebagai {result.label}. "
+                f"Penyebab paling mungkin adalah {top_name} dengan keyakinan heuristik {top_pct:.1f}% "
+                f"(sangat dominan)."
+            )
+        elif top_pct >= 70:
+            lines.append(
+                f"AI mengidentifikasi gangguan ini sebagai {result.label}. "
+                f"Penyebab paling mungkin adalah {top_name} ({top_pct:.1f}% heuristik)."
+            )
+        else:
+            if second_name:
+                lines.append(
+                    f"AI mengidentifikasi gangguan ini sebagai {result.label}. "
+                    f"Estimasi penyebab teratas: {top_name} ({top_pct:.1f}%), "
+                    f"diikuti {second_name} ({second_pct:.1f}%)."
+                )
+            else:
+                lines.append(
+                    f"AI mengidentifikasi gangguan ini sebagai {result.label}. "
+                    f"Estimasi penyebab teratas: {top_name} ({top_pct:.1f}%)."
+                )
+    else:
+        lines.append(
+            f"Berdasarkan analisis pola gelombang, AI mengklasifikasikan gangguan ini sebagai "
+            f"{result.label} dengan tingkat keyakinan {conf_pct:.0f}%."
+        )
 
     return "\n".join(lines)
 

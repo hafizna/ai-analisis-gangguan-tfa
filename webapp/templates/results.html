@@ -394,13 +394,13 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 
     <!-- CT/PT correction bar -->
     <div class="ctpt-bar">
-        <span class="ctpt-title">Koreksi Rasio</span>
+        <span class="ctpt-title">Override Rasio (Opsional)</span>
         <div class="ctpt-group">
             <label for="ctPrimary">CT</label>
             <div class="ctpt-split">
                 <input type="number" id="ctPrimary" class="ctpt-input" value="{{ analysis.ct_primary or 1 }}" data-default="{{ analysis.cfg_ct_primary or analysis.ct_primary or 1 }}" min="0.001" step="any" placeholder="P">
                 <span>/</span>
-                <input type="number" id="ctSecondary" class="ctpt-input" value="{{ analysis.ct_secondary or 1 }}" data-default="{{ analysis.cfg_ct_secondary or analysis.ct_secondary or 1 }}" min="0.001" step="any" placeholder="S">
+                <input type="number" id="ctSecondary" class="ctpt-input" value="{{ analysis.ct_secondary or 1 }}" data-default="{{ analysis.cfg_ct_secondary or analysis.ct_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_ct_primary or 2000 }}" data-assumed-s="{{ analysis.assumed_ct_secondary or 1 }}" min="0.001" step="any" placeholder="S">
             </div>
         </div>
         <div class="ctpt-group">
@@ -408,19 +408,21 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             <div class="ctpt-split">
                 <input type="number" id="vtPrimary" class="ctpt-input" value="{{ analysis.vt_primary or 1 }}" data-default="{{ analysis.cfg_vt_primary or analysis.vt_primary or 1 }}" min="0.001" step="any" placeholder="P">
                 <span>/</span>
-                <input type="number" id="vtSecondary" class="ctpt-input" value="{{ analysis.vt_secondary or 1 }}" data-default="{{ analysis.cfg_vt_secondary or analysis.vt_secondary or 1 }}" min="0.001" step="any" placeholder="S">
+                <input type="number" id="vtSecondary" class="ctpt-input" value="{{ analysis.vt_secondary or 1 }}" data-default="{{ analysis.cfg_vt_secondary or analysis.vt_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_vt_primary or 150000 }}" data-assumed-s="{{ analysis.assumed_vt_secondary or 100 }}" min="0.001" step="any" placeholder="S">
             </div>
         </div>
-        <button class="btn btn-primary" style="padding:5px 14px; font-size:12px;" onclick="confirmRatiosAndReanalyze()">Konfirmasi Rasio &amp; Analisa Ulang AI</button>
+        <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="useAssumedRatios()">Pakai Asumsi Umum</button>
+        <button id="reanalyzeBtn" class="btn btn-primary" style="padding:5px 14px; font-size:12px;" onclick="confirmRatiosAndReanalyze()">Konfirmasi Rasio &amp; Analisa Ulang AI</button>
         <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="resetRatios()">Reset</button>
-        <span class="ctpt-note">Masukkan rasio primer/sekunder (P/S). Contoh CT 4000/1: nilai arus 0.5 A tampil sebagai 2000 A primer.</span>
+        <span class="ctpt-note">Nilai default mengikuti normalisasi parser COMTRADE (basis analisa saat ini). Override hanya jika data setting CT/VT lapangan berbeda dari nilai default tersebut.</span>
         <span class="ctpt-status">
             Rasio terbaca dari COMTRADE:
             CT={% if analysis.cfg_ct_known %}{{ analysis.cfg_ct_primary or 1 }}/{{ analysis.cfg_ct_secondary or 1 }}{% else %}tidak eksplisit (terbaca 1/1){% endif %},
             VT={% if analysis.cfg_vt_known %}{{ analysis.cfg_vt_primary or 1 }}/{{ analysis.cfg_vt_secondary or 1 }}{% else %}tidak eksplisit (terbaca 1/1){% endif %}.
         </span>
-        <span class="ctpt-status">Catatan: pada beberapa file, nilai analog sudah terskalakan primer meski metadata rasio tampil 1/1.</span>
-        <span class="ctpt-status" id="ctptStatus">Status koreksi: nominal (CT=1/1, VT=1/1).</span>
+        <span class="ctpt-status">Catatan: metadata rasio bisa 1/1 meskipun nilai analog sudah benar/primer karena scaling COMTRADE diterapkan saat parsing.</span>
+        <span class="ctpt-status">Asumsi umum sistem {{ "%.0f"|format(analysis.assumed_voltage_kv or 150) }} kV: VT {{ "%.0f"|format(analysis.assumed_vt_primary or 150000) }}/{{ "%.0f"|format(analysis.assumed_vt_secondary or 100) }}, CT {{ "%.0f"|format(analysis.assumed_ct_primary or 2000) }}/{{ "%.0f"|format(analysis.assumed_ct_secondary or 1) }}.</span>
+        <span class="ctpt-status" id="ctptStatus">Status rasio: mengikuti default normalisasi sistem.</span>
     </div>
 
     <!-- Electrical parameters top row -->
@@ -643,6 +645,14 @@ function confirmRatiosAndReanalyze() {
     form.submit();
 }
 
+function useAssumedRatios() {
+    document.getElementById('ctPrimary').value = {{ "%.6f"|format(analysis.assumed_ct_primary or 2000) }};
+    document.getElementById('ctSecondary').value = {{ "%.6f"|format(analysis.assumed_ct_secondary or 1) }};
+    document.getElementById('vtPrimary').value = {{ "%.6f"|format(analysis.assumed_vt_primary or 150000) }};
+    document.getElementById('vtSecondary').value = {{ "%.6f"|format(analysis.assumed_vt_secondary or 100) }};
+    _refreshCtptStatusOnly();
+}
+
 function resetRatios() {
     const ctP = document.getElementById('ctPrimary');
     const ctS = document.getElementById('ctSecondary');
@@ -670,10 +680,16 @@ function _ratio(primary, secondary) {
 function _setCtptStatus(ctP, ctS, vtP, vtS, ctMul, vtMul) {
     const el = document.getElementById('ctptStatus');
     if (!el) return;
-    if (ctP === 1 && ctS === 1 && vtP === 1 && vtS === 1) {
-        el.textContent = 'Status koreksi: nominal (CT=1/1, VT=1/1).';
+    const dCtP = parseFloat(document.getElementById('ctPrimary').dataset.default || '1') || 1;
+    const dCtS = parseFloat(document.getElementById('ctSecondary').dataset.default || '1') || 1;
+    const dVtP = parseFloat(document.getElementById('vtPrimary').dataset.default || '1') || 1;
+    const dVtS = parseFloat(document.getElementById('vtSecondary').dataset.default || '1') || 1;
+    const changed = (ctP !== dCtP) || (ctS !== dCtS) || (vtP !== dVtP) || (vtS !== dVtS);
+
+    if (!changed) {
+        el.textContent = `Status rasio: mengikuti default normalisasi (CT=${dCtP}/${dCtS}, VT=${dVtP}/${dVtS}).`;
     } else {
-        el.textContent = `Status siap konfirmasi: CT=${ctP}/${ctS} (x${ctMul.toLocaleString('id-ID', {maximumFractionDigits: 3})}), VT=${vtP}/${vtS} (x${vtMul.toLocaleString('id-ID', {maximumFractionDigits: 3})}). Klik tombol konfirmasi untuk analisa ulang AI.`;
+        el.textContent = `Status siap konfirmasi: CT=${ctP}/${ctS} (x${ctMul.toLocaleString('id-ID', {maximumFractionDigits: 3})}), VT=${vtP}/${vtS} (x${vtMul.toLocaleString('id-ID', {maximumFractionDigits: 3})}). Klik konfirmasi untuk analisa ulang AI.`;
     }
 }
 function _refreshCtptStatusOnly() {
@@ -682,6 +698,19 @@ function _refreshCtptStatusOnly() {
     const vtP = parseFloat(document.getElementById('vtPrimary').value) || 1;
     const vtS = parseFloat(document.getElementById('vtSecondary').value) || 1;
     _setCtptStatus(ctP, ctS, vtP, vtS, _ratio(ctP, ctS), _ratio(vtP, vtS));
+
+    const dCtP = parseFloat(document.getElementById('ctPrimary').dataset.default || '1') || 1;
+    const dCtS = parseFloat(document.getElementById('ctSecondary').dataset.default || '1') || 1;
+    const dVtP = parseFloat(document.getElementById('vtPrimary').dataset.default || '1') || 1;
+    const dVtS = parseFloat(document.getElementById('vtSecondary').dataset.default || '1') || 1;
+    const changed = (ctP !== dCtP) || (ctS !== dCtS) || (vtP !== dVtP) || (vtS !== dVtS);
+
+    const btn = document.getElementById('reanalyzeBtn');
+    if (btn) {
+        btn.disabled = !changed;
+        btn.style.opacity = changed ? '1' : '0.6';
+        btn.style.cursor = changed ? 'pointer' : 'not-allowed';
+    }
 }
 document.getElementById('ctPrimary').addEventListener('input', _refreshCtptStatusOnly);
 document.getElementById('ctSecondary').addEventListener('input', _refreshCtptStatusOnly);

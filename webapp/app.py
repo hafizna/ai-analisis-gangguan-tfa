@@ -168,6 +168,60 @@ def _row_correct_flag(row: dict):
     return _normalize_label(pred_cause) == _normalize_label(conf)
 
 
+def _ensure_history_schema():
+    """Normalize history.csv to current HISTORY_FIELDS and repair mixed-width rows."""
+    if not HISTORY_CSV.exists():
+        return
+
+    try:
+        with open(HISTORY_CSV, newline="", encoding="utf-8") as f:
+            raw = list(csv.reader(f))
+        if not raw:
+            return
+    except Exception:
+        return
+
+    header = raw[0]
+    data_rows = raw[1:]
+
+    # Fast path: already aligned.
+    if header == HISTORY_FIELDS and all(len(r) == len(HISTORY_FIELDS) for r in data_rows):
+        return
+
+    normalized = []
+    for r in data_rows:
+        if not r:
+            continue
+
+        if len(r) == len(HISTORY_FIELDS):
+            mapped = dict(zip(HISTORY_FIELDS, r))
+        elif len(r) == len(header):
+            mapped = dict(zip(header, r))
+        elif len(r) == len(HISTORY_FIELDS) - 1:
+            # Likely missing predicted_cause_top, insert it after predicted_label.
+            rr = list(r)
+            rr.insert(4, rr[3] if len(rr) > 3 else "")
+            rr = rr[:len(HISTORY_FIELDS)] + [""] * max(0, len(HISTORY_FIELDS) - len(rr))
+            mapped = dict(zip(HISTORY_FIELDS, rr))
+        else:
+            rr = list(r)[:len(HISTORY_FIELDS)]
+            rr += [""] * max(0, len(HISTORY_FIELDS) - len(rr))
+            mapped = dict(zip(HISTORY_FIELDS, rr))
+
+        out = {k: _s(mapped.get(k), "") for k in HISTORY_FIELDS}
+        if not out.get("predicted_cause_top"):
+            out["predicted_cause_top"] = out.get("predicted_label", "")
+
+        corr = _row_correct_flag(out)
+        out["correct"] = "True" if corr is True else ("False" if corr is False else "")
+        normalized.append(out)
+
+    with open(HISTORY_CSV, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=HISTORY_FIELDS)
+        writer.writeheader()
+        writer.writerows(normalized)
+
+
 def _norm_ratio_num(x: float) -> float:
     """Normalize ratio display values: prefer integer-looking numbers."""
     xf = _f(x, 1.0)
@@ -220,6 +274,50 @@ def _extract_cfg_ratios(cfg_path: str) -> dict:
             "cfg_vt_primary": 1.0, "cfg_vt_secondary": 1.0,
             "cfg_ct_known": False, "cfg_vt_known": False,
         }
+
+
+def _nearest_supported_voltage_kv(v_kv: float) -> float:
+    levels = [30.0, 75.0, 150.0, 275.0, 500.0]
+    v = _f(v_kv, 150.0)
+    return min(levels, key=lambda x: abs(x - v))
+
+
+def _assumed_transformer_ratios(voltage_kv, peak_current_a) -> dict:
+    """
+    Return practical default CT/VT ratio assumptions for transmission systems.
+    Supported nominal voltage levels: 30/75/150/275/500 kV.
+    VT assumption uses common 100V secondary (LL basis) -> ratio ~= Vll/100.
+    CT assumption uses common primary steps with 1A secondary and is nudged by
+    measured peak current when available.
+    """
+    v_sys = _nearest_supported_voltage_kv(_f(voltage_kv, 150.0))
+    vt_primary = int(round(v_sys * 10)) * 100  # 30kV->30000, 150kV->150000
+    vt_secondary = 100
+
+    p_i = _f(peak_current_a, 0.0)
+    ct_steps_by_voltage = {
+        30.0: [400, 600, 800, 1000, 1200],
+        75.0: [600, 800, 1000, 1200, 1500],
+        150.0: [1000, 1200, 1600, 2000, 3000, 4000],
+        275.0: [1200, 1600, 2000, 3000, 4000],
+        500.0: [2000, 3000, 4000, 5000],
+    }
+    ct_steps = ct_steps_by_voltage.get(v_sys, ct_steps_by_voltage[150.0])
+    if p_i <= 0:
+        ct_primary = ct_steps[min(2, len(ct_steps) - 1)]
+    else:
+        target = max(ct_steps[0], p_i * 1.2)
+        higher = [x for x in ct_steps if x >= target]
+        ct_primary = higher[0] if higher else ct_steps[-1]
+    ct_secondary = 1
+
+    return {
+        "assumed_voltage_kv": v_sys,
+        "assumed_ct_primary": float(ct_primary),
+        "assumed_ct_secondary": float(ct_secondary),
+        "assumed_vt_primary": float(vt_primary),
+        "assumed_vt_secondary": float(vt_secondary),
+    }
 
 
 def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, vt_p: float, vt_s: float) -> dict:
@@ -289,7 +387,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         updated["confidence"] = _f(rule_result.confidence)
         updated["tier"] = 1
         updated["rule_name"] = rule_result.rule_name
-        updated["evidence"] = f"{rule_result.evidence} | Rehitung dengan rasio CT/VT."
+        updated["evidence"] = f"{rule_result.evidence} | Analisa ulang dengan rasio CT/VT."
         updated["cause_pcts"] = []
         updated["recommendation"] = (
             "Lakukan inspeksi lapangan sesuai indikasi gangguan permanen/peralatan."
@@ -338,7 +436,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         updated["rule_name"] = "petir_decision_tree" if pred == 1 else "petir_decision_tree_non_petir"
         updated["cause_pcts"] = _compute_cause_pcts(row)
         updated["recommendation"] = _transient_recommendation(row)
-        updated["evidence"] = "Rehitung ML berbasis fitur yang sudah dikoreksi rasio CT/VT."
+        updated["evidence"] = "Analisa ulang ML berbasis fitur yang sudah dikoreksi rasio CT/VT."
         updated["description"] = (
             (updated.get("baseline_description") or updated.get("description", "")) + "\n\n"
             if (updated.get("baseline_description") or updated.get("description", ""))
@@ -373,6 +471,27 @@ ANALYSIS_DIR = Path(tempfile.gettempdir()) / "dfr_analysis"
 HISTORY_CSV = Path(__file__).parent / "history.csv"
 UPLOAD_DIR.mkdir(exist_ok=True)
 ANALYSIS_DIR.mkdir(exist_ok=True)
+
+HISTORY_FIELDS = [
+    "timestamp",
+    "filename",
+    "station",
+    "predicted_label",
+    "predicted_cause_top",
+    "predicted_conf",
+    "tier",
+    "rule_name",
+    "confirmed_label",
+    "correct",
+    "notes",
+    "zone",
+    "phases",
+    "duration_ms",
+    "fault_count",
+    "peak_current_a",
+    "i0_i1_ratio",
+    "reclose_ok",
+]
 
 FAULT_CATEGORIES = [
     "PETIR",
@@ -529,6 +648,11 @@ def upload_files():
 
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(str(cfg_path))
+    assumed_ratios = _assumed_transformer_ratios(feats.get("voltage_kv"), feats.get("peak_fault_current_a"))
+    ct_p_default = _f(cfg_ratios.get("cfg_ct_primary"), 1.0) if cfg_ratios.get("cfg_ct_known") else _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
+    ct_s_default = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0) if cfg_ratios.get("cfg_ct_known") else _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
+    vt_p_default = _f(cfg_ratios.get("cfg_vt_primary"), 1.0) if cfg_ratios.get("cfg_vt_known") else _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
+    vt_s_default = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0) if cfg_ratios.get("cfg_vt_known") else _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
 
     analysis_payload = {
         "original_filename": cfg_file.filename,
@@ -573,16 +697,21 @@ def upload_files():
         "reclose_time_ms":      _f(feats.get("reclose_time_ms")),
         "voltage_kv":           _s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui",
         "scaling_ok":           _f(feats.get("peak_fault_current_a", 0)) >= 200.0,
-        "ct_primary": _f(cfg_ratios.get("cfg_ct_primary"), 1.0),
-        "ct_secondary": _f(cfg_ratios.get("cfg_ct_secondary"), 1.0),
-        "vt_primary": _f(cfg_ratios.get("cfg_vt_primary"), 1.0),
-        "vt_secondary": _f(cfg_ratios.get("cfg_vt_secondary"), 1.0),
+        "ct_primary": ct_p_default,
+        "ct_secondary": ct_s_default,
+        "vt_primary": vt_p_default,
+        "vt_secondary": vt_s_default,
         "cfg_ct_primary": _f(cfg_ratios.get("cfg_ct_primary"), 1.0),
         "cfg_ct_secondary": _f(cfg_ratios.get("cfg_ct_secondary"), 1.0),
         "cfg_vt_primary": _f(cfg_ratios.get("cfg_vt_primary"), 1.0),
         "cfg_vt_secondary": _f(cfg_ratios.get("cfg_vt_secondary"), 1.0),
         "cfg_ct_known": bool(cfg_ratios.get("cfg_ct_known")),
         "cfg_vt_known": bool(cfg_ratios.get("cfg_vt_known")),
+        "assumed_voltage_kv": _f(assumed_ratios.get("assumed_voltage_kv"), 150.0),
+        "assumed_ct_primary": _f(assumed_ratios.get("assumed_ct_primary"), 2000.0),
+        "assumed_ct_secondary": _f(assumed_ratios.get("assumed_ct_secondary"), 1.0),
+        "assumed_vt_primary": _f(assumed_ratios.get("assumed_vt_primary"), 150000.0),
+        "assumed_vt_secondary": _f(assumed_ratios.get("assumed_vt_secondary"), 100.0),
     }
     _clear_analysis_store()
     _save_analysis_to_store(analysis_payload)
@@ -627,6 +756,11 @@ def analyze_from_browse():
 
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(cfg_path)
+    assumed_ratios = _assumed_transformer_ratios(feats.get("voltage_kv"), feats.get("peak_fault_current_a"))
+    ct_p_default = _f(cfg_ratios.get("cfg_ct_primary"), 1.0) if cfg_ratios.get("cfg_ct_known") else _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
+    ct_s_default = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0) if cfg_ratios.get("cfg_ct_known") else _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
+    vt_p_default = _f(cfg_ratios.get("cfg_vt_primary"), 1.0) if cfg_ratios.get("cfg_vt_known") else _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
+    vt_s_default = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0) if cfg_ratios.get("cfg_vt_known") else _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
     analysis_payload = {
         "original_filename": Path(cfg_path).name,
         "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -669,16 +803,21 @@ def analyze_from_browse():
         "reclose_time_ms":      _f(feats.get("reclose_time_ms")),
         "voltage_kv":           _s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui",
         "scaling_ok":           _f(feats.get("peak_fault_current_a", 0)) >= 200.0,
-        "ct_primary": _f(cfg_ratios.get("cfg_ct_primary"), 1.0),
-        "ct_secondary": _f(cfg_ratios.get("cfg_ct_secondary"), 1.0),
-        "vt_primary": _f(cfg_ratios.get("cfg_vt_primary"), 1.0),
-        "vt_secondary": _f(cfg_ratios.get("cfg_vt_secondary"), 1.0),
+        "ct_primary": ct_p_default,
+        "ct_secondary": ct_s_default,
+        "vt_primary": vt_p_default,
+        "vt_secondary": vt_s_default,
         "cfg_ct_primary": _f(cfg_ratios.get("cfg_ct_primary"), 1.0),
         "cfg_ct_secondary": _f(cfg_ratios.get("cfg_ct_secondary"), 1.0),
         "cfg_vt_primary": _f(cfg_ratios.get("cfg_vt_primary"), 1.0),
         "cfg_vt_secondary": _f(cfg_ratios.get("cfg_vt_secondary"), 1.0),
         "cfg_ct_known": bool(cfg_ratios.get("cfg_ct_known")),
         "cfg_vt_known": bool(cfg_ratios.get("cfg_vt_known")),
+        "assumed_voltage_kv": _f(assumed_ratios.get("assumed_voltage_kv"), 150.0),
+        "assumed_ct_primary": _f(assumed_ratios.get("assumed_ct_primary"), 2000.0),
+        "assumed_ct_secondary": _f(assumed_ratios.get("assumed_ct_secondary"), 1.0),
+        "assumed_vt_primary": _f(assumed_ratios.get("assumed_vt_primary"), 150000.0),
+        "assumed_vt_secondary": _f(assumed_ratios.get("assumed_vt_secondary"), 100.0),
     }
     _clear_analysis_store()
     _save_analysis_to_store(analysis_payload)
@@ -690,6 +829,7 @@ def confirm_prediction():
     analysis = _load_analysis_from_store()
     if not analysis:
         return jsonify({"error": "No analysis in session"}), 400
+    _ensure_history_schema()
 
     confirmed = request.form.get("fault_cause", "LAIN-LAIN")
     notes     = request.form.get("notes", "")
@@ -717,11 +857,10 @@ def confirm_prediction():
         "reclose_ok":         analysis["reclose_successful"],
     }
 
-    # Append to history CSV
-    write_header = not HISTORY_CSV.exists()
+    # Append to history CSV (schema-normalized)
     with open(HISTORY_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if write_header:
+        writer = csv.DictWriter(f, fieldnames=HISTORY_FIELDS)
+        if f.tell() == 0:
             writer.writeheader()
         writer.writerow(row)
 
@@ -736,6 +875,7 @@ def success():
 
 @app.route("/trends")
 def trends():
+    _ensure_history_schema()
     rows = []
     if HISTORY_CSV.exists():
         with open(HISTORY_CSV, encoding="utf-8") as f:
@@ -862,6 +1002,7 @@ def recalculate_with_ratio():
 
 @app.route("/history")
 def history():
+    _ensure_history_schema()
     rows = []
     if HISTORY_CSV.exists():
         with open(HISTORY_CSV, encoding="utf-8") as f:
@@ -1011,6 +1152,7 @@ def api_history():
         limit  — max number of rows (default 100, newest first)
         format — "full" returns all CSV fields; default returns summary only
     """
+    _ensure_history_schema()
     limit = min(int(request.args.get("limit", 100)), 1000)
     full  = request.args.get("format") == "full"
 
