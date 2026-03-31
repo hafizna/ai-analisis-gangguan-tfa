@@ -594,7 +594,7 @@ def _db_enabled() -> bool:
 def _db_connect():
     if not _db_enabled():
         return None
-    return psycopg.connect(DATABASE_URL, autocommit=True)
+    return psycopg.connect(DATABASE_URL, autocommit=True, connect_timeout=5)
 
 
 def _db_init():
@@ -744,7 +744,8 @@ FAULT_CATEGORIES = [
     "LAIN-LAIN",
 ]
 
-_db_init()
+import threading as _threading
+_threading.Thread(target=_db_init, daemon=True).start()
 
 
 @app.errorhandler(Exception)
