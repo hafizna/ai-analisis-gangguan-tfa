@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 import numpy as np
 import logging
+import re
 from scipy.fft import fft, fftfreq
 
 logger = logging.getLogger(__name__)
@@ -123,13 +124,16 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
     """
 
     try:
+        inception_idx = fault.inception_idx
+        active_line_tag = _detect_active_line_tag(record, inception_idx)
+
         # Get phase channels
-        ia = _get_channel(record, 'IA', 'current')
-        ib = _get_channel(record, 'IB', 'current')
-        ic = _get_channel(record, 'IC', 'current')
-        va = _get_channel(record, 'VA', 'voltage')
-        vb = _get_channel(record, 'VB', 'voltage')
-        vc = _get_channel(record, 'VC', 'voltage')
+        ia = _get_channel(record, 'IA', 'current', active_line_tag)
+        ib = _get_channel(record, 'IB', 'current', active_line_tag)
+        ic = _get_channel(record, 'IC', 'current', active_line_tag)
+        va = _get_channel(record, 'VA', 'voltage', active_line_tag)
+        vb = _get_channel(record, 'VB', 'voltage', active_line_tag)
+        vc = _get_channel(record, 'VC', 'voltage', active_line_tag)
 
         if not all([ia, ib, ic, va, vb, vc]):
             logger.error("Missing required phase channels for distance feature extraction")
@@ -141,7 +145,6 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
             logger.error("Cannot calculate sampling rate")
             return None
 
-        inception_idx = fault.inception_idx
         system_freq = record.frequency if record.frequency else 50.0
 
         # Calculate impedance features
@@ -257,13 +260,16 @@ def extract_differential_features(record, fault, protection) -> Optional[Differe
     """
 
     try:
+        inception_idx = fault.inception_idx
+        active_line_tag = _detect_active_line_tag(record, inception_idx)
+
         # Get phase channels
-        ia = _get_channel(record, 'IA', 'current')
-        ib = _get_channel(record, 'IB', 'current')
-        ic = _get_channel(record, 'IC', 'current')
-        va = _get_channel(record, 'VA', 'voltage')
-        vb = _get_channel(record, 'VB', 'voltage')
-        vc = _get_channel(record, 'VC', 'voltage')
+        ia = _get_channel(record, 'IA', 'current', active_line_tag)
+        ib = _get_channel(record, 'IB', 'current', active_line_tag)
+        ic = _get_channel(record, 'IC', 'current', active_line_tag)
+        va = _get_channel(record, 'VA', 'voltage', active_line_tag)
+        vb = _get_channel(record, 'VB', 'voltage', active_line_tag)
+        vc = _get_channel(record, 'VC', 'voltage', active_line_tag)
 
         if not all([ia, ib, ic]):
             logger.error("Missing required current channels")
@@ -273,7 +279,6 @@ def extract_differential_features(record, fault, protection) -> Optional[Differe
         if sampling_rate == 0:
             return None
 
-        inception_idx = fault.inception_idx
         system_freq = record.frequency if record.frequency else 50.0
 
         # Universal features
@@ -329,13 +334,64 @@ def extract_differential_features(record, fault, protection) -> Optional[Differe
 
 # ===== HELPER FUNCTIONS =====
 
-def _get_channel(record, name, measurement_type):
-    """Get channel by canonical name and measurement type."""
-    for ch in record.analog_channels:
-        if ch.canonical_name == name:
-            if measurement_type is None or ch.measurement == measurement_type:
-                return ch
+def _extract_line_tag(channel_name: str) -> Optional[str]:
+    """
+    Extract line/circuit identifier from channel name.
+    Examples:
+      "IR JEPARA 2" -> "2"
+      "VR LINE 1"   -> "1"
+    """
+    s = (channel_name or "").upper()
+    m = re.search(r"(?:LINE|BAY|JEPARA|SIRKIT|CCT|CIRCUIT)\s*#?\s*([0-9A-Z]+)\b", s)
+    if m:
+        return m.group(1)
+    m = re.search(r"\b([0-9])\b", s)
+    if m:
+        return m.group(1)
     return None
+
+
+def _detect_active_line_tag(record, inception_idx: int) -> Optional[str]:
+    """
+    For multi-line recordings in one COMTRADE, pick the line with strongest
+    current disturbance near fault inception.
+    """
+    if inception_idx is None:
+        return None
+
+    scores = {}
+    for ch in record.analog_channels:
+        if ch.measurement != "current" or ch.canonical_name not in {"IA", "IB", "IC"}:
+            continue
+        tag = _extract_line_tag(getattr(ch, "name", ""))
+        if not tag or len(ch.samples) == 0:
+            continue
+        ws = max(0, inception_idx - 50)
+        we = min(len(ch.samples), inception_idx + 400)
+        if we <= ws:
+            continue
+        s = float(np.max(np.abs(ch.samples[ws:we])))
+        scores[tag] = scores.get(tag, 0.0) + s
+
+    if not scores:
+        return None
+    return max(scores.items(), key=lambda x: x[1])[0]
+
+
+def _get_channel(record, name, measurement_type, preferred_line_tag: Optional[str] = None):
+    """Get channel by canonical name and measurement type, with optional line preference."""
+    candidates = []
+    for ch in record.analog_channels:
+        if ch.canonical_name == name and (measurement_type is None or ch.measurement == measurement_type):
+            candidates.append(ch)
+
+    if not candidates:
+        return None
+    if preferred_line_tag:
+        preferred = [c for c in candidates if _extract_line_tag(getattr(c, "name", "")) == preferred_line_tag]
+        if preferred:
+            return preferred[0]
+    return candidates[0]
 
 
 def _get_sampling_rate(record):

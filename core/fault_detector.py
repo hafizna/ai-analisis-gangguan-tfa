@@ -8,8 +8,51 @@ from dataclasses import dataclass
 from typing import Optional, List
 import numpy as np
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_line_tag(channel_name: str) -> Optional[str]:
+    s = (channel_name or "").upper()
+    m = re.search(r"(?:LINE|BAY|JEPARA|SIRKIT|CCT|CIRCUIT)\s*#?\s*([0-9A-Z]+)\b", s)
+    if m:
+        return m.group(1)
+    m = re.search(r"\b([0-9])\b", s)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _pick_current_channel(record, canonical_name: str, preferred_tag: Optional[str] = None):
+    candidates = [
+        ch for ch in record.analog_channels
+        if ch.canonical_name == canonical_name and ch.measurement == "current"
+    ]
+    if not candidates:
+        return None
+    if preferred_tag:
+        tagged = [c for c in candidates if _extract_line_tag(getattr(c, "name", "")) == preferred_tag]
+        if tagged:
+            return tagged[0]
+    return candidates[0]
+
+
+def _detect_active_line_tag_from_currents(record) -> Optional[str]:
+    """Pick line/circuit tag with largest overall current activity in the record."""
+    scores = {}
+    for ch in record.analog_channels:
+        if ch.measurement != "current" or ch.canonical_name not in {"IA", "IB", "IC"}:
+            continue
+        if len(ch.samples) == 0:
+            continue
+        tag = _extract_line_tag(getattr(ch, "name", ""))
+        if not tag:
+            continue
+        scores[tag] = scores.get(tag, 0.0) + float(np.max(np.abs(ch.samples)))
+    if not scores:
+        return None
+    return max(scores.items(), key=lambda x: x[1])[0]
 
 
 @dataclass
@@ -347,10 +390,12 @@ def _detect_from_waveforms(record) -> Optional[FaultEvent]:
     3. Use earliest detection across all phases
     """
 
-    # Get current channels
-    ia = next((ch for ch in record.analog_channels if ch.canonical_name == 'IA' and ch.measurement == 'current'), None)
-    ib = next((ch for ch in record.analog_channels if ch.canonical_name == 'IB' and ch.measurement == 'current'), None)
-    ic = next((ch for ch in record.analog_channels if ch.canonical_name == 'IC' and ch.measurement == 'current'), None)
+    active_line_tag = _detect_active_line_tag_from_currents(record)
+
+    # Get current channels (prefer dominant line tag for multi-line COMTRADE)
+    ia = _pick_current_channel(record, 'IA', active_line_tag)
+    ib = _pick_current_channel(record, 'IB', active_line_tag)
+    ic = _pick_current_channel(record, 'IC', active_line_tag)
 
     if not (ia and ib and ic):
         logger.warning("Cannot detect fault: missing phase currents")
