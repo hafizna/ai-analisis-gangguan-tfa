@@ -27,6 +27,10 @@ from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
+try:
+    import psycopg
+except Exception:
+    psycopg = None
 
 warnings.filterwarnings("ignore")
 
@@ -577,6 +581,155 @@ HISTORY_FIELDS = [
     "reclose_ok",
 ]
 
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+
+def _db_enabled() -> bool:
+    return bool(DATABASE_URL and psycopg is not None)
+
+
+def _db_connect():
+    if not _db_enabled():
+        return None
+    return psycopg.connect(DATABASE_URL, autocommit=True)
+
+
+def _db_init():
+    if not _db_enabled():
+        app.logger.info("Postgres disabled (DATABASE_URL/psycopg unavailable), using CSV history.")
+        return
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS analysis_feedback (
+                        id BIGSERIAL PRIMARY KEY,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        timestamp_txt TEXT,
+                        filename TEXT,
+                        station TEXT,
+                        predicted_label TEXT,
+                        predicted_cause_top TEXT,
+                        predicted_conf TEXT,
+                        tier TEXT,
+                        rule_name TEXT,
+                        confirmed_label TEXT,
+                        correct TEXT,
+                        notes TEXT,
+                        zone TEXT,
+                        phases TEXT,
+                        duration_ms TEXT,
+                        fault_count TEXT,
+                        peak_current_a TEXT,
+                        i0_i1_ratio TEXT,
+                        reclose_ok TEXT,
+                        source_ip TEXT,
+                        user_agent TEXT
+                    )
+                    """
+                )
+        app.logger.info("Postgres history backend is ready.")
+    except Exception as e:
+        app.logger.warning("Postgres init failed, fallback to CSV: %s", e)
+
+
+def _db_insert_feedback(row: dict, source_ip: str, user_agent: str) -> bool:
+    if not _db_enabled():
+        return False
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO analysis_feedback (
+                        timestamp_txt, filename, station, predicted_label, predicted_cause_top,
+                        predicted_conf, tier, rule_name, confirmed_label, correct, notes,
+                        zone, phases, duration_ms, fault_count, peak_current_a, i0_i1_ratio,
+                        reclose_ok, source_ip, user_agent
+                    ) VALUES (
+                        %(timestamp)s, %(filename)s, %(station)s, %(predicted_label)s, %(predicted_cause_top)s,
+                        %(predicted_conf)s, %(tier)s, %(rule_name)s, %(confirmed_label)s, %(correct)s, %(notes)s,
+                        %(zone)s, %(phases)s, %(duration_ms)s, %(fault_count)s, %(peak_current_a)s, %(i0_i1_ratio)s,
+                        %(reclose_ok)s, %(source_ip)s, %(user_agent)s
+                    )
+                    """,
+                    {
+                        **{k: _s(row.get(k), "") for k in HISTORY_FIELDS},
+                        "source_ip": _s(source_ip, ""),
+                        "user_agent": _s(user_agent, ""),
+                    },
+                )
+        return True
+    except Exception as e:
+        app.logger.warning("Postgres insert failed, fallback to CSV: %s", e)
+        return False
+
+
+def _db_fetch_feedback(limit: int | None = None) -> list[dict]:
+    if not _db_enabled():
+        return []
+    try:
+        q = (
+            "SELECT timestamp_txt, filename, station, predicted_label, predicted_cause_top, "
+            "predicted_conf, tier, rule_name, confirmed_label, correct, notes, zone, phases, "
+            "duration_ms, fault_count, peak_current_a, i0_i1_ratio, reclose_ok "
+            "FROM analysis_feedback ORDER BY id DESC"
+        )
+        params = ()
+        if limit is not None:
+            q += " LIMIT %s"
+            params = (int(limit),)
+
+        rows = []
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(q, params)
+                for r in cur.fetchall():
+                    rows.append({
+                        "timestamp": _s(r[0], ""),
+                        "filename": _s(r[1], ""),
+                        "station": _s(r[2], ""),
+                        "predicted_label": _s(r[3], ""),
+                        "predicted_cause_top": _s(r[4], ""),
+                        "predicted_conf": _s(r[5], "0"),
+                        "tier": _s(r[6], "0"),
+                        "rule_name": _s(r[7], ""),
+                        "confirmed_label": _s(r[8], ""),
+                        "correct": _s(r[9], ""),
+                        "notes": _s(r[10], ""),
+                        "zone": _s(r[11], ""),
+                        "phases": _s(r[12], ""),
+                        "duration_ms": _s(r[13], "0"),
+                        "fault_count": _s(r[14], "0"),
+                        "peak_current_a": _s(r[15], "0"),
+                        "i0_i1_ratio": _s(r[16], "0"),
+                        "reclose_ok": _s(r[17], ""),
+                    })
+        return rows
+    except Exception as e:
+        app.logger.warning("Postgres fetch failed, fallback to CSV: %s", e)
+        return []
+
+
+def _load_history_rows(limit: int | None = None, newest_first: bool = True) -> list[dict]:
+    rows = _db_fetch_feedback(limit if newest_first else None)
+    if rows:
+        if not newest_first:
+            rows.reverse()
+        return rows[:limit] if limit is not None else rows
+
+    _ensure_history_schema()
+    csv_rows = []
+    if HISTORY_CSV.exists():
+        with open(HISTORY_CSV, encoding="utf-8") as f:
+            csv_rows = list(csv.DictReader(f))
+    if newest_first:
+        csv_rows.reverse()
+    if limit is not None:
+        csv_rows = csv_rows[:limit]
+    return csv_rows
+
 FAULT_CATEGORIES = [
     "PETIR",
     "LAYANG-LAYANG",
@@ -587,6 +740,8 @@ FAULT_CATEGORIES = [
     "GANGGUAN PERMANEN",
     "LAIN-LAIN",
 ]
+
+_db_init()
 
 
 @app.errorhandler(Exception)
@@ -1003,12 +1158,18 @@ def confirm_prediction():
         "reclose_ok":         analysis["reclose_successful"],
     }
 
-    # Append to history CSV (schema-normalized)
-    with open(HISTORY_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=HISTORY_FIELDS)
-        if f.tell() == 0:
-            writer.writeheader()
-        writer.writerow(row)
+    # Persist to Postgres first (Railway), fallback to CSV if DB unavailable.
+    saved_to_db = _db_insert_feedback(
+        row,
+        source_ip=request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+        user_agent=request.headers.get("User-Agent", ""),
+    )
+    if not saved_to_db:
+        with open(HISTORY_CSV, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=HISTORY_FIELDS)
+            if f.tell() == 0:
+                writer.writeheader()
+            writer.writerow(row)
 
     _clear_analysis_store()
     return redirect(url_for("success"))
@@ -1021,11 +1182,7 @@ def success():
 
 @app.route("/trends")
 def trends():
-    _ensure_history_schema()
-    rows = []
-    if HISTORY_CSV.exists():
-        with open(HISTORY_CSV, encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
+    rows = _load_history_rows(newest_first=False)
 
     if not rows:
         return render_template("trends.html", rows=[], stats={}, cause_dist=[],
@@ -1148,12 +1305,7 @@ def recalculate_with_ratio():
 
 @app.route("/history")
 def history():
-    _ensure_history_schema()
-    rows = []
-    if HISTORY_CSV.exists():
-        with open(HISTORY_CSV, encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
-        rows.reverse()   # newest first
+    rows = _load_history_rows(newest_first=True)
 
     for r in rows:
         r["_correct_eval"] = _row_correct_flag(r)
@@ -1298,16 +1450,10 @@ def api_history():
         limit  — max number of rows (default 100, newest first)
         format — "full" returns all CSV fields; default returns summary only
     """
-    _ensure_history_schema()
     limit = min(int(request.args.get("limit", 100)), 1000)
     full  = request.args.get("format") == "full"
 
-    rows = []
-    if HISTORY_CSV.exists():
-        with open(HISTORY_CSV, encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
-        rows.reverse()   # newest first
-    rows = rows[:limit]
+    rows = _load_history_rows(limit=limit, newest_first=True)
 
     total   = len(rows)
     comparable = [r for r in rows if _row_correct_flag(r) is not None]
