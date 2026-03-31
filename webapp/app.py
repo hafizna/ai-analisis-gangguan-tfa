@@ -273,20 +273,60 @@ def _pick_representative_scale_multiplier(channels, measurement: str) -> float:
     return Counter(round(v, 6) for v in vals).most_common(1)[0][0]
 
 
-def _infer_ratio_from_parser_multiplier(measurement: str, mult: float) -> tuple[float, float, bool]:
+def _infer_ratio_from_parser_multiplier(
+    measurement: str,
+    mult: float,
+    voltage_kv=None,
+    peak_current_a=None,
+) -> tuple[float, float, bool]:
     """
-    Convert parser scale multiplier to a practical P/S ratio for UI default.
-    This is only used when explicit cfg primary/secondary is unavailable (often 1/1).
+    Convert parser scale multiplier to a practical CT/VT P/S ratio for UI defaults.
+    Used only when explicit cfg primary/secondary is unavailable (often 1/1).
     """
     m = _f(mult, 0.0)
+    if m <= 0:
+        return 1.0, 1.0, False
+
+    v_sys = _nearest_supported_voltage_kv(_f(voltage_kv, 150.0))
+    ct_steps_by_voltage = {
+        30.0: [400, 600, 800, 1000, 1200],
+        75.0: [600, 800, 1000, 1200, 1500, 2000],
+        150.0: [800, 1000, 1200, 1600, 2000, 2500, 3000, 4000],
+        275.0: [1000, 1200, 1600, 2000, 2500, 3000, 4000],
+        500.0: [1600, 2000, 2500, 3000, 4000, 5000],
+    }
+
     if measurement == "current":
-        if 5 <= m <= 10000:
-            return float(round(m)), 1.0, True
+        ct_steps = ct_steps_by_voltage.get(v_sys, ct_steps_by_voltage[150.0])
+        best = None
+        for sec in (1.0, 5.0):
+            target_primary = m * sec
+            prim = min(ct_steps, key=lambda x: abs(x - target_primary))
+            eff = prim / sec
+            rel_err = abs(eff - m) / max(m, 1e-9)
+            # tiny preference to /1 only when equally good
+            score = rel_err + (0.0001 if sec == 1.0 else 0.0)
+            cand = (score, float(prim), float(sec))
+            if best is None or cand[0] < best[0]:
+                best = cand
+        if best is not None and best[0] <= 0.25:
+            return best[1], best[2], True
         return 1.0, 1.0, False
+
     if measurement == "voltage":
-        if 10 <= m <= 10000:
-            return float(round(m * 100)), 100.0, True
+        vt_primary = float(int(round(v_sys * 1000.0)))
+        vt_secondaries = (100.0, 110.0, 115.0, 120.0, 125.0)
+        best = None
+        for sec in vt_secondaries:
+            eff = vt_primary / sec
+            rel_err = abs(eff - m) / max(m, 1e-9)
+            cand = (rel_err, vt_primary, sec)
+            if best is None or cand[0] < best[0]:
+                best = cand
+        if best is not None and best[0] <= 0.25:
+            return best[1], best[2], True
         return 1.0, 1.0, False
+
     return 1.0, 1.0, False
 
 
@@ -321,21 +361,22 @@ def _extract_cfg_ratios(cfg_path: str) -> dict:
 
 
 def _nearest_supported_voltage_kv(v_kv: float) -> float:
-    levels = [30.0, 70.0, 150.0, 275.0, 500.0]
+    levels = [30.0, 75.0, 150.0, 275.0, 500.0]
     v = _f(v_kv, 150.0)
     return min(levels, key=lambda x: abs(x - v))
 
 
-def _assumed_transformer_ratios(voltage_kv, peak_current_a) -> dict:
+def _assumed_transformer_ratios(voltage_kv, peak_current_a, parser_ct_multiplier=0.0, parser_vt_multiplier=0.0) -> dict:
     """
     Return practical default CT/VT ratio assumptions for transmission systems.
     Supported nominal voltage levels: 30/75/150/275/500 kV.
-    VT assumption uses common 100V secondary (LL basis) -> ratio ~= Vll/100.
-    CT assumption uses common primary steps with 1A secondary and is nudged by
-    measured peak current when available.
+    VT assumption uses common secondaries: 100/110/115/120/125 V.
+    CT assumption uses common secondaries: 1 A or 5 A.
+    If parser multipliers are available, they are used to infer the closest
+    practical P/S pair so defaults follow the COMTRADE scaling behavior.
     """
     v_sys = _nearest_supported_voltage_kv(_f(voltage_kv, 150.0))
-    vt_primary = int(round(v_sys * 10)) * 100  # 30kV->30000, 150kV->150000
+    vt_primary = int(round(v_sys * 1000.0))
     vt_secondary = 100
 
     p_i = _f(peak_current_a, 0.0)
@@ -355,6 +396,18 @@ def _assumed_transformer_ratios(voltage_kv, peak_current_a) -> dict:
         higher = [x for x in ct_steps if x >= target]
         ct_primary = higher[0] if higher else ct_steps[-1]
     ct_secondary = 1
+
+    # Prefer parser-based inferred ratios when explicit cfg ratios are unavailable.
+    inf_ct_p, inf_ct_s, inf_ct_ok = _infer_ratio_from_parser_multiplier(
+        "current", parser_ct_multiplier, voltage_kv=voltage_kv, peak_current_a=peak_current_a
+    )
+    inf_vt_p, inf_vt_s, inf_vt_ok = _infer_ratio_from_parser_multiplier(
+        "voltage", parser_vt_multiplier, voltage_kv=voltage_kv, peak_current_a=peak_current_a
+    )
+    if inf_ct_ok:
+        ct_primary, ct_secondary = inf_ct_p, inf_ct_s
+    if inf_vt_ok:
+        vt_primary, vt_secondary = inf_vt_p, inf_vt_s
 
     return {
         "assumed_voltage_kv": v_sys,
@@ -921,7 +974,12 @@ def upload_files():
 
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(str(cfg_path))
-    assumed_ratios = _assumed_transformer_ratios(feats.get("voltage_kv"), feats.get("peak_fault_current_a"))
+    assumed_ratios = _assumed_transformer_ratios(
+        feats.get("voltage_kv"),
+        feats.get("peak_fault_current_a"),
+        cfg_ratios.get("parser_ct_multiplier"),
+        cfg_ratios.get("parser_vt_multiplier"),
+    )
     ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else "assumed"
     vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else "assumed"
     if cfg_ratios.get("cfg_ct_known"):
@@ -1045,7 +1103,12 @@ def analyze_from_browse():
 
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(cfg_path)
-    assumed_ratios = _assumed_transformer_ratios(feats.get("voltage_kv"), feats.get("peak_fault_current_a"))
+    assumed_ratios = _assumed_transformer_ratios(
+        feats.get("voltage_kv"),
+        feats.get("peak_fault_current_a"),
+        cfg_ratios.get("parser_ct_multiplier"),
+        cfg_ratios.get("parser_vt_multiplier"),
+    )
     ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else "assumed"
     vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else "assumed"
     if cfg_ratios.get("cfg_ct_known"):

@@ -443,29 +443,29 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <div class="param-sub">≈ <span id="disp-peak-ka" data-val="{{ "%.3f"|format(analysis.peak_fault_current_a / 1000) }}">{{ "%.3f"|format(analysis.peak_fault_current_a / 1000) }}</span> kA</div>
             </div>
             <div class="param-box">
-                <label>V Nominal (Pre-Fault)</label>
+                <label>V Pra-Gangguan (Fasa-ke-Tanah RMS)</label>
                 <div>
                     {% if analysis.v_prefault_v > 0 %}
                     <span class="param-val" id="disp-v-pre" data-val="{{ "%.2f"|format(analysis.v_prefault_v) }}">
                         {{ "%.2f"|format(analysis.v_prefault_v) }}
                     </span>
-                    <span class="param-unit">V</span>
+                    <span class="param-unit">kV</span>
                     {% else %}
                     <span class="param-val" style="font-size:14px;">N/A</span>
                     {% endif %}
                 </div>
                 {% if analysis.voltage_kv != 'Tidak diketahui' %}
-                <div class="param-sub">Sistem: {{ analysis.voltage_kv }} kV</div>
+                <div class="param-sub">Sistem: {{ analysis.voltage_kv }} kV (line-line)</div>
                 {% endif %}
             </div>
             <div class="param-box">
-                <label>V Gangguan — Fasa {{ analysis.voltage_sag_phase }}</label>
+                <label>V Saat Gangguan — Fasa {{ analysis.voltage_sag_phase }} (Fasa-ke-Tanah RMS)</label>
                 <div>
                     {% if analysis.v_fault_v > 0 %}
                     <span class="param-val" id="disp-v-flt" data-val="{{ "%.2f"|format(analysis.v_fault_v) }}">
                         {{ "%.2f"|format(analysis.v_fault_v) }}
                     </span>
-                    <span class="param-unit">V</span>
+                    <span class="param-unit">kV</span>
                     {% else %}
                     <span class="param-val" style="font-size:14px;">N/A</span>
                     {% endif %}
@@ -696,7 +696,7 @@ function _setCtptStatus(ctP, ctS, vtP, vtS, ctMul, vtMul) {
             el.textContent = `Rasio terbaca dari metadata COMTRADE: CT=${dCtP}/${dCtS}, VT=${dVtP}/${dVtS}. Override hanya jika setting lapangan berbeda.`;
             el.style.color = '';
         } else {
-            el.textContent = `Rasio tidak tersedia di file — nilai berikut adalah estimasi untuk sistem ${voltageKv} kV. Verifikasi dengan setting CT/VT lapangan sebelum menggunakan atau melakukan override.`;
+            el.textContent = `Rasio tidak tersedia di file — nilai berikut adalah estimasi untuk sistem ${voltageKv} kV (CT sekunder umum 1A/5A, VT sekunder umum 100/110/115/120/125V). Verifikasi dengan setting CT/VT lapangan sebelum menggunakan atau melakukan override.`;
             el.style.color = 'var(--amber)';
         }
     } else {
