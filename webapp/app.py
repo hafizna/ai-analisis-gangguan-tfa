@@ -540,10 +540,12 @@ if IS_LOCAL_DEV:
 
     @app.before_request
     def _log_request():
+        print(f"[REQ] {request.method} {request.path}", flush=True)
         app.logger.info("REQ %s %s", request.method, request.path)
 
     @app.after_request
     def _log_response(resp):
+        print(f"[RES] {request.method} {request.path} -> {resp.status_code}", flush=True)
         app.logger.info("RES %s %s -> %s", request.method, request.path, resp.status_code)
         return resp
 
@@ -597,6 +599,9 @@ def _handle_unexpected_error(e):
 
     app.logger.error("Unhandled exception: %s", e)
     app.logger.error(traceback.format_exc())
+    if IS_LOCAL_DEV:
+        print("[ERR] Unhandled exception:", str(e), flush=True)
+        print(traceback.format_exc(), flush=True)
 
     if IS_LOCAL_DEV:
         tb_tail = traceback.format_exc().splitlines()[-20:]
