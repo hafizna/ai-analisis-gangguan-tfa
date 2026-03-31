@@ -500,12 +500,17 @@ def _calculate_di_dt(ia, ib, ic, inception_idx, sampling_rate, system_freq):
 
 
 def _calculate_peak_current(ia, ib, ic, inception_idx, sampling_rate, system_freq):
-    """Calculate peak fault current in first 2 cycles."""
+    """Calculate peak fault current.
+
+    Searches 1 cycle before inception through 5 cycles after to handle
+    cases where the inception detector fires slightly late and to capture
+    the first-cycle DC-offset peak.
+    """
 
     try:
         samples_per_cycle = int(sampling_rate / system_freq)
-        window_start = inception_idx
-        window_end = min(inception_idx + 2 * samples_per_cycle, len(ia.samples))
+        window_start = max(0, inception_idx - samples_per_cycle)
+        window_end = min(inception_idx + 5 * samples_per_cycle, len(ia.samples))
 
         peak_a = np.max(np.abs(ia.samples[window_start:window_end]))
         peak_b = np.max(np.abs(ib.samples[window_start:window_end]))
@@ -711,6 +716,14 @@ def _calculate_voltage_levels(va, vb, vc, inception_idx, sampling_rate, system_f
         if prefault_end <= prefault_start or fault_end <= fault_start:
             return None, None
 
+        # Shift the pre-fault window 3 cycles earlier to avoid the onset
+        # ambiguity when inception detection fires slightly late.
+        shift = 3 * samples_per_cycle
+        stable_end   = max(0, prefault_end - shift)
+        stable_start = max(0, stable_end - 2 * samples_per_cycle)
+        if stable_end > stable_start:
+            prefault_start, prefault_end = stable_start, stable_end
+
         v_pre = float(np.sqrt(np.mean(v_ch.samples[prefault_start:prefault_end]**2)))
         v_flt = float(np.sqrt(np.mean(v_ch.samples[fault_start:fault_end]**2)))
         return v_pre, v_flt
@@ -735,16 +748,21 @@ def _estimate_voltage_level(va, vb, vc):
 
         # Snap to nearest PLN nominal voltage level (primary kV)
         # If values are secondary (e.g. 57V from 150kV/√3 / 100V VT), scale up
-        PLN_LEVELS = [30.0, 70.0, 150.0, 275.0, 500.0]
-        if avg_rms > 350:
+        # Thresholds based on L-G RMS in kV (parser normalises all voltage to kV):
+        #   500 kV  → L-G RMS = 288 kV
+        #   275 kV  → L-G RMS = 159 kV
+        #   150 kV  → L-G RMS =  86.6 kV
+        #    70 kV  → L-G RMS =  40.4 kV
+        #    30 kV  → L-G RMS =  17.3 kV
+        if avg_rms > 200:
             return 500.0
-        elif avg_rms > 180:
+        elif avg_rms > 110:
             return 275.0
-        elif avg_rms > 100:
+        elif avg_rms > 55:
             return 150.0
-        elif avg_rms > 45:
+        elif avg_rms > 25:
             return 70.0
-        elif avg_rms > 20:
+        elif avg_rms > 10:
             return 30.0
         else:
             # Likely secondary voltage — cannot reliably determine nominal
