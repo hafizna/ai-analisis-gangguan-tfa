@@ -128,11 +128,17 @@ def detect_fault(record) -> Optional[FaultEvent]:
             fault.detection_method = "status_waveform_aligned"
 
     if fault and fault.confidence > 0.7:
-        # If status channels found full event, return (with possible waveform-aligned onset).
-        if fault.duration_ms > 0:
+        # If status channels found a plausible duration (>= 5ms), return it.
+        # Sub-5ms durations are toggle noise (e.g. A/R signal bouncing), not real clearing.
+        if fault.duration_ms >= 5.0:
             logger.debug(f"Fault detected from status channels: {fault.inception_time:.4f}s  dur={fault.duration_ms:.1f}ms")
             return fault
-        logger.debug(f"Status channel found inception at {fault.inception_time:.4f}s but no clearing — trying waveform clearing")
+        if fault.duration_ms > 0:
+            logger.debug(f"Status duration {fault.duration_ms:.2f}ms too short (toggle noise) — discarding, using waveform clearing")
+            fault.duration_ms = 0.0
+            fault.clearing_idx = None
+            fault.clearing_time = None
+        logger.debug(f"Status channel found inception at {fault.inception_time:.4f}s but no reliable clearing — trying waveform clearing")
 
     # Fall back to (or supplement with) waveform-based detection
     if wf_fault:
