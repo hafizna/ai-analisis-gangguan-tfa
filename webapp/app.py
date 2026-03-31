@@ -313,7 +313,7 @@ def _extract_cfg_ratios(cfg_path: str) -> dict:
 
 
 def _nearest_supported_voltage_kv(v_kv: float) -> float:
-    levels = [30.0, 70.0, 150.0, 245.0, 500.0]
+    levels = [30.0, 70.0, 150.0, 275.0, 500.0]
     v = _f(v_kv, 150.0)
     return min(levels, key=lambda x: abs(x - v))
 
