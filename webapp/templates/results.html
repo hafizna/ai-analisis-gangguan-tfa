@@ -392,9 +392,9 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 <!-- ══ RIGHT PANEL ═════════════════════════════════════════════ -->
 <div class="right-panel">
 
-    <!-- CT/PT correction bar -->
+    <!-- CT/VT correction bar -->
     <div class="ctpt-bar">
-        <span class="ctpt-title">Override Rasio (Opsional)</span>
+        <span class="ctpt-title">Koreksi Rasio CT/VT</span>
         <div class="ctpt-group">
             <label for="ctPrimary">CT</label>
             <div class="ctpt-split">
@@ -411,25 +411,9 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <input type="number" id="vtSecondary" class="ctpt-input" value="{{ analysis.vt_secondary or 1 }}" data-default="{{ analysis.vt_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_vt_primary or 150000 }}" data-assumed-s="{{ analysis.assumed_vt_secondary or 100 }}" min="0.001" step="any" placeholder="S">
             </div>
         </div>
-        <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="useAssumedRatios()">Pakai Asumsi Umum</button>
-        <button id="reanalyzeBtn" class="btn btn-primary" style="padding:5px 14px; font-size:12px;" onclick="confirmRatiosAndReanalyze()">Konfirmasi Rasio &amp; Analisa Ulang AI</button>
+        <button id="reanalyzeBtn" class="btn btn-primary" style="padding:5px 14px; font-size:12px;" onclick="confirmRatiosAndReanalyze()" disabled>Terapkan Koreksi</button>
         <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="resetRatios()">Reset</button>
-        <span class="ctpt-note">Nilai default mengikuti normalisasi parser COMTRADE (basis analisa saat ini). Override hanya jika data setting CT/VT lapangan berbeda dari nilai default tersebut.</span>
-        <span class="ctpt-status">
-            Rasio terbaca dari COMTRADE:
-            CT={% if analysis.cfg_ct_known %}{{ analysis.cfg_ct_primary or 1 }}/{{ analysis.cfg_ct_secondary or 1 }}{% else %}tidak eksplisit (terbaca 1/1){% endif %},
-            VT={% if analysis.cfg_vt_known %}{{ analysis.cfg_vt_primary or 1 }}/{{ analysis.cfg_vt_secondary or 1 }}{% else %}tidak eksplisit (terbaca 1/1){% endif %}.
-        </span>
-        <span class="ctpt-status">
-            Acuan rasio default dari parser:
-            CT={{ analysis.ct_primary or 1 }}/{{ analysis.ct_secondary or 1 }}
-            ({% if analysis.ct_ratio_source == 'cfg' %}sumber: metadata cfg{% elif analysis.ct_ratio_source == 'scale' %}sumber: faktor scaling "a" parser{% else %}sumber: asumsi umum{% endif %}),
-            VT={{ analysis.vt_primary or 1 }}/{{ analysis.vt_secondary or 1 }}
-            ({% if analysis.vt_ratio_source == 'cfg' %}sumber: metadata cfg{% elif analysis.vt_ratio_source == 'scale' %}sumber: faktor scaling "a" parser{% else %}sumber: asumsi umum{% endif %}).
-        </span>
-        <span class="ctpt-status">Catatan: metadata rasio bisa 1/1 meskipun nilai analog sudah benar/primer karena scaling COMTRADE diterapkan saat parsing.</span>
-        <span class="ctpt-status">Asumsi umum sistem {{ "%.0f"|format(analysis.assumed_voltage_kv or 150) }} kV: VT {{ "%.0f"|format(analysis.assumed_vt_primary or 150000) }}/{{ "%.0f"|format(analysis.assumed_vt_secondary or 100) }}, CT {{ "%.0f"|format(analysis.assumed_ct_primary or 2000) }}/{{ "%.0f"|format(analysis.assumed_ct_secondary or 1) }}.</span>
-        <span class="ctpt-status" id="ctptStatus">Status rasio: mengikuti default normalisasi sistem.</span>
+        <span class="ctpt-status" id="ctptStatus"></span>
     </div>
 
     <!-- Electrical parameters top row -->
@@ -694,9 +678,12 @@ function _setCtptStatus(ctP, ctS, vtP, vtS, ctMul, vtMul) {
     const changed = (ctP !== dCtP) || (ctS !== dCtS) || (vtP !== dVtP) || (vtS !== dVtS);
 
     if (!changed) {
-        el.textContent = `Status rasio: mengikuti default normalisasi (CT=${dCtP}/${dCtS}, VT=${dVtP}/${dVtS}).`;
+        el.textContent = `Rasio dari file COMTRADE: CT=${dCtP}/${dCtS}, VT=${dVtP}/${dVtS}. Override hanya jika rasio yang tercatat di file berbeda dari setting CT/VT yang sebenarnya terpasang di lapangan.`;
+        el.style.color = '';
     } else {
-        el.textContent = `Status siap konfirmasi: CT=${ctP}/${ctS} (x${ctMul.toLocaleString('id-ID', {maximumFractionDigits: 3})}), VT=${vtP}/${vtS} (x${vtMul.toLocaleString('id-ID', {maximumFractionDigits: 3})}). Klik konfirmasi untuk analisa ulang AI.`;
+        const ctFactor = (ctMul / (dCtP / dCtS)).toFixed(3);
+        el.textContent = `Rasio diubah — CT=${ctP}/${ctS}, VT=${vtP}/${vtS} (faktor koreksi: ×${ctFactor}). Klik Terapkan untuk analisa ulang.`;
+        el.style.color = 'var(--accent)';
     }
 }
 function _refreshCtptStatusOnly() {

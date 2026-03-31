@@ -373,6 +373,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         updated["baseline_cause_pcts"] = analysis.get("cause_pcts", [])
 
     # Keep immutable numeric baseline so repeated overrides do not compound.
+    # Also store the ORIGINAL file ratio so we can compute a relative scaling factor.
     if not isinstance(updated.get("ratio_base_values"), dict):
         updated["ratio_base_values"] = {
             "peak_fault_current_a": _f(analysis.get("peak_fault_current_a")),
@@ -382,10 +383,22 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
             "v_prefault_v": _f(analysis.get("v_prefault_v")),
             "v_fault_v": _f(analysis.get("v_fault_v")),
             "z_magnitude_ohms": _f(analysis.get("z_magnitude_ohms")),
+            # Original file ratio (used to compute relative change)
+            "orig_ct_p": _f(analysis.get("ct_primary"), 1.0),
+            "orig_ct_s": _f(analysis.get("ct_secondary"), 1.0),
+            "orig_vt_p": _f(analysis.get("vt_primary"), 1.0),
+            "orig_vt_s": _f(analysis.get("vt_secondary"), 1.0),
         }
     base = updated["ratio_base_values"]
-    ct_mul = _ratio(ct_p, ct_s)
-    vt_mul = _ratio(vt_p, vt_s)
+
+    # Relative scaling: how much does the new ratio differ from the original file ratio?
+    # Base values are already in primary units (original ratio applied by parser).
+    # If user enters same ratio as file → factor = 1.0 (no change).
+    # If user enters different ratio → scale proportionally.
+    orig_ct = _ratio(_f(base.get("orig_ct_p"), 1.0), _f(base.get("orig_ct_s"), 1.0))
+    orig_vt = _ratio(_f(base.get("orig_vt_p"), 1.0), _f(base.get("orig_vt_s"), 1.0))
+    ct_mul = (_ratio(ct_p, ct_s) / orig_ct) if orig_ct > 0 else _ratio(ct_p, ct_s)
+    vt_mul = (_ratio(vt_p, vt_s) / orig_vt) if orig_vt > 0 else _ratio(vt_p, vt_s)
 
     # Persist ratio inputs for the UI
     updated["ct_primary"] = ct_p
@@ -438,7 +451,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         updated["tier"] = 1
         updated["rule_name"] = rule_result.rule_name
         updated["evidence"] = f"{rule_result.evidence} | Analisa ulang dengan rasio CT/VT."
-        updated["cause_pcts"] = []
+        updated["cause_pcts"] = _compute_cause_pcts(row)
         updated["recommendation"] = (
             "Lakukan inspeksi lapangan sesuai indikasi gangguan permanen/peralatan."
             if "PERMANEN" in rule_result.label.upper() or "KONDUKTOR" in rule_result.label.upper()

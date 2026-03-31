@@ -247,12 +247,21 @@ def _parse_analog_channels(com: Comtrade, manufacturer: str, warnings: List[str]
                 ct_secondary = 1.0
                 warnings.append(f"Channel {ch_name}: secondary = 0, treating as 1:1 ratio")
 
-            # Get samples - these are ALREADY in primary values from the library!
+            # Get PS flag: 'P' = values already in primary units, 'S' = secondary units
+            pors = getattr(com.cfg.analog_channels[i], 'pors', 'P')
+            pors = (pors or 'P').upper().strip()
+
+            # Get samples from comtrade library (applies a*raw + b, may be primary or secondary)
             if i < len(com.analog):
                 samples_primary = np.array(com.analog[i], dtype=float)
             else:
                 samples_primary = np.array([], dtype=float)
                 warnings.append(f"Channel {ch_name}: no sample data")
+
+            # If recorded in secondary units, convert to primary now
+            if pors == 'S' and ct_primary > 0 and ct_secondary > 0 and ct_primary != ct_secondary:
+                samples_primary = samples_primary * (ct_primary / ct_secondary)
+                warnings.append(f"Channel {ch_name}: pors=S, applied ratio {ct_primary}/{ct_secondary} to convert to primary")
 
             # Normalize channel name
             norm = normalize_channel_name(ch_name, ch_unit, manufacturer)
