@@ -87,7 +87,7 @@
                 <th>Waktu</th>
                 <th>Gardu Induk</th>
                 <th>File</th>
-                <th>Prediksi</th>
+                <th>Prediksi Penyebab</th>
                 <th>Konfirmasi</th>
                 <th>Tepat?</th>
                 <th>Tier</th>
@@ -100,8 +100,14 @@
         </thead>
         <tbody>
         {% for r in rows %}
-        {% set lbl = r.predicted_label | upper %}
-        {% if 'TRANSIEN' in lbl %}{% set bc = 'badge-transien' %}
+        {% set shown_pred = r.predicted_cause_top if r.predicted_cause_top else r.predicted_label %}
+        {% set lbl = shown_pred | upper %}
+        {% if 'PETIR' in lbl %}{% set bc = 'badge-transien' %}
+        {% elif 'LAYANG' in lbl %}{% set bc = 'badge-transien' %}
+        {% elif 'HEWAN' in lbl %}{% set bc = 'badge-transien' %}
+        {% elif 'BENDA ASING' in lbl %}{% set bc = 'badge-transien' %}
+        {% elif 'POHON' in lbl %}{% set bc = 'badge-transien' %}
+        {% elif 'TRANSIEN' in lbl %}{% set bc = 'badge-transien' %}
         {% elif 'KONDUKTOR' in lbl %}{% set bc = 'badge-konduktor' %}
         {% elif 'PERMANEN' in lbl %}{% set bc = 'badge-permanen' %}
         {% else %}{% set bc = 'badge-other' %}{% endif %}
@@ -111,10 +117,11 @@
             <td style="max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
                        font-family:monospace; font-size:11px; color:var(--text-muted);"
                 title="{{ r.filename }}">{{ r.filename }}</td>
-            <td><span class="badge {{ bc }}">{{ r.predicted_label }}</span></td>
+            <td><span class="badge {{ bc }}">{{ shown_pred }}</span></td>
             <td style="font-size:12px; color:var(--text-muted);">{{ r.confirmed_label }}</td>
             <td>
-                {% if r.correct == 'True' %}<span class="correct-yes">✓</span>
+                {% if r._correct_eval is none %}<span style="color:var(--text-muted);">-</span>
+                {% elif r._correct_eval %}<span class="correct-yes">✓</span>
                 {% else %}<span class="correct-no">✗</span>{% endif %}
             </td>
             <td>
