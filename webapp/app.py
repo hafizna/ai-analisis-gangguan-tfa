@@ -582,6 +582,9 @@ HISTORY_FIELDS = [
 ]
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+# psycopg3 requires postgresql:// scheme; Railway sometimes provides postgres://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
 
 
 def _db_enabled() -> bool:
