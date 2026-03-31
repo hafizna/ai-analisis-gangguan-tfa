@@ -100,18 +100,41 @@ def detect_fault(record) -> Optional[FaultEvent]:
         logger.debug("Recording started in CB dead time — fault preceded this file")
         return _build_dead_time_event(record)
 
-    # Try status channel detection first
+    # Status-channel candidate (trip/pickup based)
     fault = _detect_from_status_channels(record)
+
+    # Waveform candidate (current onset based)
+    wf_fault = _detect_from_waveforms(record)
+
+    # Reconcile onset time: status signals may occur after fault has already started.
+    if fault and wf_fault:
+        status_t = float(fault.inception_time or 0.0)
+        wave_t = float(wf_fault.inception_time or 0.0)
+        if len(record.time) > 1:
+            dt = float(record.time[1] - record.time[0])
+        else:
+            dt = 0.0001
+        onset_slip = status_t - wave_t
+        # If status onset is >1 cycle later, prefer waveform onset for electrical features.
+        if onset_slip > max(0.010, 20.0 * dt):
+            logger.debug(
+                "Status onset appears late vs waveform onset "
+                f"(status={status_t:.4f}s, wave={wave_t:.4f}s). Using waveform onset."
+            )
+            fault.inception_idx = wf_fault.inception_idx
+            fault.inception_time = wf_fault.inception_time
+            if not fault.faulted_phases:
+                fault.faulted_phases = wf_fault.faulted_phases
+            fault.detection_method = "status_waveform_aligned"
+
     if fault and fault.confidence > 0.7:
-        # If status channels found inception but duration is 0 (no clearing edge),
-        # fall through to waveform-based clearing detection.
+        # If status channels found full event, return (with possible waveform-aligned onset).
         if fault.duration_ms > 0:
             logger.debug(f"Fault detected from status channels: {fault.inception_time:.4f}s  dur={fault.duration_ms:.1f}ms")
             return fault
         logger.debug(f"Status channel found inception at {fault.inception_time:.4f}s but no clearing — trying waveform clearing")
 
     # Fall back to (or supplement with) waveform-based detection
-    wf_fault = _detect_from_waveforms(record)
     if wf_fault:
         # If status channel gave us a valid inception, use it but take waveform clearing
         if fault and fault.duration_ms == 0 and wf_fault.clearing_idx:
