@@ -712,36 +712,20 @@ def upload_files():
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(str(cfg_path))
     assumed_ratios = _assumed_transformer_ratios(feats.get("voltage_kv"), feats.get("peak_fault_current_a"))
-    ct_ratio_src = "cfg"
-    vt_ratio_src = "cfg"
+    ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else "assumed"
+    vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else "assumed"
     if cfg_ratios.get("cfg_ct_known"):
         ct_p_default = _f(cfg_ratios.get("cfg_ct_primary"), 1.0)
         ct_s_default = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0)
     else:
-        ct_p_guess, ct_s_guess, ct_scale_ok = _infer_ratio_from_parser_multiplier(
-            "current", _f(cfg_ratios.get("parser_ct_multiplier"), 0.0)
-        )
-        if ct_scale_ok:
-            ct_p_default, ct_s_default = ct_p_guess, ct_s_guess
-            ct_ratio_src = "scale"
-        else:
-            ct_p_default = _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
-            ct_s_default = _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
-            ct_ratio_src = "assumed"
+        ct_p_default = _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
+        ct_s_default = _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
     if cfg_ratios.get("cfg_vt_known"):
         vt_p_default = _f(cfg_ratios.get("cfg_vt_primary"), 1.0)
         vt_s_default = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0)
     else:
-        vt_p_guess, vt_s_guess, vt_scale_ok = _infer_ratio_from_parser_multiplier(
-            "voltage", _f(cfg_ratios.get("parser_vt_multiplier"), 0.0)
-        )
-        if vt_scale_ok:
-            vt_p_default, vt_s_default = vt_p_guess, vt_s_guess
-            vt_ratio_src = "scale"
-        else:
-            vt_p_default = _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
-            vt_s_default = _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
-            vt_ratio_src = "assumed"
+        vt_p_default = _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
+        vt_s_default = _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
 
     analysis_payload = {
         "original_filename": cfg_file.filename,
@@ -800,6 +784,8 @@ def upload_files():
         "parser_vt_multiplier": _f(cfg_ratios.get("parser_vt_multiplier"), 0.0),
         "ct_ratio_source": ct_ratio_src,
         "vt_ratio_source": vt_ratio_src,
+        "ct_ratio_known":  bool(cfg_ratios.get("cfg_ct_known")),
+        "vt_ratio_known":  bool(cfg_ratios.get("cfg_vt_known")),
         "assumed_voltage_kv": _f(assumed_ratios.get("assumed_voltage_kv"), 150.0),
         "assumed_ct_primary": _f(assumed_ratios.get("assumed_ct_primary"), 2000.0),
         "assumed_ct_secondary": _f(assumed_ratios.get("assumed_ct_secondary"), 1.0),
@@ -850,36 +836,20 @@ def analyze_from_browse():
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(cfg_path)
     assumed_ratios = _assumed_transformer_ratios(feats.get("voltage_kv"), feats.get("peak_fault_current_a"))
-    ct_ratio_src = "cfg"
-    vt_ratio_src = "cfg"
+    ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else "assumed"
+    vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else "assumed"
     if cfg_ratios.get("cfg_ct_known"):
         ct_p_default = _f(cfg_ratios.get("cfg_ct_primary"), 1.0)
         ct_s_default = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0)
     else:
-        ct_p_guess, ct_s_guess, ct_scale_ok = _infer_ratio_from_parser_multiplier(
-            "current", _f(cfg_ratios.get("parser_ct_multiplier"), 0.0)
-        )
-        if ct_scale_ok:
-            ct_p_default, ct_s_default = ct_p_guess, ct_s_guess
-            ct_ratio_src = "scale"
-        else:
-            ct_p_default = _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
-            ct_s_default = _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
-            ct_ratio_src = "assumed"
+        ct_p_default = _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
+        ct_s_default = _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
     if cfg_ratios.get("cfg_vt_known"):
         vt_p_default = _f(cfg_ratios.get("cfg_vt_primary"), 1.0)
         vt_s_default = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0)
     else:
-        vt_p_guess, vt_s_guess, vt_scale_ok = _infer_ratio_from_parser_multiplier(
-            "voltage", _f(cfg_ratios.get("parser_vt_multiplier"), 0.0)
-        )
-        if vt_scale_ok:
-            vt_p_default, vt_s_default = vt_p_guess, vt_s_guess
-            vt_ratio_src = "scale"
-        else:
-            vt_p_default = _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
-            vt_s_default = _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
-            vt_ratio_src = "assumed"
+        vt_p_default = _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
+        vt_s_default = _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
     analysis_payload = {
         "original_filename": Path(cfg_path).name,
         "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -936,6 +906,8 @@ def analyze_from_browse():
         "parser_vt_multiplier": _f(cfg_ratios.get("parser_vt_multiplier"), 0.0),
         "ct_ratio_source": ct_ratio_src,
         "vt_ratio_source": vt_ratio_src,
+        "ct_ratio_known":  bool(cfg_ratios.get("cfg_ct_known")),
+        "vt_ratio_known":  bool(cfg_ratios.get("cfg_vt_known")),
         "assumed_voltage_kv": _f(assumed_ratios.get("assumed_voltage_kv"), 150.0),
         "assumed_ct_primary": _f(assumed_ratios.get("assumed_ct_primary"), 2000.0),
         "assumed_ct_secondary": _f(assumed_ratios.get("assumed_ct_secondary"), 1.0),

@@ -171,7 +171,10 @@
     border-radius: 10px; padding: 12px 16px;
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
 }
-.ctpt-title { font-size: 12px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.ctpt-title { font-size: 12px; font-weight: 700; color: var(--text); white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+.ratio-badge { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 4px; }
+.ratio-verified { background: rgba(16,185,129,0.12); color: #10b981; }
+.ratio-estimated { background: rgba(245,158,11,0.12); color: #f59e0b; }
 .ctpt-group {
     display: flex; align-items: center; gap: 8px;
     background: var(--card-bg);
@@ -394,7 +397,14 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 
     <!-- CT/VT correction bar -->
     <div class="ctpt-bar">
-        <span class="ctpt-title">Koreksi Rasio CT/VT</span>
+        <span class="ctpt-title">
+            Koreksi Rasio CT/VT
+            {% if analysis.ct_ratio_known and analysis.vt_ratio_known %}
+            <span class="ratio-badge ratio-verified">DARI FILE</span>
+            {% else %}
+            <span class="ratio-badge ratio-estimated">ESTIMASI</span>
+            {% endif %}
+        </span>
         <div class="ctpt-group">
             <label for="ctPrimary">CT</label>
             <div class="ctpt-split">
@@ -413,7 +423,9 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         </div>
         <button id="reanalyzeBtn" class="btn btn-primary" style="padding:5px 14px; font-size:12px;" onclick="confirmRatiosAndReanalyze()" disabled>Terapkan Koreksi</button>
         <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="resetRatios()">Reset</button>
-        <span class="ctpt-status" id="ctptStatus"></span>
+        <span class="ctpt-status" id="ctptStatus"
+              data-ratio-known="{{ 'true' if (analysis.ct_ratio_known and analysis.vt_ratio_known) else 'false' }}"
+              data-voltage-kv="{{ analysis.voltage_kv }}"></span>
     </div>
 
     <!-- Electrical parameters top row -->
@@ -676,13 +688,21 @@ function _setCtptStatus(ctP, ctS, vtP, vtS, ctMul, vtMul) {
     const dVtP = parseFloat(document.getElementById('vtPrimary').dataset.default || '1') || 1;
     const dVtS = parseFloat(document.getElementById('vtSecondary').dataset.default || '1') || 1;
     const changed = (ctP !== dCtP) || (ctS !== dCtS) || (vtP !== dVtP) || (vtS !== dVtS);
+    const ratioKnown = el.dataset.ratioKnown === 'true';
+    const voltageKv  = el.dataset.voltageKv || '?';
 
     if (!changed) {
-        el.textContent = `Rasio dari file COMTRADE: CT=${dCtP}/${dCtS}, VT=${dVtP}/${dVtS}. Override hanya jika rasio yang tercatat di file berbeda dari setting CT/VT yang sebenarnya terpasang di lapangan.`;
-        el.style.color = '';
+        if (ratioKnown) {
+            el.textContent = `Rasio terbaca dari metadata COMTRADE: CT=${dCtP}/${dCtS}, VT=${dVtP}/${dVtS}. Override hanya jika setting lapangan berbeda.`;
+            el.style.color = '';
+        } else {
+            el.textContent = `Rasio tidak tersedia di file — nilai berikut adalah estimasi untuk sistem ${voltageKv} kV. Verifikasi dengan setting CT/VT lapangan sebelum menggunakan atau melakukan override.`;
+            el.style.color = 'var(--amber)';
+        }
     } else {
-        const ctFactor = (ctMul / (dCtP / dCtS)).toFixed(3);
-        el.textContent = `Rasio diubah — CT=${ctP}/${ctS}, VT=${vtP}/${vtS} (faktor koreksi: ×${ctFactor}). Klik Terapkan untuk analisa ulang.`;
+        const origCt = dCtP / dCtS;
+        const ctFactor = origCt > 0 ? (ctMul / origCt).toFixed(3) : ctMul.toFixed(3);
+        el.textContent = `Rasio diubah — CT=${ctP}/${ctS}, VT=${vtP}/${vtS} (faktor koreksi arus: ×${ctFactor}). Klik Terapkan untuk analisa ulang.`;
         el.style.color = 'var(--accent)';
     }
 }
