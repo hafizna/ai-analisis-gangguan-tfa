@@ -199,6 +199,17 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
             va, vb, vc, inception_idx, sampling_rate, system_freq, voltage_sag_phase
         )
 
+        # Dead time should be interval from fault clearing to reclose, not absolute recording time.
+        dead_time_ms = None
+        if fault.reclose_events:
+            first_reclose_s = float(fault.reclose_events[0].get('time', 0.0) or 0.0)
+            if fault.clearing_time is not None:
+                dt_ms = (first_reclose_s - float(fault.clearing_time)) * 1000.0
+                dead_time_ms = dt_ms if dt_ms >= 0 else None
+            if dead_time_ms is None:
+                # Fallback when clearing_time is unavailable.
+                dead_time_ms = first_reclose_s * 1000.0
+
         # Build feature object
         return DistanceFeatures(
             # Impedance
@@ -231,7 +242,7 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
                 if protection.auto_reclose_successful is not None
                 else (fault.reclose_events[0]['success'] if fault.reclose_events else None)
             ),
-            reclose_time_ms=fault.reclose_events[0]['time'] * 1000 if fault.reclose_events else None,
+            reclose_time_ms=dead_time_ms,
             fault_count=len(fault.reclose_events) + 1,
             # Fault type
             faulted_phases=fault.faulted_phases,
