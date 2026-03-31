@@ -735,15 +735,17 @@ def _estimate_voltage_level(va, vb, vc):
 
         # Snap to nearest PLN nominal voltage level (primary kV)
         # If values are secondary (e.g. 57V from 150kV/√3 / 100V VT), scale up
-        PLN_LEVELS = [70.0, 150.0, 275.0, 500.0]
-        if avg_rms > 400:
+        PLN_LEVELS = [30.0, 70.0, 150.0, 245.0, 500.0]
+        if avg_rms > 350:
             return 500.0
-        elif avg_rms > 200:
-            return 275.0
+        elif avg_rms > 180:
+            return 245.0
         elif avg_rms > 100:
             return 150.0
-        elif avg_rms > 50:
+        elif avg_rms > 45:
             return 70.0
+        elif avg_rms > 20:
+            return 30.0
         else:
             # Likely secondary voltage — cannot reliably determine nominal
             return None
