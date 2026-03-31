@@ -125,7 +125,10 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
 
     try:
         inception_idx = fault.inception_idx
-        active_line_tag = _detect_active_line_tag(record, inception_idx)
+        active_line_tag = (
+            _detect_operated_line_tag_from_status(record, inception_idx)
+            or _detect_active_line_tag(record, inception_idx)
+        )
 
         # Get phase channels
         ia = _get_channel(record, 'IA', 'current', active_line_tag)
@@ -261,7 +264,10 @@ def extract_differential_features(record, fault, protection) -> Optional[Differe
 
     try:
         inception_idx = fault.inception_idx
-        active_line_tag = _detect_active_line_tag(record, inception_idx)
+        active_line_tag = (
+            _detect_operated_line_tag_from_status(record, inception_idx)
+            or _detect_active_line_tag(record, inception_idx)
+        )
 
         # Get phase channels
         ia = _get_channel(record, 'IA', 'current', active_line_tag)
@@ -372,6 +378,39 @@ def _detect_active_line_tag(record, inception_idx: int) -> Optional[str]:
             continue
         s = float(np.max(np.abs(ch.samples[ws:we])))
         scores[tag] = scores.get(tag, 0.0) + s
+
+    if not scores:
+        return None
+    return max(scores.items(), key=lambda x: x[1])[0]
+
+
+def _detect_operated_line_tag_from_status(record, inception_idx: int) -> Optional[str]:
+    """
+    Detect likely operated line/circuit from status channels around fault inception.
+    Prioritizes TRIP/OPRT/PICKUP signals that explicitly contain line identifiers.
+    """
+    if inception_idx is None or len(record.time) == 0:
+        return None
+
+    scores = {}
+    status_kw = ("TRIP", "OPRT", "OPERATE", "PICKUP", "DIST", "DIS.")
+    for ch in record.status_channels:
+        name = (getattr(ch, "name", "") or "").upper()
+        if not any(k in name for k in status_kw):
+            continue
+        tag = _extract_line_tag(name)
+        if not tag or len(ch.samples) < 2:
+            continue
+        t0 = max(0, inception_idx - 100)
+        t1 = min(len(ch.samples), inception_idx + 1000)
+        if t1 <= t0 + 1:
+            continue
+        seg = ch.samples[t0:t1]
+        rises = np.where(np.diff(seg) > 0)[0]
+        if len(rises) == 0:
+            continue
+        # More rising edges near inception -> stronger confidence this line operated.
+        scores[tag] = scores.get(tag, 0.0) + float(len(rises))
 
     if not scores:
         return None
