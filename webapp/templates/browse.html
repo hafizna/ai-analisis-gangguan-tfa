@@ -67,13 +67,27 @@
 
 {% if offline_mode %}
 <div class="offline-card">
-    <div style="font-size:40px; opacity:0.4;">📂</div>
-    <h3>Rekaman tidak tersedia</h3>
+    <div style="font-size:40px; opacity:0.5;">☁️</div>
+    <h3>Mode Cloud Aktif</h3>
     <p>
-        Folder rekaman (<code>raw_data/</code>) tidak ditemukan di lingkungan ini.
-        Gunakan <strong>Unggah File</strong> untuk menganalisis file COMTRADE secara langsung.
+        Sistem berjalan di lingkungan cloud — folder rekaman lokal tidak tersedia.
+        Unggah file COMTRADE (<code>.cfg</code> + <code>.dat</code>) langsung untuk dianalisis.
+        {% if db_enabled %}
+        Semua hasil analisis yang dikonfirmasi tersimpan otomatis di
+        <strong>database PostgreSQL</strong> dan dapat dilihat di halaman <strong>Riwayat</strong>.
+        {% else %}
+        Hasil analisis tersimpan di file CSV lokal dan dapat dilihat di halaman <strong>Riwayat</strong>.
+        {% endif %}
     </p>
-    <a href="{{ url_for('index') }}" class="btn btn-primary">Unggah File COMTRADE</a>
+    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+        <a href="{{ url_for('index') }}" class="btn btn-primary">Unggah File COMTRADE</a>
+        <a href="{{ url_for('history') }}" class="btn btn-outline">Lihat Riwayat</a>
+    </div>
+    {% if db_enabled %}
+    <div style="margin-top:20px; font-size:12px; color:var(--text-muted);">
+        <span style="color:#10b981; font-weight:700;">●</span> PostgreSQL terhubung
+    </div>
+    {% endif %}
 </div>
 
 {% else %}

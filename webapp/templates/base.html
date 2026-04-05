@@ -216,6 +216,9 @@
         <div class="sidebar-footer">
             <strong>Klasifikasi Penyebab Gangguan</strong>
             Berbasis AI
+            <div style="margin-top:8px; font-size:10px; letter-spacing:0.04em;">
+                <span id="db-status-dot" style="color:#475569;">● Memuat status DB...</span>
+            </div>
         </div>
     </aside>
 
@@ -252,6 +255,22 @@
             const cur = document.documentElement.getAttribute('data-theme') || 'light';
             applyTheme(cur === 'dark' ? 'light' : 'dark', true);
         }
+    </script>
+    <script>
+        fetch('/api/status').then(r => r.json()).then(data => {
+            const el = document.getElementById('db-status-dot');
+            if (!el) return;
+            if (data.db_enabled) {
+                el.style.color = '#10b981';
+                el.textContent = '● PostgreSQL aktif';
+            } else {
+                el.style.color = '#f59e0b';
+                el.textContent = '● CSV (no DB)';
+            }
+        }).catch(() => {
+            const el = document.getElementById('db-status-dot');
+            if (el) { el.style.color = '#ef4444'; el.textContent = '● Status tidak diketahui'; }
+        });
     </script>
     {% block extra_js %}{% endblock %}
 </body>

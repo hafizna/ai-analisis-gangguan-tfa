@@ -1080,12 +1080,12 @@ def results():
 def browse():
     if not RAW_DATA.exists():
         return render_template("browse.html", events=[], upts=[], labels=[],
-                               offline_mode=True)
+                               offline_mode=True, db_enabled=_db_enabled())
     events = _scan_recordings()
     upts   = sorted(set(e["upt"]   for e in events))
     labels = sorted(set(e["label"] for e in events))
     return render_template("browse.html", events=events, upts=upts, labels=labels,
-                           offline_mode=False)
+                           offline_mode=False, db_enabled=_db_enabled())
 
 
 @app.route("/analyze-from-browse", methods=["POST"])
@@ -1384,7 +1384,8 @@ def history():
     accuracy = round(correct / len(comparable) * 100, 1) if comparable else 0
 
     return render_template("history.html", rows=rows,
-                           total=total, correct=correct, accuracy=accuracy)
+                           total=total, correct=correct, accuracy=accuracy,
+                           db_enabled=_db_enabled())
 
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
@@ -1456,6 +1457,7 @@ def api_status():
         "status": "ok",
         "app": "DFR Fault Classifier — TFA",
         "version": "2.0",
+        "db_enabled": _db_enabled(),
         "endpoints": [
             "POST /api/classify  — upload .cfg + .dat, returns JSON analysis",
             "GET  /api/history   — returns list of confirmed analyses",

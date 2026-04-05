@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Riwayat Analisis — TFA{% endblock %}
 {% block topbar_title %}Riwayat Analisis{% endblock %}
-{% block topbar_sub %}Semua analisis yang sudah dikonfirmasi{% endblock %}
+{% block topbar_sub %}{% if db_enabled %}<span style="color:#10b981; font-weight:700;">●</span> Tersimpan di PostgreSQL{% else %}Tersimpan di CSV lokal{% endif %}{% endblock %}
 {% block nav_history %}active{% endblock %}
 
 {% block extra_css %}
