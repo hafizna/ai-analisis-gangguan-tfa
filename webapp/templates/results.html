@@ -398,6 +398,31 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     .wave-grid { grid-template-columns: 1fr; }
     .wave-channel-list { max-height: 220px; }
 }
+
+/* ── Print styles ────────────────────────────────────────────── */
+#_tfaPrintDiv {
+    display: none;
+    font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+    padding: 20px;
+}
+#_tfaPrintDiv img {
+    width: 100%;
+    display: block;
+    margin-bottom: 8px;
+    page-break-inside: avoid;
+}
+@media print {
+    /* Hide everything except our injected print container */
+    body > *:not(#_tfaPrintDiv) { display: none !important; }
+    #_tfaPrintDiv {
+        display: block !important;
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        padding: 15mm;
+        background: white;
+    }
+    @page { margin: 10mm; size: A4 landscape; }
+}
 {% endblock %}
 
 {% block content %}
@@ -757,8 +782,9 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         <div class="wave-actions">
             <button class="btn btn-outline" id="waveResetBtn">Reset Zoom</button>
             <button class="btn btn-primary" id="waveFocusBtn">Fokus Fault</button>
-            <button class="btn btn-outline" id="waveExportPngBtn">Export PNG</button>
-            <button class="btn btn-outline" id="wavePrintBtn">Print/PDF</button>
+            <button class="btn btn-outline" id="waveExportPngBtn">⬇ PNG</button>
+            <button class="btn btn-outline" id="waveExportCsvBtn">⬇ CSV</button>
+            <button class="btn btn-outline" id="wavePrintBtn">🖨 Print/PDF</button>
         </div>
     </div>
     <div class="wave-toolbar">
@@ -1027,8 +1053,8 @@ _refreshCtptStatusOnly();
         const notes = [];
         if (meta.analog_truncated) notes.push('Sebagian kanal analog disembunyikan untuk menjaga performa.');
         if (meta.digital_truncated) notes.push('Sebagian kanal digital disembunyikan untuk menjaga performa.');
-        if (notes.length === 0) notes.push('Tip: klik kanal untuk isolate, shift+klik di plot untuk Cursor B, dan double-click untuk reset zoom.');
-        hintEl.textContent = notes.join(' ');
+        notes.push('Tip: hover lalu klik untuk Cursor A, shift+klik untuk Cursor B. Klik kanal di sidebar untuk isolate/lock. Double-click untuk reset zoom.');
+        hintEl.textContent = notes.join('  |  ');
     }
 
     const voltageChannels = wf.channels.filter(ch => ch.measurement === 'voltage');
@@ -1443,17 +1469,30 @@ _refreshCtptStatusOnly();
         updateCursorReadout();
     }
 
-    function handlePlotClick(plotName, ev) {
-        if (!ev || !ev.points || !ev.points.length) return;
-        const x = ev.points[0].x;
-        if (ev.event && ev.event.shiftKey) cursor.b = x;
-        else cursor.a = x;
+    // Cursor placement: track last hovered x via plotly_hover, then place on div click.
+    // This works anywhere on the plot area (not just exactly on a data point).
+    const lastHoveredX = { voltage: null, current: null };
+
+    function _placeCursor(plotName, shiftKey) {
+        const x = lastHoveredX[plotName];
+        if (x === null || x === undefined) return;
+        if (shiftKey) cursor.b = x; else cursor.a = x;
         setMeasure(plotName);
         drawCursors();
     }
 
-    if (voltagePlot) voltagePlot.on('plotly_click', (ev) => handlePlotClick('voltage', ev));
-    if (currentPlot) currentPlot.on('plotly_click', (ev) => handlePlotClick('current', ev));
+    if (voltagePlot) {
+        voltagePlot.on('plotly_hover', ev => {
+            if (ev.points && ev.points.length) lastHoveredX.voltage = ev.points[0].x;
+        });
+        voltagePlot.addEventListener('click', e => _placeCursor('voltage', e.shiftKey));
+    }
+    if (currentPlot) {
+        currentPlot.on('plotly_hover', ev => {
+            if (ev.points && ev.points.length) lastHoveredX.current = ev.points[0].x;
+        });
+        currentPlot.addEventListener('click', e => _placeCursor('current', e.shiftKey));
+    }
 
     if (cursorResetBtn) {
         cursorResetBtn.addEventListener('click', () => {
@@ -1516,158 +1555,183 @@ _refreshCtptStatusOnly();
         }
     }
 
-    function _imgToCanvas(imgUrl) {
-        return new Promise((resolve, reject) => {
+    function _loadImg(src) {
+        return new Promise((res, rej) => {
             const img = new Image();
-            img.onload  = () => resolve(img);
-            img.onerror = reject;
-            img.src = imgUrl;
+            img.onload = () => res(img);
+            img.onerror = rej;
+            img.src = src;
         });
     }
 
-    // Builds a combined canvas from all visible plots (white background, 2× scale for crispness)
-    async function _buildCombinedCanvas(scale) {
+    function _visiblePlots() {
+        return [voltagePlot, currentPlot, digitalPlot]
+            .filter(p => p && p.style.display !== 'none');
+    }
+
+    // Get Plotly PNG data URLs for all visible plots
+    async function _getPlotImgUrls(scale) {
         scale = scale || 2;
-        const plots = [];
-        if (voltagePlot && voltagePlot.style.display !== 'none') plots.push(voltagePlot);
-        if (currentPlot && currentPlot.style.display !== 'none')  plots.push(currentPlot);
-        if (digitalPlot && digitalPlot.style.display !== 'none')  plots.push(digitalPlot);
-        if (!plots.length) return null;
-
+        const plots = _visiblePlots();
+        if (!plots.length) return [];
         const size = _getPlotSize(plots[0]);
-        // Explicitly force white background in Plotly export so transparency is resolved
-        const imgUrls = await Promise.all(
-            plots.map(p => Plotly.toImage(p, {
-                format: 'png',
-                width:  size.width,
-                height: size.height,
-                scale:  scale
-            }))
-        );
-        const imgs = await Promise.all(imgUrls.map(_imgToCanvas));
-
-        const W = Math.max(...imgs.map(i => i.width));
-        const headerH = 64;
-        const H = imgs.reduce((s, i) => s + i.height, 0) + headerH + 24;
-
-        const canvas = document.createElement('canvas');
-        canvas.width  = W;
-        canvas.height = H;
-        const ctx = canvas.getContext('2d');
-
-        // Background
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, W, H);
-
-        // Header text
-        const title    = document.querySelector('.topbar-title')?.textContent  || 'TFA';
-        const subtitle = document.querySelector('.topbar-sub')?.textContent    || '';
-        const now      = new Date().toLocaleString('id-ID');
-        ctx.fillStyle  = '#0f172a';
-        ctx.font       = `bold ${14 * scale}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
-        ctx.fillText(title, 20, 28 * scale / 2);
-        ctx.fillStyle  = '#64748b';
-        ctx.font       = `${11 * scale}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
-        ctx.fillText(`${subtitle}  |  ${now}`, 20, 48 * scale / 2);
-
-        // Thin rule line
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth   = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, headerH - 4); ctx.lineTo(W, headerH - 4);
-        ctx.stroke();
-
-        // Draw each plot
-        let y = headerH;
-        imgs.forEach(img => {
-            ctx.drawImage(img, 0, y);
-            y += img.height;
-        });
-        return canvas;
+        return Promise.all(plots.map(p =>
+            Plotly.toImage(p, { format: 'png', width: size.width, height: size.height, scale })
+        ));
     }
 
+    // Export PNG — uses canvas.toBlob (more reliable than toDataURL for large images)
     async function exportCombinedImage() {
         _setBtnState(exportPngBtn, true);
+        const subtitle = document.querySelector('.topbar-sub')?.textContent || 'comtrade';
+        const safeName = subtitle.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 60);
         try {
-            const canvas = await _buildCombinedCanvas(2);
-            if (!canvas) return;
-            const link = document.createElement('a');
-            const subtitle = document.querySelector('.topbar-sub')?.textContent || 'comtrade';
-            const safeName = subtitle.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 60);
-            link.download = `waveform_${safeName}.png`;
-            link.href = canvas.toDataURL('image/png');
-            link.click();
+            const imgUrls = await _getPlotImgUrls(2);
+            if (!imgUrls.length) { alert('Tidak ada plot untuk diekspor.'); return; }
+
+            const imgs = await Promise.all(imgUrls.map(_loadImg));
+            const W = Math.max(...imgs.map(i => i.width));
+            const HDR = 72;  // header strip height
+            const H = imgs.reduce((s, i) => s + i.height, 0) + HDR;
+            const canvas = document.createElement('canvas');
+            canvas.width = W; canvas.height = H;
+            const ctx = canvas.getContext('2d');
+
+            // White background
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, W, H);
+            // Header
+            ctx.fillStyle = '#0f172a';
+            ctx.font = 'bold 26px Arial, sans-serif';
+            ctx.fillText(subtitle, 18, 32);
+            ctx.fillStyle = '#64748b';
+            ctx.font = '18px Arial, sans-serif';
+            ctx.fillText('TFA — Rekaman Gelombang COMTRADE  |  ' + new Date().toLocaleString('id-ID'), 18, 56);
+            ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(0, HDR - 2); ctx.lineTo(W, HDR - 2); ctx.stroke();
+            // Plots
+            let y = HDR;
+            imgs.forEach(img => { ctx.drawImage(img, 0, y); y += img.height; });
+
+            // Use toBlob → createObjectURL (more reliable than toDataURL for large images)
+            canvas.toBlob(blob => {
+                if (!blob) { alert('Gagal membuat file PNG.'); return; }
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `waveform_${safeName}.png`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 8000);
+            }, 'image/png');
+
         } catch (err) {
             console.error('Export PNG error:', err);
-            alert('Gagal mengekspor PNG. Coba lagi atau gunakan tombol Print/PDF.');
+            // Fallback: download each plot individually via Plotly's built-in method
+            try {
+                const plots = _visiblePlots();
+                const size = _getPlotSize(plots[0]);
+                for (let i = 0; i < plots.length; i++) {
+                    await Plotly.downloadImage(plots[i], {
+                        format: 'png', scale: 2,
+                        width: size.width, height: size.height,
+                        filename: `${safeName}_plot${i + 1}`
+                    });
+                    await new Promise(r => setTimeout(r, 300));
+                }
+            } catch (e2) {
+                alert('Gagal mengekspor PNG: ' + (err.message || err));
+            }
         } finally {
             _setBtnState(exportPngBtn, false);
         }
     }
 
+    // Print / Save PDF — injects static images into a print-only div, then window.print()
+    // No popup window needed — avoids browser popup blockers entirely
     async function printCombined() {
-        // IMPORTANT: window.open MUST be called before any await to avoid popup blocker
-        const w = window.open('', '_blank');
-        if (!w) {
-            alert('Popup diblokir browser.\nIzinkan popup untuk halaman ini, lalu coba lagi.');
-            return;
-        }
         _setBtnState(printBtn, true);
-        // Show placeholder while loading
-        const subtitle = document.querySelector('.topbar-sub')?.textContent || '';
-        w.document.write(`<!DOCTYPE html><html><head><title>COMTRADE Waveforms</title></head>
-            <body style="margin:24px;font-family:sans-serif;color:#0f172a;">
-            <p style="color:#64748b;">Memuat waveform...</p></body></html>`);
+        // Remove any leftover print div
+        const oldDiv = document.getElementById('_tfaPrintDiv');
+        if (oldDiv) oldDiv.remove();
 
         try {
-            const canvas = await _buildCombinedCanvas(2);
-            if (!canvas) { w.close(); return; }
-            const dataUrl = canvas.toDataURL('image/png');
-            const now = new Date().toLocaleString('id-ID');
-            const html = `<!DOCTYPE html><html><head>
-                <title>COMTRADE — ${subtitle}</title>
-                <style>
-                    * { box-sizing: border-box; }
-                    body { margin: 24px; font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif; color: #0f172a; }
-                    h2  { font-size: 16px; margin: 0 0 4px; }
-                    p   { font-size: 12px; color: #64748b; margin: 0 0 16px; }
-                    img { width: 100%; display: block; border: 1px solid #e2e8f0; border-radius: 8px; }
-                    .print-btn {
-                        display: inline-block; margin-top: 20px;
-                        padding: 10px 24px; background: #3b82f6; color: white;
-                        border: none; border-radius: 8px; font-size: 14px;
-                        font-weight: 600; cursor: pointer; letter-spacing: 0.04em;
-                    }
-                    @media print {
-                        .print-btn { display: none; }
-                        body { margin: 0; }
-                    }
-                </style>
-            </head><body>
-                <h2>Rekaman Gelombang COMTRADE</h2>
-                <p>${subtitle} — diekspor ${now}</p>
-                <img src="${dataUrl}" alt="COMTRADE Waveform">
-                <br>
-                <button class="print-btn" onclick="window.print()">🖨 Cetak / Simpan sebagai PDF</button>
-            </body></html>`;
+            const imgUrls = await _getPlotImgUrls(2);
+            if (!imgUrls.length) { alert('Tidak ada plot untuk dicetak.'); return; }
 
-            w.document.open();
-            w.document.write(html);
-            w.document.close();
-            w.focus();
-            // Auto-trigger print dialog after image renders (800 ms grace)
-            setTimeout(() => { try { w.print(); } catch(e) {} }, 800);
+            const subtitle = document.querySelector('.topbar-sub')?.textContent || '';
+            const now = new Date().toLocaleString('id-ID');
+
+            // Build hidden print-only container (appended to body, NOT inside .main-wrap)
+            const div = document.createElement('div');
+            div.id = '_tfaPrintDiv';
+            div.innerHTML = `
+                <div style="margin-bottom:14px;">
+                    <div style="font-size:16px;font-weight:700;color:#0f172a;margin-bottom:3px;">
+                        Rekaman Gelombang COMTRADE
+                    </div>
+                    <div style="font-size:12px;color:#64748b;">${subtitle} — ${now}</div>
+                </div>
+            `;
+            imgUrls.forEach(url => {
+                const img = document.createElement('img');
+                img.src = url;
+                div.appendChild(img);
+            });
+            document.body.appendChild(div);
+
+            // Small delay to let images fully paint before print dialog opens
+            await new Promise(r => setTimeout(r, 400));
+            window.print();
+
+            // Clean up after print dialog closes
+            setTimeout(() => { try { div.remove(); } catch(e) {} }, 3000);
         } catch (err) {
             console.error('Print error:', err);
-            try { w.close(); } catch(e) {}
-            alert('Gagal menyiapkan cetak. Periksa konsol untuk detail.');
+            alert('Gagal menyiapkan cetak: ' + (err.message || err));
         } finally {
             _setBtnState(printBtn, false);
         }
     }
 
+    // CSV export — download waveform time-series as a spreadsheet-ready CSV
+    function exportCSV() {
+        if (!wf || !wf.channels || !wf.channels.length) {
+            alert('Tidak ada data waveform untuk diekspor.'); return;
+        }
+        const analogChs  = wf.channels;
+        const digitalChs = wf.digital || [];
+        const allChs = [...analogChs, ...digitalChs];
+        const tArr = analogChs[0].x;
+
+        const headers = ['t_ms', ...analogChs.map(c => (c.canonical || c.name || c.id) + (c.unit ? ` (${c.unit})` : '')),
+                         ...digitalChs.map(c => (c.name || c.id) + ' (digital)')];
+
+        // Build rows (nearest-sample interpolation for digital channels whose x may differ)
+        const rows = tArr.map((t, i) => {
+            const aVals = analogChs.map(c => c.y[i] !== undefined ? c.y[i].toFixed(4) : '');
+            const dVals = digitalChs.map(c => {
+                const di = Math.min(i, c.y.length - 1);
+                return c.y[di] !== undefined ? c.y[di] : '';
+            });
+            return [t.toFixed(4), ...aVals, ...dVals].join(',');
+        });
+
+        const csv = [headers.join(','), ...rows].join('\r\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const subtitle = document.querySelector('.topbar-sub')?.textContent || 'comtrade';
+        const safeName = subtitle.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 50);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `waveform_${safeName}.csv`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 8000);
+    }
+
     if (exportPngBtn) exportPngBtn.addEventListener('click', exportCombinedImage);
     if (printBtn)     printBtn.addEventListener('click', printCombined);
+
+    // Wire up CSV export button
+    const csvBtn = document.getElementById('waveExportCsvBtn');
+    if (csvBtn) csvBtn.addEventListener('click', exportCSV);
 })();
 </script>
 {% endif %}

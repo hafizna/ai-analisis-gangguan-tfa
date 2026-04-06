@@ -966,6 +966,11 @@ def _generate_waveform_plot(cfg_path: str, inception_ms: float, duration_ms: flo
             return ""
 
         t_ms = record.time * 1000   # seconds → milliseconds
+        # Shift so fault inception = t=0 (consistent with interactive Plotly viewer)
+        t0 = float(inception_ms) if inception_ms else 0.0
+        if t0 == 0.0 and len(t_ms):
+            t0 = float(t_ms[0])
+        t_ms = t_ms - t0
 
         v_chs = [ch for ch in record.analog_channels
                  if ch.measurement == 'voltage' and len(ch.samples) == len(record.time)]
@@ -995,8 +1000,9 @@ def _generate_waveform_plot(cfg_path: str, inception_ms: float, duration_ms: flo
                                 height_ratios=h_ratios, hspace=0.10)
         axes = [fig.add_subplot(gs[i]) for i in range(len(panels))]
 
-        t_in  = inception_ms
-        t_out = inception_ms + duration_ms
+        # After shifting t_ms, inception is at t=0 and clearing at t=duration_ms
+        t_in  = 0.0
+        t_out = float(duration_ms)
 
         def _style(ax, ylabel):
             ax.set_facecolor(AX_BG)
