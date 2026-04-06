@@ -957,6 +957,7 @@ def _generate_waveform_plot(cfg_path: str, inception_ms: float, duration_ms: flo
         import matplotlib.pyplot as plt
         import matplotlib.gridspec as gridspec
         from matplotlib.lines import Line2D
+        import numpy as np
     except ImportError:
         return ""
     try:
