@@ -41,11 +41,17 @@ if str(_PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(_PIPELINE_DIR))
 
 from core.comtrade_parser import parse_comtrade
-from core.protection_router import determine_protection
+from core.protection_router import determine_protection, ProtectionType
 from core.fault_detector import detect_fault, extract_soe
 from core.feature_extractor import extract_distance_features
+from core.transformer_channel_mapper import map_transformer_channels
+from core.transformer_feature_extractor import extract_transformer_features, features_to_dict
 from models.rules import apply_rules, RuleResult
 from models.train import FEATURE_COLS, encode_reclose
+from models.transformer_classifier import (
+    classify_transformer_event,
+    TransformerClassificationResult,
+)
 
 MODEL_PATH = Path(__file__).parent / "petir_tree.pkl"
 
@@ -248,6 +254,11 @@ class ClassificationResult:
     soe: list = None                # Sequence of Events from digital channels
     description: str = ""          # Natural language analysis narrative
     cause_pcts: list = None        # [{name, pct}] likelihood bars for transient causes
+    # Phase 2 — transformer-specific fields
+    event_type: str = "LINE"        # "LINE" or "TRANSFORMER"
+    transformer_result: object = None  # TransformerClassificationResult if 87T
+    transformer_features: dict = None  # flat dict of TransformerFeatures
+    action_required: bool = False   # True when transformer has critical fault
 
 
 def _compute_cause_pcts(row: dict) -> list:
@@ -362,6 +373,102 @@ def _generate_description(row: dict, result: "ClassificationResult") -> str:
     return "\n".join(lines)
 
 
+def _classify_transformer_file(record, prot, fault, soe, cfg_path: str) -> "ClassificationResult":
+    """
+    Phase 2 classification pipeline for 87T transformer events.
+
+    Steps:
+      1. Map transformer channels (HV/LV/diff/restraint)
+      2. Extract harmonic + differential features
+      3. Apply knowledge-based transformer classifier
+      4. Return ClassificationResult with transformer_result attached
+    """
+    try:
+        ch_map = map_transformer_channels(record)
+        tf = extract_transformer_features(record, ch_map, fault_event=fault)
+        xfmr_result = classify_transformer_event(tf)
+
+        # Map transformer event class → user-visible label (Indonesian)
+        _label_map = {
+            'INRUSH':         'INRUSH MAGNETISASI',
+            'INTERNAL_FAULT': 'GANGGUAN INTERNAL TRAFO',
+            'THROUGH_FAULT':  'GANGGUAN EKSTERNAL (THROUGH)',
+            'OVEREXCITATION': 'TEGANGAN LEBIH / OVEREKSITASI',
+            'MAL_OPERATE':    'KEMUNGKINAN MALOPERATE',
+            'UNKNOWN':        'PERLU INVESTIGASI',
+        }
+        label = _label_map.get(xfmr_result.event_class, 'PERLU INVESTIGASI')
+
+        # Build class probability list for UI bars
+        cause_pcts = sorted(
+            [{"name": _label_map.get(k, k), "pct": round(v * 100, 1)}
+             for k, v in xfmr_result.class_probabilities.items()],
+            key=lambda x: -x["pct"]
+        )
+
+        row = features_to_dict(tf)
+        row['protection_type'] = '87T'
+        row['station_name']    = getattr(record, 'station_name', '')
+        row['relay_model']     = getattr(record, 'rec_dev_id', '')
+
+        result = ClassificationResult(
+            label=label,
+            confidence=xfmr_result.confidence,
+            tier=1,   # knowledge-based = Tier 1; will become Tier 2 when ML model trained
+            rule_name=xfmr_result.rule_name,
+            evidence=xfmr_result.evidence,
+            recommendation=xfmr_result.recommendation,
+            features=row,
+            soe=soe,
+            cause_pcts=cause_pcts,
+            event_type="TRANSFORMER",
+            transformer_result=xfmr_result,
+            transformer_features=row,
+            action_required=xfmr_result.action_required,
+        )
+
+        # Generate description
+        result.description = _generate_transformer_description(tf, xfmr_result)
+        return result
+
+    except Exception as exc:
+        raise ValueError(f"Transformer classification failed for {cfg_path}: {exc}") from exc
+
+
+def _generate_transformer_description(tf, xr: "TransformerClassificationResult") -> str:
+    """Generate narrative description for transformer event result."""
+    lines = []
+    h2 = tf.h2_ratio_max_pct
+    h5 = tf.h5_ratio_max_pct
+    dc = tf.dc_offset_index_max
+    slp = tf.slope_worst_pct
+
+    lines.append(
+        f"Rekaman proteksi diferensial transformator (87T) terdeteksi di gardu {tf.station_name}. "
+        f"Rele family: {tf.relay_family}."
+    )
+
+    if h2 is not None:
+        lines.append(f"Rasio harmonik ke-2 (indikator inrush): {h2:.1f}% (ambang: 15%).")
+    if h5 is not None:
+        lines.append(f"Rasio harmonik ke-5 (indikator overeksitasi): {h5:.1f}% (ambang: 10%).")
+    if slp is not None:
+        lines.append(f"Rasio diferensial/restraint (slope): {slp:.1f}% (ambang slope-1: 20%).")
+    if dc is not None:
+        lines.append(f"Indeks offset DC (bentuk gelombang): {dc:.3f} (ambang inrush: 0.35).")
+    if tf.energisation_flag:
+        lines.append("Terdeteksi kondisi energisasi: arus sisi LV ≈ 0 sebelum event.")
+
+    lines.append(
+        f"AI mengklasifikasikan event ini sebagai: {xr.event_class} "
+        f"(keyakinan {xr.confidence:.0%})."
+    )
+    if xr.action_required:
+        lines.append("TINDAKAN DIPERLUKAN — lihat rekomendasi untuk langkah selanjutnya.")
+
+    return "\n".join(lines)
+
+
 def _load_model() -> Optional[dict]:
     if not MODEL_PATH.exists():
         return None
@@ -410,6 +517,10 @@ def classify_file(cfg_path: str) -> ClassificationResult:
 
     if fault is None:
         raise ValueError(f"No fault detected in: {cfg_path}")
+
+    # ── Phase 2: Route TRANSFORMER_DIFF (87T) to transformer classifier ─────────
+    if prot.primary_protection == ProtectionType.TRANSFORMER_DIFF:
+        return _classify_transformer_file(record, prot, fault, _soe, cfg_path)
 
     if prot.primary_protection.name == "UNKNOWN":
         # No protection type identified from status channels, but a fault was detected.

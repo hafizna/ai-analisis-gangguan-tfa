@@ -198,7 +198,7 @@
             <div class="brand-name">TFA</div>
             <div class="brand-sub">Fault Analyzer</div>
         </div>
-        <div class="sidebar-section">Menu</div>
+        <div class="sidebar-section">Jaringan Transmisi</div>
         <nav class="sidebar-nav">
             <a href="{{ url_for('index') }}"   class="nav-item {% block nav_upload %}{% endblock %}">
                 <span class="nav-icon">↑</span> Unggah File
@@ -213,9 +213,21 @@
                 <span class="nav-icon">↗</span> Tren Gangguan
             </a>
         </nav>
+        <div class="sidebar-section" style="margin-top:4px;">Transformator (Phase 2)</div>
+        <nav class="sidebar-nav" style="padding-top:0;">
+            <a href="{{ url_for('transformer_history') }}" class="nav-item {% block nav_xfmr_history %}{% endblock %}">
+                <span class="nav-icon" style="color:#8b5cf6;">⬡</span> Riwayat 87T
+            </a>
+            <a href="{{ url_for('transformer_trends') }}" class="nav-item {% block nav_xfmr_trends %}{% endblock %}">
+                <span class="nav-icon" style="color:#8b5cf6;">↗</span> Tren Trafo
+            </a>
+            <a href="{{ url_for('transformer_data_status') }}" class="nav-item {% block nav_xfmr_data %}{% endblock %}">
+                <span class="nav-icon" style="color:#8b5cf6;">◈</span> Status Data
+            </a>
+        </nav>
         <div class="sidebar-footer">
-            <strong>Klasifikasi Penyebab Gangguan</strong>
-            Berbasis AI
+            <strong>AI Analisis Gangguan</strong>
+            Phase 1: Jaringan &nbsp;|&nbsp; Phase 2: Trafo
             <div style="margin-top:8px; font-size:10px; letter-spacing:0.04em;">
                 <span id="db-status-dot" style="color:#475569;">● Memuat status DB...</span>
             </div>

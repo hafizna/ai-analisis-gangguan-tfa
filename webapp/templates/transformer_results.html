@@ -1,0 +1,476 @@
+{% extends "base.html" %}
+{% block title %}Analisis Trafo 87T — {{ analysis.station_name }}{% endblock %}
+{% block topbar_title %}Analisis Proteksi Trafo (87T){% endblock %}
+{% block topbar_sub %}{{ analysis.station_name }} — {{ analysis.original_filename }}{% endblock %}
+{% block nav_upload %}{% endblock %}
+
+{% block extra_css %}
+/* ── Layout ──────────────────────────────────────────────────── */
+.xfmr-layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 20px;
+    align-items: start;
+}
+.xfmr-left, .xfmr-right { display: flex; flex-direction: column; gap: 16px; }
+
+/* ── Cards ───────────────────────────────────────────────────── */
+.x-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+}
+.x-card-dark {
+    background: #0b1120;
+    border-radius: 14px;
+    padding: 22px;
+    position: relative; overflow: hidden;
+}
+.x-card-dark::before {
+    content: ''; position: absolute; top: -40px; right: -40px;
+    width: 130px; height: 130px; border-radius: 50%;
+    background: rgba(139,92,246,0.12);
+}
+.x-section-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-muted);
+    margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
+}
+.x-section-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* ── Event badge ─────────────────────────────────────────────── */
+.event-eyebrow {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: #6d28d9; margin-bottom: 8px;
+}
+.event-label { font-size: 22px; font-weight: 800; color: #fff; line-height: 1.2; margin-bottom: 4px; }
+.event-sub   { font-size: 12px; color: #64748b; margin-bottom: 16px; }
+
+.conf-bar-wrap { margin-bottom: 6px; }
+.conf-bar-label { display: flex; justify-content: space-between; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+.conf-bar { width: 100%; height: 5px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+.conf-fill { height: 100%; border-radius: 3px; }
+.conf-high   { background: #10b981; }
+.conf-medium { background: #f59e0b; }
+.conf-low    { background: #ef4444; }
+
+/* ── Event type badges ───────────────────────────────────────── */
+.ev-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 12px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; margin-top: 10px;
+}
+.ev-inrush       { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.ev-internal     { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.ev-through      { background: rgba(59,130,246,0.15); color: #60a5fa; }
+.ev-overexcit    { background: rgba(168,85,247,0.15); color: #a855f7; }
+.ev-maloperate   { background: rgba(249,115,22,0.15); color: #f97316; }
+.ev-unknown      { background: rgba(100,116,139,0.15);color: #94a3b8; }
+
+.action-banner {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 8px; padding: 10px 14px;
+    font-size: 12px; color: #ef4444; font-weight: 600;
+    display: flex; gap: 8px; align-items: center;
+    margin-top: 12px;
+}
+
+/* ── Harmonic bar chart ──────────────────────────────────────── */
+.harmonic-chart { display: flex; flex-direction: column; gap: 10px; }
+.h-row { display: flex; align-items: center; gap: 10px; }
+.h-label { font-size: 11px; color: var(--text); width: 90px; flex-shrink: 0; font-weight: 600; }
+.h-bar-wrap { flex: 1; height: 20px; background: #1e293b; border-radius: 4px; overflow: hidden; position: relative; }
+.h-bar-fill { height: 100%; border-radius: 4px; transition: width 0.7s ease; }
+.h-threshold { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(255,255,255,0.20); }
+.h-pct { font-size: 12px; color: #94a3b8; width: 52px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.h-bar-h2 { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+.h-bar-h5 { background: linear-gradient(90deg, #a855f7, #ec4899); }
+.h-bar-thd{ background: linear-gradient(90deg, #3b82f6, #06b6d4); }
+.threshold-label { font-size: 9px; color: #475569; margin-top: 4px; text-align: right; }
+
+/* ── Slope diagram ───────────────────────────────────────────── */
+.slope-diagram {
+    position: relative; width: 100%; height: 140px;
+    background: #0f172a; border-radius: 8px; overflow: hidden;
+}
+.slope-canvas { width: 100%; height: 100%; }
+
+/* ── Feature grid ────────────────────────────────────────────── */
+.feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.feat-box {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+}
+.feat-label { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 3px; }
+.feat-val { font-size: 17px; font-weight: 800; color: var(--text); }
+.feat-unit { font-size: 10px; color: var(--text-muted); margin-left: 2px; }
+.feat-flag { font-size: 10px; font-weight: 700; display: block; margin-top: 3px; }
+.flag-yes { color: #ef4444; }
+.flag-no  { color: #10b981; }
+.flag-warn{ color: #f59e0b; }
+
+/* ── Channel coverage ────────────────────────────────────────── */
+.ch-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.ch-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ch-ok   { background: #10b981; }
+.ch-miss { background: #475569; }
+
+/* ── Probability bars ────────────────────────────────────────── */
+.prob-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.prob-name { font-size: 11px; color: var(--text); width: 145px; flex-shrink: 0; font-weight: 600; }
+.prob-bar-wrap { flex: 1; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+.prob-bar-fill { height: 100%; border-radius: 3px; background: #8b5cf6; transition: width 0.6s ease; }
+.prob-pct { font-size: 12px; color: #94a3b8; width: 46px; text-align: right; flex-shrink: 0; }
+
+/* ── Description ─────────────────────────────────────────────── */
+.desc-block {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+    font-size: 13px; color: var(--text); line-height: 1.7;
+    white-space: pre-line;
+}
+
+/* ── SOE ──────────────────────────────────────────────────────── */
+.soe-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.soe-table th { text-align: left; padding: 6px 10px; color: var(--text-muted); font-weight: 600; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.soe-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+.soe-table tr:last-child td { border-bottom: none; }
+.soe-high { color: #ef4444; font-weight: 700; }
+.soe-low  { color: #94a3b8; }
+
+/* ── Confirm form ────────────────────────────────────────────── */
+.confirm-card { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+.confirm-label { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 6px; display: block; }
+.confirm-select { width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font-size: 13px; }
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 900px) {
+    .xfmr-layout { grid-template-columns: 1fr; }
+}
+{% endblock %}
+
+{% block content %}
+<div class="xfmr-layout">
+
+  <!-- ════════════════════ LEFT PANEL ════════════════════ -->
+  <div class="xfmr-left">
+
+    <!-- Event classification card -->
+    <div class="x-card-dark">
+      <div class="event-eyebrow">KLASIFIKASI EVENT 87T</div>
+      <div class="event-label">{{ analysis.label }}</div>
+      <div class="event-sub">{{ analysis.station_name }} &mdash; {{ analysis.relay_family or 'Unknown relay' }}</div>
+
+      <div class="conf-bar-wrap">
+        <div class="conf-bar-label">
+          <span>Tingkat keyakinan</span>
+          <span>{{ "%.0f"|format(analysis.confidence * 100) }}%</span>
+        </div>
+        <div class="conf-bar">
+          <div class="conf-fill {% if analysis.confidence >= 0.75 %}conf-high{% elif analysis.confidence >= 0.50 %}conf-medium{% else %}conf-low{% endif %}"
+               style="width:{{ "%.0f"|format(analysis.confidence * 100) }}%"></div>
+        </div>
+      </div>
+
+      {% set ec = analysis.event_class or 'UNKNOWN' %}
+      <span class="ev-badge
+        {% if ec == 'INRUSH' %}ev-inrush
+        {% elif ec == 'INTERNAL_FAULT' %}ev-internal
+        {% elif ec == 'THROUGH_FAULT' %}ev-through
+        {% elif ec == 'OVEREXCITATION' %}ev-overexcit
+        {% elif ec == 'MAL_OPERATE' %}ev-maloperate
+        {% else %}ev-unknown{% endif %}">
+        ⬡ {{ ec | replace('_',' ') }}
+      </span>
+
+      {% if analysis.action_required %}
+      <div class="action-banner">
+        ⚠ TINDAKAN DIPERLUKAN — Baca rekomendasi di bawah sebelum re-energisasi
+      </div>
+      {% endif %}
+
+      <div style="margin-top:16px; padding-top:14px; border-top:1px solid #1e293b;">
+        <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#334155; margin-bottom:8px;">Rekomendasi</div>
+        <div style="font-size:12px; color:#94a3b8; line-height:1.6;">{{ analysis.recommendation }}</div>
+      </div>
+    </div>
+
+    <!-- Probability bars -->
+    {% if analysis.cause_pcts %}
+    <div class="x-card">
+      <div class="x-section-label">Probabilitas Event Class</div>
+      {% for item in analysis.cause_pcts %}
+      <div class="prob-row">
+        <div class="prob-name">{{ item.name }}</div>
+        <div class="prob-bar-wrap">
+          <div class="prob-bar-fill" style="width:{{ item.pct }}%"></div>
+        </div>
+        <div class="prob-pct">{{ item.pct }}%</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Channel coverage -->
+    <div class="x-card">
+      <div class="x-section-label">Ketersediaan Channel</div>
+      {% set ch_items = [
+        ('i_hv_a', 'HV Fasa A (W1)'), ('i_hv_b', 'HV Fasa B (W1)'), ('i_hv_c', 'HV Fasa C (W1)'),
+        ('i_lv_a', 'LV Fasa A (W2)'), ('i_lv_b', 'LV Fasa B (W2)'), ('i_lv_c', 'LV Fasa C (W2)'),
+        ('i_diff_a', 'Diferensial A'), ('i_diff_b', 'Diferensial B'), ('i_diff_c', 'Diferensial C'),
+        ('i_rstr_a', 'Restraint A'),   ('i_rstr_b', 'Restraint B'),   ('i_rstr_c', 'Restraint C'),
+      ] %}
+      {% for key, label in ch_items %}
+      {% set available = analysis.channels_available.get(key, False) if analysis.channels_available else False %}
+      <div class="ch-row">
+        <div class="ch-dot {% if available %}ch-ok{% else %}ch-miss{% endif %}"></div>
+        <span style="color:{% if available %}var(--text){% else %}#475569{% endif %}">{{ label }}</span>
+        {% if not available %}<span style="font-size:10px;color:#334155;margin-left:auto;">—</span>{% endif %}
+      </div>
+      {% endfor %}
+      {% if analysis.relay_family %}
+      <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border); font-size:11px; color:var(--text-muted);">
+        Relay family: <strong style="color:var(--text);">{{ analysis.relay_family }}</strong>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Confirm form -->
+    <div class="confirm-card">
+      <div class="x-section-label">Konfirmasi Hasil</div>
+      <form method="POST" action="{{ url_for('confirm_transformer') }}" data-no-loading>
+        <input type="hidden" name="token" value="{{ analysis.token }}">
+        <label class="confirm-label">Label yang dikonfirmasi:</label>
+        <select name="confirmed_label" class="confirm-select" style="margin-bottom:10px;">
+          <option value="">— Pilih —</option>
+          <option value="INRUSH MAGNETISASI">Inrush Magnetisasi</option>
+          <option value="GANGGUAN INTERNAL TRAFO">Gangguan Internal Trafo</option>
+          <option value="GANGGUAN EKSTERNAL (THROUGH)">Gangguan Eksternal (Through)</option>
+          <option value="TEGANGAN LEBIH / OVEREKSITASI">Tegangan Lebih / Overeksitasi</option>
+          <option value="KEMUNGKINAN MALOPERATE">Kemungkinan Maloperate</option>
+          <option value="LAIN-LAIN">Lain-lain</option>
+        </select>
+        <textarea name="notes" placeholder="Catatan (opsional)..." rows="2"
+                  style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);
+                         background:var(--card-bg);color:var(--text);font-size:12px;resize:vertical;margin-bottom:10px;"></textarea>
+        <button type="submit" class="btn btn-success" style="width:100%">Simpan Konfirmasi</button>
+      </form>
+      <form method="POST" action="{{ url_for('index') }}" style="margin-top:8px;" data-no-loading>
+        <button type="submit" class="btn btn-outline" style="width:100%">Analisis File Baru</button>
+      </form>
+    </div>
+
+  </div>
+
+  <!-- ════════════════════ RIGHT PANEL ════════════════════ -->
+  <div class="xfmr-right">
+
+    <!-- Harmonic analysis -->
+    <div class="x-card">
+      <div class="x-section-label">Analisis Harmonik Arus Diferensial</div>
+      <div class="harmonic-chart">
+
+        {% macro h_row(label, val, max_val, bar_class, threshold_pct, threshold_label) %}
+        <div class="h-row">
+          <div class="h-label">{{ label }}</div>
+          <div class="h-bar-wrap">
+            <div class="h-bar-fill {{ bar_class }}"
+                 style="width:{% if val is not none %}{{ [val / max_val * 100, 100] | min | int }}{% else %}0{% endif %}%"></div>
+            <div class="h-threshold" style="left:{{ threshold_pct / max_val * 100 | int }}%"></div>
+          </div>
+          <div class="h-pct">{% if val is not none %}{{ "%.1f"|format(val) }}%{% else %}—{% endif %}</div>
+        </div>
+        {% endmacro %}
+
+        {% set h2a = analysis.h2_ratio_a_pct %}
+        {% set h2b = analysis.h2_ratio_b_pct %}
+        {% set h2c = analysis.h2_ratio_c_pct %}
+        {% set h5a = analysis.h5_ratio_a_pct %}
+        {% set h5b = analysis.h5_ratio_b_pct %}
+        {% set h5c = analysis.h5_ratio_c_pct %}
+        {% set thd = analysis.thd_diff_pct %}
+
+        {% set h2_max = [analysis.h2_ratio_max_pct or 0, 40] | max %}
+        {% set h5_max = [analysis.h5_ratio_max_pct or 0, 30] | max %}
+
+        {{ h_row('H2 (2nd) Fasa A', h2a, h2_max, 'h-bar-h2', 15, '15%') }}
+        {{ h_row('H2 (2nd) Fasa B', h2b, h2_max, 'h-bar-h2', 15, '') }}
+        {{ h_row('H2 (2nd) Fasa C', h2c, h2_max, 'h-bar-h2', 15, '') }}
+        <div class="threshold-label">— Threshold inrush: 15%</div>
+
+        {{ h_row('H5 (5th) Fasa A', h5a, h5_max, 'h-bar-h5', 10, '10%') }}
+        {{ h_row('H5 (5th) Fasa B', h5b, h5_max, 'h-bar-h5', 10, '') }}
+        {{ h_row('H5 (5th) Fasa C', h5c, h5_max, 'h-bar-h5', 10, '') }}
+        <div class="threshold-label">— Threshold overeksitasi: 10%</div>
+
+        {% if thd is not none %}
+        {{ h_row('THD Diferensial', thd, [thd, 100] | max, 'h-bar-thd', 50, '') }}
+        {% endif %}
+      </div>
+
+      <!-- Interpretation pills -->
+      <div style="margin-top:14px; display:flex; flex-wrap:wrap; gap:6px;">
+        {% if analysis.h2_ratio_max_pct and analysis.h2_ratio_max_pct >= 15 %}
+        <span style="background:rgba(245,158,11,0.15);color:#f59e0b;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;">
+          H2 ≥ 15% → Indikasi Inrush
+        </span>
+        {% endif %}
+        {% if analysis.h5_ratio_max_pct and analysis.h5_ratio_max_pct >= 10 %}
+        <span style="background:rgba(168,85,247,0.15);color:#a855f7;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;">
+          H5 ≥ 10% → Indikasi Overeksitasi
+        </span>
+        {% endif %}
+        {% if (not analysis.h2_ratio_max_pct or analysis.h2_ratio_max_pct < 15) and analysis.above_slope1 %}
+        <span style="background:rgba(239,68,68,0.15);color:#ef4444;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;">
+          H2 Rendah + Slope Tinggi → Indikasi Internal Fault
+        </span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Feature metrics -->
+    <div class="x-card">
+      <div class="x-section-label">Parameter Proteksi Diferensial</div>
+      <div class="feat-grid">
+
+        <div class="feat-box">
+          <label class="feat-label">Idiff Maks</label>
+          <span class="feat-val">{% if analysis.idiff_max_pu is not none %}{{ "%.3f"|format(analysis.idiff_max_pu) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">pu</span>
+          {% if analysis.idiff_max_pu and analysis.idiff_max_pu >= 0.20 %}
+          <span class="feat-flag flag-yes">▲ Di atas threshold operate</span>
+          {% elif analysis.idiff_max_pu %}
+          <span class="feat-flag flag-no">▼ Di bawah threshold</span>
+          {% endif %}
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">Irestraint Maks</label>
+          <span class="feat-val">{% if analysis.irstr_max_pu is not none %}{{ "%.3f"|format(analysis.irstr_max_pu) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">pu</span>
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">Slope Terburuk</label>
+          <span class="feat-val">{% if analysis.slope_worst_pct is not none %}{{ "%.1f"|format(analysis.slope_worst_pct) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">%</span>
+          {% if analysis.above_slope2 %}
+          <span class="feat-flag flag-yes">▲ Di atas Slope-2 (80%)</span>
+          {% elif analysis.above_slope1 %}
+          <span class="feat-flag flag-warn">▲ Di atas Slope-1 (20%)</span>
+          {% endif %}
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">DC Offset Index</label>
+          <span class="feat-val">{% if analysis.dc_offset_index_max is not none %}{{ "%.3f"|format(analysis.dc_offset_index_max) }}{% else %}—{% endif %}</span>
+          {% if analysis.dc_offset_index_max and analysis.dc_offset_index_max >= 0.35 %}
+          <span class="feat-flag flag-warn">Asimetri Tinggi (Inrush)</span>
+          {% endif %}
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">Energisasi</label>
+          <span class="feat-val" style="font-size:14px;">{% if analysis.energisation_flag %}YA{% else %}TIDAK{% endif %}</span>
+          {% if analysis.energisation_flag %}
+          <span class="feat-flag flag-warn">LV pre-fault ≈ 0</span>
+          {% endif %}
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">Durasi Event</label>
+          <span class="feat-val">{% if analysis.fault_duration_ms %}{{ "%.0f"|format(analysis.fault_duration_ms) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">ms</span>
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">Peak Idiff</label>
+          <span class="feat-val">{% if analysis.peak_idiff_a %}{{ "%.0f"|format(analysis.peak_idiff_a) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">A</span>
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">Sudut Inisiasi</label>
+          <span class="feat-val">{% if analysis.inception_angle_deg %}{{ "%.0f"|format(analysis.inception_angle_deg) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">°</span>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Narrative description -->
+    <div class="x-card">
+      <div class="x-section-label">Narasi Analisis</div>
+      <div class="desc-block">{{ analysis.description or 'Deskripsi tidak tersedia.' }}</div>
+    </div>
+
+    <!-- Evidence / rule detail -->
+    {% if analysis.evidence %}
+    <div class="x-card">
+      <div class="x-section-label">Bukti Klasifikasi ({{ analysis.rule_name }})</div>
+      <div style="font-size:12px; color:var(--text-muted); line-height:1.7;">{{ analysis.evidence }}</div>
+      {% if analysis.limited_data %}
+      <div style="margin-top:8px; padding:8px 12px; background:rgba(245,158,11,0.08); border-radius:6px; font-size:11px; color:#f59e0b;">
+        ⚠ Data terbatas: beberapa channel tidak tersedia. Tingkat keyakinan mungkin lebih rendah dari seharusnya.
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- SOE table -->
+    {% if analysis.soe %}
+    <div class="x-card">
+      <div class="x-section-label">Urutan Kejadian (SOE)</div>
+      <table class="soe-table">
+        <thead>
+          <tr>
+            <th>Waktu (ms)</th>
+            <th>Channel</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ev in analysis.soe[:20] %}
+          <tr>
+            <td style="font-variant-numeric:tabular-nums;">{{ "%.1f"|format(ev.time_ms) }}</td>
+            <td>{{ ev.channel }}</td>
+            <td class="{% if ev.state == 1 %}soe-high{% else %}soe-low{% endif %}">
+              {% if ev.state == 1 %}↑ HIGH{% else %}↓ LOW{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% if analysis.soe | length > 20 %}
+          <tr><td colspan="3" style="color:#475569; font-size:11px;">… {{ analysis.soe | length - 20 }} event lainnya</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <!-- Data quality warnings -->
+    {% if analysis.warnings %}
+    <div class="x-card">
+      <div class="x-section-label">Peringatan Data</div>
+      {% for w in analysis.warnings %}
+      <div style="font-size:12px; color:#f59e0b; margin-bottom:5px; display:flex; gap:6px;">
+        <span>⚠</span><span>{{ w }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+  </div><!-- end right panel -->
+</div><!-- end layout -->
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Animate bars on load
+document.addEventListener('DOMContentLoaded', function() {
+    // All bars start at 0 and transition to target width via CSS transition
+    // (widths already set inline — transition handles the animation)
+});
+</script>
+{% endblock %}

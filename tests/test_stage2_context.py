@@ -1,231 +1,270 @@
 """
-Tests for Stage 2: Context Resolver
+Tests for Protection Router and Transformer Channel Mapper
+==========================================================
+Validates routing decisions (87T vs 87L vs distance vs UNKNOWN) and
+vendor-specific channel name mapping for transformer differential relays.
+
+Aligned with:
+  pipeline/core/protection_router.py   (replaces misaligned stages.stage2_context)
+  pipeline/core/transformer_channel_mapper.py
 """
 
 import pytest
-from pathlib import Path
 import sys
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import List, Optional
 
-# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from stages.stage2_context import Stage2ContextResolver, ContextResult
+from core.protection_router import determine_protection, ProtectionType
+from core.transformer_channel_mapper import (
+    detect_transformer_relay_family,
+    map_transformer_channels,
+    TransformerChannelMap,
+)
 
 
-class MockComtradeRecord:
-    """Mock COMTRADE record for testing."""
-    def __init__(self, rec_dev_id="", analog_channels=None, status_channels=None):
-        self.rec_dev_id = rec_dev_id
-        self.analog_channels = analog_channels or []
-        self.status_channels = status_channels or []
+# ---------------------------------------------------------------------------
+# Mock COMTRADE objects
+# ---------------------------------------------------------------------------
+
+@dataclass
+class MockChannel:
+    name: str
+    samples: list = field(default_factory=list)
 
 
-def test_exact_relay_match():
-    """Test exact relay model match."""
-    resolver = Stage2ContextResolver()
-
-    record = MockComtradeRecord(rec_dev_id="SEL-421")
-    result = resolver.resolve(record)
-
-    assert result.manufacturer == "SEL"
-    assert result.protection_function == "distance"
-    assert result.equipment_type == "transmission_line"
-    assert result.should_proceed_to_stage3 == True
-    assert result.confidence >= 0.9
+@dataclass
+class MockStatusChannel(MockChannel):
+    pass
 
 
-def test_substring_relay_match():
-    """Test substring relay model match."""
-    resolver = Stage2ContextResolver()
-
-    # rec_dev_id with extra characters
-    record = MockComtradeRecord(rec_dev_id="SEL-421-R123")
-    result = resolver.resolve(record)
-
-    assert result.manufacturer == "SEL"
-    assert result.protection_function == "distance"
-    assert result.equipment_type == "transmission_line"
+@dataclass
+class MockAnalogChannel(MockChannel):
+    measurement: str = "current"
+    canonical_name: str = ""
 
 
-def test_transformer_relay_skip_stage3():
-    """Test that transformer relay correctly skips Stage 3."""
-    resolver = Stage2ContextResolver()
-
-    record = MockComtradeRecord(rec_dev_id="RET670")
-    result = resolver.resolve(record)
-
-    assert result.equipment_type == "transformer"
-    assert result.should_proceed_to_stage3 == False
-    assert "transformer" in result.skip_reason.lower()
+@dataclass
+class MockRecord:
+    rec_dev_id: str = ""
+    station_name: str = ""
+    analog_channels: List[MockAnalogChannel] = field(default_factory=list)
+    status_channels: List[MockStatusChannel] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    time: list = field(default_factory=list)
 
 
-def test_feeder_relay_skip_stage3():
-    """Test that feeder relay skips Stage 3."""
-    resolver = Stage2ContextResolver()
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    record = MockComtradeRecord(rec_dev_id="SEL-751")
-    result = resolver.resolve(record)
-
-    assert result.equipment_type == "feeder_20kv"
-    assert result.should_proceed_to_stage3 == False
-    assert "feeder" in result.skip_reason.lower()
-
-
-def test_cbf_detection():
-    """Test CBF event detection."""
-    resolver = Stage2ContextResolver()
-
-    record = MockComtradeRecord(
-        rec_dev_id="SEL-421",
-        status_channels=["TRIP", "50BF", "ZONE1"]
-    )
-    result = resolver.resolve(record)
-
-    assert result.is_cbf_event == True
-    assert result.should_proceed_to_stage3 == False
-    assert "CBF" in result.skip_reason or "breaker failure" in result.skip_reason.lower()
+def _make_status(names: List[str], triggered: bool = False) -> List[MockStatusChannel]:
+    """Create status channels; first channel has a rising edge if triggered=True."""
+    channels = []
+    for i, name in enumerate(names):
+        # Simple mock: ch 0 has a 0→1 transition if triggered, rest are flat 0
+        import numpy as np
+        if triggered and i == 0:
+            s = [0, 0, 1, 1, 1, 0]
+        else:
+            s = [0] * 6
+        channels.append(MockStatusChannel(name=name, samples=s))
+    return channels
 
 
-def test_backup_operation_detection():
-    """Test backup operation detection."""
-    resolver = Stage2ContextResolver()
+# ---------------------------------------------------------------------------
+# Protection router — 87T routing
+# ---------------------------------------------------------------------------
 
-    record = MockComtradeRecord(
-        rec_dev_id="SEL-421",
-        status_channels=["TRIP", "ZONE 2", "RECLOSE"]
-    )
-    result = resolver.resolve(record)
+class TestTransformerDiffRouting:
 
-    assert result.is_backup_operation == True
+    def test_87t_status_channel_routes_transformer(self):
+        """'87T TRIP' status channel must route to TRANSFORMER_DIFF."""
+        record = MockRecord(
+            rec_dev_id="RET670",
+            status_channels=_make_status(["87T TRIP", "PDIF"], triggered=True),
+        )
+        prot = determine_protection(record)
+        assert prot.primary_protection == ProtectionType.TRANSFORMER_DIFF
 
+    def test_tr_diff_status_routes_transformer(self):
+        """'TR DIFF OPERATE' must also route to TRANSFORMER_DIFF."""
+        record = MockRecord(
+            rec_dev_id="7UT613",
+            status_channels=_make_status(["TR DIFF OPERATE"], triggered=True),
+        )
+        prot = determine_protection(record)
+        assert prot.primary_protection == ProtectionType.TRANSFORMER_DIFF
 
-def test_channel_inference_distance():
-    """Test channel-based inference for distance protection."""
-    resolver = Stage2ContextResolver()
+    def test_transformer_diff_is_classifiable(self):
+        """87T events must be flagged classifiable=True for Phase 2 routing."""
+        record = MockRecord(
+            status_channels=_make_status(["87T ACT TRIP"], triggered=True),
+        )
+        prot = determine_protection(record)
+        if prot.primary_protection == ProtectionType.TRANSFORMER_DIFF:
+            assert prot.classifiable is True
 
-    record = MockComtradeRecord(
-        rec_dev_id="UNKNOWN",
-        analog_channels=["IA", "IB", "IC", "VA_150KV", "VB_150KV", "VC_150KV"],
-        status_channels=["TRIP", "ZONE 1", "ZONE 2"]
-    )
-    result = resolver.resolve(record)
-
-    assert result.equipment_type == "transmission_line"
-    assert result.protection_function == "distance"
-
-
-def test_channel_inference_differential():
-    """Test channel-based inference for differential protection."""
-    resolver = Stage2ContextResolver()
-
-    record = MockComtradeRecord(
-        rec_dev_id="UNKNOWN",
-        analog_channels=["IA_LINE", "IB_LINE", "IC_LINE", "IA_BUS", "IB_BUS", "IC_BUS"],
-        status_channels=["87L TRIP", "DIFF ALARM"]
-    )
-    result = resolver.resolve(record)
-
-    assert result.protection_function == "differential"
-
-
-def test_channel_inference_transformer_differential():
-    """Test inference for transformer differential."""
-    resolver = Stage2ContextResolver()
-
-    record = MockComtradeRecord(
-        rec_dev_id="UNKNOWN",
-        analog_channels=["IA_HV", "IB_HV", "IC_HV", "IA_LV", "IB_LV", "IC_LV"],
-        status_channels=["87T TRIP", "TRAFO DIFF"]
-    )
-    result = resolver.resolve(record)
-
-    assert result.equipment_type == "transformer"
-    assert result.protection_function == "differential"
-    assert result.should_proceed_to_stage3 == False
+    def test_87t_detected_before_87l(self):
+        """When both 87T and 87L channels are present, 87T must win."""
+        record = MockRecord(
+            status_channels=_make_status(["87T TRIP", "87L TRIP"], triggered=True),
+        )
+        prot = determine_protection(record)
+        assert prot.primary_protection == ProtectionType.TRANSFORMER_DIFF
 
 
-def test_unknown_relay_low_confidence():
-    """Test unknown relay with low confidence doesn't proceed to Stage 3."""
-    resolver = Stage2ContextResolver()
+# ---------------------------------------------------------------------------
+# Protection router — 87L / distance / unknown
+# ---------------------------------------------------------------------------
 
-    record = MockComtradeRecord(
-        rec_dev_id="UNKNOWN_RELAY",
-        analog_channels=["CH1", "CH2"],  # Minimal channels
-        status_channels=["STATUS"]
-    )
-    result = resolver.resolve(record)
+class TestProtectionRouterGeneral:
 
-    # Low confidence should skip Stage 3
-    if result.confidence < 0.6:
-        assert result.should_proceed_to_stage3 == False
+    def test_zone1_trip_routes_distance(self):
+        """Distance zone1 trip must route to DISTANCE."""
+        record = MockRecord(
+            rec_dev_id="SEL-421",
+            status_channels=_make_status(["ZONE 1 TRIP", "TRIP"], triggered=True),
+        )
+        prot = determine_protection(record)
+        assert prot.primary_protection == ProtectionType.DISTANCE
 
+    def test_no_status_channels_unknown(self):
+        """No recognisable status channels → UNKNOWN protection."""
+        record = MockRecord(
+            rec_dev_id="",
+            status_channels=[],
+        )
+        prot = determine_protection(record)
+        assert prot.primary_protection == ProtectionType.UNKNOWN
 
-def test_differential_transmission_line_skip_stage3():
-    """Test that differential protection (87L) skips Stage 3."""
-    resolver = Stage2ContextResolver()
-
-    # Differential is not distance protection, so should skip
-    record = MockComtradeRecord(rec_dev_id="7SD6")  # Siemens differential
-    result = resolver.resolve(record)
-
-    assert result.equipment_type == "transmission_line"
-    assert result.protection_function == "differential"
-    # Differential should skip Stage 3 (Stage 3 is for distance relay)
-    # But wait - the playbook says distance_differential should proceed
-    # Let me check the logic...
-    # Actually SEL-311L is "distance_differential" and should proceed
-    # But pure "differential" should not
-
-
-def test_distance_differential_proceed_stage3():
-    """Test that distance+differential relay proceeds to Stage 3."""
-    resolver = Stage2ContextResolver()
-
-    record = MockComtradeRecord(rec_dev_id="SEL-311L")
-    result = resolver.resolve(record)
-
-    assert result.protection_function == "distance_differential"
-    assert result.should_proceed_to_stage3 == True
+    def test_87l_trip_routes_line_differential(self):
+        """'87L TRIP' must route to LINE_DIFF (not TRANSFORMER_DIFF)."""
+        record = MockRecord(
+            status_channels=_make_status(["87L TRIP"], triggered=True),
+        )
+        prot = determine_protection(record)
+        assert prot.primary_protection == ProtectionType.LINE_DIFF
 
 
-def test_abb_distance_relay():
-    """Test ABB distance relay."""
-    resolver = Stage2ContextResolver()
+# ---------------------------------------------------------------------------
+# Transformer relay family detection
+# ---------------------------------------------------------------------------
 
-    record = MockComtradeRecord(rec_dev_id="REL670")
-    result = resolver.resolve(record)
+class TestRelayFamilyDetection:
 
-    assert result.manufacturer == "ABB"
-    assert result.protection_function == "distance"
-    assert result.equipment_type == "transmission_line"
-    assert result.should_proceed_to_stage3 == True
+    def test_ret670_detected_as_abb(self):
+        """RET670 rec_dev_id → ABB family."""
+        family = detect_transformer_relay_family("RET670", "GI UNGARAN")
+        assert family == "ABB"
+
+    def test_ret615_detected_as_abb(self):
+        family = detect_transformer_relay_family("RET615", "")
+        assert family == "ABB"
+
+    def test_7ut85_detected_as_siemens(self):
+        family = detect_transformer_relay_family("7UT85", "")
+        assert family == "Siemens"
+
+    def test_sel387_detected_as_sel(self):
+        family = detect_transformer_relay_family("SEL-387", "")
+        assert family == "SEL"
+
+    def test_ge_t60_detected_as_ge(self):
+        family = detect_transformer_relay_family("T60", "")
+        assert family == "GE"
+
+    def test_unknown_relay_returns_generic(self):
+        family = detect_transformer_relay_family("UNKNOWN_XYZ", "")
+        assert family in {"GENERIC", "UNKNOWN", None, ""}
 
 
-def test_siemens_distance_relay():
-    """Test Siemens distance relay."""
-    resolver = Stage2ContextResolver()
+# ---------------------------------------------------------------------------
+# Transformer channel mapping
+# ---------------------------------------------------------------------------
 
-    record = MockComtradeRecord(rec_dev_id="7SA6")
-    result = resolver.resolve(record)
+class TestTransformerChannelMapping:
 
-    assert result.manufacturer == "Siemens"
-    assert result.protection_function == "distance"
-    assert result.equipment_type == "transmission_line"
-    assert result.should_proceed_to_stage3 == True
+    def _make_abb_record(self) -> MockRecord:
+        """Minimal ABB RET670 record with standard channel names."""
+        analog = [
+            MockAnalogChannel(name="IW1A", measurement="current"),
+            MockAnalogChannel(name="IW1B", measurement="current"),
+            MockAnalogChannel(name="IW1C", measurement="current"),
+            MockAnalogChannel(name="IW2A", measurement="current"),
+            MockAnalogChannel(name="IW2B", measurement="current"),
+            MockAnalogChannel(name="IW2C", measurement="current"),
+            MockAnalogChannel(name="IDIFA", measurement="current"),
+            MockAnalogChannel(name="IDIFB", measurement="current"),
+            MockAnalogChannel(name="IDIFC", measurement="current"),
+            MockAnalogChannel(name="IRSTA", measurement="current"),
+            MockAnalogChannel(name="IRSTB", measurement="current"),
+            MockAnalogChannel(name="IRSTC", measurement="current"),
+        ]
+        return MockRecord(rec_dev_id="RET670", analog_channels=analog)
 
+    def test_abb_hv_channels_mapped(self):
+        """ABB IW1A/B/C must map to HV phase currents."""
+        record = self._make_abb_record()
+        ch_map = map_transformer_channels(record)
+        assert ch_map.has_hv_currents, "ABB IW1x channels should be detected as HV currents"
 
-def test_ge_distance_relay():
-    """Test GE distance relay."""
-    resolver = Stage2ContextResolver()
+    def test_abb_lv_channels_mapped(self):
+        """ABB IW2A/B/C must map to LV phase currents."""
+        record = self._make_abb_record()
+        ch_map = map_transformer_channels(record)
+        assert ch_map.has_lv_currents, "ABB IW2x channels should be detected as LV currents"
 
-    record = MockComtradeRecord(rec_dev_id="P443")
-    result = resolver.resolve(record)
+    def test_abb_differential_channels_mapped(self):
+        """ABB IDIFA/B/C must map to differential current channels."""
+        record = self._make_abb_record()
+        ch_map = map_transformer_channels(record)
+        assert ch_map.has_differential, "ABB IDIFx channels should be detected as differential"
 
-    assert result.manufacturer == "GE"
-    assert result.protection_function == "distance"
-    assert result.should_proceed_to_stage3 == True
+    def test_abb_restraint_channels_mapped(self):
+        """ABB IRSTA/B/C must map to restraint current channels."""
+        record = self._make_abb_record()
+        ch_map = map_transformer_channels(record)
+        assert ch_map.has_restraint, "ABB IRSTx channels should be detected as restraint"
+
+    def test_empty_record_returns_empty_map(self):
+        """A record with no analog channels must return a map with all flags False."""
+        record = MockRecord(rec_dev_id="UNKNOWN")
+        ch_map = map_transformer_channels(record)
+        assert isinstance(ch_map, TransformerChannelMap)
+        assert not ch_map.has_differential
+        assert not ch_map.has_restraint
+        assert not ch_map.has_hv_currents
+        assert not ch_map.has_lv_currents
+
+    def test_siemens_idiff_channels_mapped(self):
+        """Siemens 7UT IDIFF_A / IDIFF_B / IDIFF_C → differential."""
+        analog = [
+            MockAnalogChannel(name="IDIFF_A", measurement="current"),
+            MockAnalogChannel(name="IDIFF_B", measurement="current"),
+            MockAnalogChannel(name="IDIFF_C", measurement="current"),
+        ]
+        record = MockRecord(rec_dev_id="7UT613", analog_channels=analog)
+        ch_map = map_transformer_channels(record)
+        assert ch_map.has_differential
+
+    def test_sel_idiff_channels_mapped(self):
+        """SEL-387 IAW1/IAW2 channels (winding currents) → HV/LV."""
+        analog = [
+            MockAnalogChannel(name="IAW1", measurement="current"),
+            MockAnalogChannel(name="IBW1", measurement="current"),
+            MockAnalogChannel(name="ICW1", measurement="current"),
+            MockAnalogChannel(name="IAW2", measurement="current"),
+            MockAnalogChannel(name="IBW2", measurement="current"),
+            MockAnalogChannel(name="ICW2", measurement="current"),
+        ]
+        record = MockRecord(rec_dev_id="SEL-387", analog_channels=analog)
+        ch_map = map_transformer_channels(record)
+        assert ch_map.has_hv_currents
+        assert ch_map.has_lv_currents
 
 
 if __name__ == "__main__":
-    # Run tests
     pytest.main([__file__, "-v"])

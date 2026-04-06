@@ -687,6 +687,44 @@ def _db_init():
                     )
                     """
                 )
+            # ── Phase 2: Transformer event table ─────────────────────────
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS transformer_feedback (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    timestamp_txt TEXT,
+                    filename TEXT,
+                    station TEXT,
+                    relay_family TEXT,
+                    event_class TEXT,
+                    predicted_label TEXT,
+                    predicted_conf TEXT,
+                    rule_name TEXT,
+                    confirmed_label TEXT,
+                    correct TEXT,
+                    notes TEXT,
+                    h2_ratio_max_pct TEXT,
+                    h5_ratio_max_pct TEXT,
+                    idiff_max_pu TEXT,
+                    irstr_max_pu TEXT,
+                    slope_worst_pct TEXT,
+                    dc_offset_index_max TEXT,
+                    energisation_flag TEXT,
+                    fault_duration_ms TEXT,
+                    action_required TEXT,
+                    source_ip TEXT,
+                    user_agent TEXT
+                )
+                """
+            )
+            # Migrate existing analysis_feedback: add event_type column if missing
+            cur.execute(
+                """
+                ALTER TABLE analysis_feedback
+                ADD COLUMN IF NOT EXISTS event_type TEXT DEFAULT 'LINE'
+                """
+            )
         app.logger.info("Postgres history backend is ready.")
     except Exception as e:
         app.logger.warning("Postgres init failed, fallback to CSV: %s", e)
@@ -1381,6 +1419,9 @@ def results():
     analysis = _load_analysis_from_store()
     if not analysis:
         return redirect(url_for("index"))
+    # Phase 2: route transformer events to dedicated template
+    if analysis.get("event_type") == "TRANSFORMER":
+        return render_template("transformer_results.html", analysis=analysis)
     return render_template("results.html",
                            analysis=analysis,
                            fault_categories=FAULT_CATEGORIES)
@@ -1497,6 +1538,9 @@ def analyze_from_browse():
         "assumed_vt_primary": _f(assumed_ratios.get("assumed_vt_primary"), 150000.0),
         "assumed_vt_secondary": _f(assumed_ratios.get("assumed_vt_secondary"), 100.0),
     }
+    # Phase 2: add transformer-specific fields if applicable
+    _inject_transformer_fields(result, analysis_payload)
+
     analysis_payload["waveform_data"] = _build_waveform_payload(
         str(cfg_path),
         analysis_payload["fault_inception_ms"],
@@ -1874,6 +1918,330 @@ def api_history():
     } for r in rows]
 
     return jsonify({"summary": summary, "rows": slim})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 2 — Transformer helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+XFMR_HISTORY_CSV = Path(__file__).parent / "transformer_history.csv"
+XFMR_HISTORY_FIELDS = [
+    "timestamp", "filename", "station", "relay_family",
+    "event_class", "predicted_label", "predicted_conf", "rule_name",
+    "confirmed_label", "correct", "notes",
+    "h2_ratio_max_pct", "h5_ratio_max_pct", "idiff_max_pu", "irstr_max_pu",
+    "slope_worst_pct", "dc_offset_index_max", "energisation_flag",
+    "fault_duration_ms", "action_required",
+]
+
+XFMR_FAULT_CATEGORIES = [
+    "INRUSH MAGNETISASI",
+    "GANGGUAN INTERNAL TRAFO",
+    "GANGGUAN EKSTERNAL (THROUGH)",
+    "TEGANGAN LEBIH / OVEREKSITASI",
+    "KEMUNGKINAN MALOPERATE",
+    "LAIN-LAIN",
+]
+
+
+def _inject_transformer_fields(result, payload: dict) -> None:
+    """
+    If result is a transformer event, add all Phase 2 fields to the analysis payload dict.
+    Called after the standard payload is assembled in upload / analyze-from-browse routes.
+    """
+    event_type = getattr(result, 'event_type', 'LINE')
+    payload['event_type'] = event_type
+
+    if event_type != 'TRANSFORMER':
+        return
+
+    xr = getattr(result, 'transformer_result', None)
+    tf = getattr(result, 'transformer_features', None) or {}
+
+    payload['event_class']           = xr.event_class if xr else 'UNKNOWN'
+    payload['action_required']       = bool(xr.action_required) if xr else False
+    payload['limited_data']          = bool(xr.limited_data) if xr else False
+    payload['relay_family']          = _s(tf.get('relay_family'), 'UNKNOWN')
+
+    # Harmonic features
+    payload['h2_ratio_a_pct']        = _f(tf.get('h2_ratio_a_pct'))
+    payload['h2_ratio_b_pct']        = _f(tf.get('h2_ratio_b_pct'))
+    payload['h2_ratio_c_pct']        = _f(tf.get('h2_ratio_c_pct'))
+    payload['h2_ratio_max_pct']      = _f(tf.get('h2_ratio_max_pct'))
+    payload['h5_ratio_a_pct']        = _f(tf.get('h5_ratio_a_pct'))
+    payload['h5_ratio_b_pct']        = _f(tf.get('h5_ratio_b_pct'))
+    payload['h5_ratio_c_pct']        = _f(tf.get('h5_ratio_c_pct'))
+    payload['h5_ratio_max_pct']      = _f(tf.get('h5_ratio_max_pct'))
+    payload['thd_diff_pct']          = _f(tf.get('thd_diff_pct'))
+
+    # Differential / restraint
+    payload['idiff_max_pu']          = _f(tf.get('idiff_max_pu'))
+    payload['irstr_max_pu']          = _f(tf.get('irstr_max_pu'))
+    payload['slope_worst_pct']       = _f(tf.get('slope_worst_pct'))
+    payload['above_slope1']          = bool(tf.get('above_slope1') or False)
+    payload['above_slope2']          = bool(tf.get('above_slope2') or False)
+
+    # Waveform shape
+    payload['dc_offset_index_max']   = _f(tf.get('dc_offset_index_max'))
+    payload['pp_asymmetry_a']        = _f(tf.get('pp_asymmetry_a'))
+    payload['zc_interval_variance']  = _f(tf.get('zc_interval_variance'))
+
+    # Balance
+    payload['hv_lv_ratio_a']         = _f(tf.get('hv_lv_ratio_a'))
+    payload['hv_lv_phase_diff_a_deg']= _f(tf.get('hv_lv_phase_diff_a_deg'))
+
+    # Context
+    payload['energisation_flag']     = bool(tf.get('energisation_flag') or False)
+    payload['lv_prefault_irms_pu']   = _f(tf.get('lv_prefault_irms_pu'))
+    payload['inception_angle_deg']   = _f(tf.get('inception_angle_deg'))
+    payload['peak_idiff_a']          = _f(tf.get('peak_idiff_a'))
+
+    # Channel availability (from TransformerFeatures.channels_available dict)
+    # We reconstruct from the feature dict keys that are present
+    payload['channels_available']    = {}
+    for key in ['i_hv_a','i_hv_b','i_hv_c','i_lv_a','i_lv_b','i_lv_c',
+                'i_diff_a','i_diff_b','i_diff_c','i_rstr_a','i_rstr_b','i_rstr_c']:
+        payload['channels_available'][key] = False  # populated by feature extractor if present
+
+    # Warnings
+    payload['warnings'] = list(xr.warnings) if xr else []
+
+
+def _save_xfmr_to_csv(row: dict) -> None:
+    """Append a transformer event row to transformer_history.csv."""
+    write_header = not XFMR_HISTORY_CSV.exists()
+    with open(XFMR_HISTORY_CSV, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=XFMR_HISTORY_FIELDS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow({k: _s(row.get(k), '') for k in XFMR_HISTORY_FIELDS})
+
+
+def _db_insert_xfmr_feedback(row: dict, source_ip: str, user_agent: str) -> bool:
+    """Insert transformer feedback into PostgreSQL transformer_feedback table."""
+    if not _db_enabled():
+        return False
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO transformer_feedback (
+                        timestamp_txt, filename, station, relay_family,
+                        event_class, predicted_label, predicted_conf, rule_name,
+                        confirmed_label, correct, notes,
+                        h2_ratio_max_pct, h5_ratio_max_pct, idiff_max_pu, irstr_max_pu,
+                        slope_worst_pct, dc_offset_index_max, energisation_flag,
+                        fault_duration_ms, action_required, source_ip, user_agent
+                    ) VALUES (
+                        %(timestamp)s, %(filename)s, %(station)s, %(relay_family)s,
+                        %(event_class)s, %(predicted_label)s, %(predicted_conf)s, %(rule_name)s,
+                        %(confirmed_label)s, %(correct)s, %(notes)s,
+                        %(h2_ratio_max_pct)s, %(h5_ratio_max_pct)s, %(idiff_max_pu)s, %(irstr_max_pu)s,
+                        %(slope_worst_pct)s, %(dc_offset_index_max)s, %(energisation_flag)s,
+                        %(fault_duration_ms)s, %(action_required)s, %(source_ip)s, %(user_agent)s
+                    )
+                    """,
+                    {
+                        **{k: _s(row.get(k), '') for k in XFMR_HISTORY_FIELDS},
+                        'source_ip': source_ip,
+                        'user_agent': user_agent,
+                    },
+                )
+        return True
+    except Exception as e:
+        app.logger.warning("Postgres transformer insert failed: %s", e)
+        return False
+
+
+def _load_xfmr_history(limit: int | None = None) -> list[dict]:
+    """Load transformer history from DB or CSV."""
+    if _db_enabled():
+        try:
+            q = (
+                "SELECT timestamp_txt, filename, station, relay_family, event_class, "
+                "predicted_label, predicted_conf, rule_name, confirmed_label, correct, notes, "
+                "h2_ratio_max_pct, h5_ratio_max_pct, idiff_max_pu, irstr_max_pu, "
+                "slope_worst_pct, dc_offset_index_max, energisation_flag, "
+                "fault_duration_ms, action_required "
+                "FROM transformer_feedback ORDER BY id DESC"
+            )
+            params = ()
+            if limit:
+                q += " LIMIT %s"
+                params = (limit,)
+            rows = []
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(q, params)
+                    cols = [d[0] for d in cur.description]
+                    for r in cur.fetchall():
+                        rows.append(dict(zip(cols, [_s(v, '') for v in r])))
+            return rows
+        except Exception as e:
+            app.logger.warning("Postgres transformer fetch failed: %s", e)
+
+    # CSV fallback
+    if not XFMR_HISTORY_CSV.exists():
+        return []
+    with open(XFMR_HISTORY_CSV, encoding='utf-8') as f:
+        rows = list(csv.DictReader(f))
+    rows.reverse()
+    return rows[:limit] if limit else rows
+
+
+# ── Transformer routes ────────────────────────────────────────────────────────
+
+@app.route("/confirm-transformer", methods=["POST"])
+def confirm_transformer():
+    """Save operator confirmation for a transformer event."""
+    analysis = _load_analysis_from_store()
+    if not analysis:
+        return redirect(url_for("index"))
+
+    confirmed_label = request.form.get("confirmed_label", "").strip()
+    notes           = request.form.get("notes", "").strip()
+
+    pred = _s(analysis.get("event_class"), "UNKNOWN")
+    corr = (
+        "True"  if _normalize_label(confirmed_label) == _normalize_label(pred) else
+        "False" if confirmed_label else ""
+    )
+
+    row = {
+        "timestamp":          datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "filename":           _s(analysis.get("original_filename")),
+        "station":            _s(analysis.get("station_name")),
+        "relay_family":       _s(analysis.get("relay_family")),
+        "event_class":        pred,
+        "predicted_label":    _s(analysis.get("label")),
+        "predicted_conf":     _s(round(_f(analysis.get("confidence")) * 100, 1)),
+        "rule_name":          _s(analysis.get("rule_name")),
+        "confirmed_label":    confirmed_label,
+        "correct":            corr,
+        "notes":              notes,
+        "h2_ratio_max_pct":   _s(round(_f(analysis.get("h2_ratio_max_pct")), 2)),
+        "h5_ratio_max_pct":   _s(round(_f(analysis.get("h5_ratio_max_pct")), 2)),
+        "idiff_max_pu":       _s(round(_f(analysis.get("idiff_max_pu")), 4)),
+        "irstr_max_pu":       _s(round(_f(analysis.get("irstr_max_pu")), 4)),
+        "slope_worst_pct":    _s(round(_f(analysis.get("slope_worst_pct")), 2)),
+        "dc_offset_index_max":_s(round(_f(analysis.get("dc_offset_index_max")), 4)),
+        "energisation_flag":  _s(analysis.get("energisation_flag")),
+        "fault_duration_ms":  _s(round(_f(analysis.get("fault_duration_ms")), 1)),
+        "action_required":    _s(analysis.get("action_required")),
+    }
+
+    source_ip  = request.remote_addr or ""
+    user_agent = request.headers.get("User-Agent", "")[:200]
+
+    if not _db_insert_xfmr_feedback(row, source_ip, user_agent):
+        _save_xfmr_to_csv(row)
+
+    _clear_analysis_store()
+    return redirect(url_for("success"))
+
+
+@app.route("/transformer/history")
+def transformer_history():
+    """History page for transformer 87T events."""
+    rows = _load_xfmr_history(limit=200)
+    total = len(rows)
+    confirmed = [r for r in rows if r.get("confirmed_label")]
+    correct   = [r for r in confirmed if r.get("correct") == "True"]
+    accuracy  = round(len(correct) / len(confirmed) * 100, 1) if confirmed else 0
+
+    # Class distribution
+    from collections import Counter
+    class_dist = Counter(r.get("event_class", "UNKNOWN") for r in rows)
+
+    return render_template("transformer_history.html",
+                           rows=rows,
+                           total=total,
+                           accuracy=accuracy,
+                           confirmed_count=len(confirmed),
+                           class_dist=dict(class_dist),
+                           db_enabled=_db_enabled())
+
+
+@app.route("/transformer/trends")
+def transformer_trends():
+    """Trend analysis for transformer events."""
+    rows = _load_xfmr_history()
+    from collections import Counter, defaultdict
+
+    class_counts = Counter(r.get("event_class", "UNKNOWN") for r in rows)
+    station_counts = Counter(r.get("station", "-") for r in rows)
+    action_count = sum(1 for r in rows if r.get("action_required") == "True")
+
+    # Monthly trend
+    monthly: dict = defaultdict(Counter)
+    for r in rows:
+        ts = r.get("timestamp", "")[:7]   # "YYYY-MM"
+        ec = r.get("event_class", "UNKNOWN")
+        if ts:
+            monthly[ts][ec] += 1
+    monthly_sorted = sorted(monthly.items())
+
+    return render_template("transformer_trends.html",
+                           class_counts=dict(class_counts),
+                           station_counts=dict(station_counts.most_common(10)),
+                           action_count=action_count,
+                           total=len(rows),
+                           monthly=monthly_sorted,
+                           db_enabled=_db_enabled())
+
+
+@app.route("/transformer/data-status")
+def transformer_data_status():
+    """Phase 2 data readiness dashboard — shows how many labeled events per class."""
+    rows = _load_xfmr_history()
+    confirmed = [r for r in rows if r.get("confirmed_label")]
+
+    from collections import Counter
+    confirmed_dist = Counter(r.get("confirmed_label", "") for r in confirmed)
+    synthetic_dir  = Path(__file__).parent.parent / "data" / "synthetic" / "transformer"
+
+    # Count synthetic files per class
+    synthetic_counts: dict = {}
+    for cls in ["INRUSH", "INTERNAL_FAULT", "THROUGH_FAULT", "OVEREXCITATION", "MAL_OPERATE"]:
+        d = synthetic_dir / cls
+        synthetic_counts[cls] = len(list(d.glob("*.cfg"))) if d.exists() else 0
+
+    min_for_training = 30
+    readiness = {
+        cls: {
+            "real": confirmed_dist.get(cls, 0),
+            "synthetic": synthetic_counts.get(cls, 0),
+            "ready": (confirmed_dist.get(cls, 0) >= min_for_training),
+        }
+        for cls in ["INRUSH", "INTERNAL_FAULT", "THROUGH_FAULT", "OVEREXCITATION", "MAL_OPERATE"]
+    }
+
+    total_real = sum(r["real"] for r in readiness.values())
+    classes_ready = sum(1 for r in readiness.values() if r["ready"])
+
+    return render_template("transformer_data_status.html",
+                           readiness=readiness,
+                           total_real=total_real,
+                           classes_ready=classes_ready,
+                           min_for_training=min_for_training,
+                           synthetic_dir=str(synthetic_dir),
+                           db_enabled=_db_enabled())
+
+
+@app.route("/api/transformer/status")
+def api_transformer_status():
+    """JSON API: transformer data readiness summary."""
+    rows = _load_xfmr_history()
+    confirmed = [r for r in rows if r.get("confirmed_label")]
+    from collections import Counter
+    dist = Counter(r.get("confirmed_label", "") for r in confirmed)
+    return jsonify({
+        "total_events": len(rows),
+        "confirmed":    len(confirmed),
+        "class_distribution": dict(dist),
+        "phase2_ready": len(confirmed) >= 30,
+    })
 
 
 if __name__ == "__main__":

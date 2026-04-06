@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Riwayat 87T — Proteksi Trafo{% endblock %}
+{% block topbar_title %}Riwayat Event Trafo (87T){% endblock %}
+{% block topbar_sub %}{{ total }} event &bull; {{ confirmed_count }} dikonfirmasi &bull; akurasi {{ accuracy }}%{% endblock %}
+{% block nav_xfmr_history %}active{% endblock %}
+
+{% block extra_css %}
+.xh-table { width:100%; border-collapse:collapse; font-size:12px; }
+.xh-table th { padding:8px 12px; text-align:left; color:var(--text-muted); font-weight:700; font-size:10px; letter-spacing:.08em; text-transform:uppercase; border-bottom:2px solid var(--border); }
+.xh-table td { padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text); }
+.xh-table tr:hover td { background:var(--card-bg); }
+.ec-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
+.ec-inrush    { background:rgba(245,158,11,0.15);color:#f59e0b; }
+.ec-internal  { background:rgba(239,68,68,0.15);color:#ef4444; }
+.ec-through   { background:rgba(59,130,246,0.15);color:#60a5fa; }
+.ec-overexcit { background:rgba(168,85,247,0.15);color:#a855f7; }
+.ec-mal       { background:rgba(249,115,22,0.15);color:#f97316; }
+.ec-unk       { background:rgba(100,116,139,0.15);color:#94a3b8; }
+.action-yes   { color:#ef4444; font-weight:700; }
+.correct-yes  { color:#10b981; font-weight:700; }
+.correct-no   { color:#ef4444; font-weight:700; }
+.summary-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }
+.sum-box { background:var(--panel-bg); border:1px solid var(--border); border-radius:10px; padding:14px 16px; text-align:center; }
+.sum-val { font-size:26px; font-weight:800; color:var(--text); }
+.sum-lbl { font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--text-muted); margin-top:4px; }
+{% endblock %}
+
+{% block content %}
+<div class="summary-grid">
+  <div class="sum-box"><div class="sum-val">{{ total }}</div><div class="sum-lbl">Total Event</div></div>
+  <div class="sum-box"><div class="sum-val">{{ confirmed_count }}</div><div class="sum-lbl">Dikonfirmasi</div></div>
+  <div class="sum-box"><div class="sum-val" style="color:{% if accuracy >= 75 %}#10b981{% elif accuracy >= 50 %}#f59e0b{% else %}#ef4444{% endif %}">{{ accuracy }}%</div><div class="sum-lbl">Akurasi</div></div>
+  <div class="sum-box"><div class="sum-val" style="color:#8b5cf6;">{{ class_dist | length }}</div><div class="sum-lbl">Kelas Terdeteksi</div></div>
+</div>
+
+{% if rows %}
+<div style="background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; overflow:hidden;">
+  <div style="padding:14px 20px; border-bottom:1px solid var(--border); font-size:13px; font-weight:700; color:var(--text);">
+    Event Trafo — Terbaru
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="xh-table">
+      <thead>
+        <tr>
+          <th>Waktu</th><th>File</th><th>Gardu</th><th>Relay</th>
+          <th>Event Class</th><th>Kepercayaan</th>
+          <th>H2 Max%</th><th>H5 Max%</th><th>Slope%</th>
+          <th>Aksi?</th><th>Konfirmasi</th><th>Benar?</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        {% set ec = r.event_class or 'UNKNOWN' %}
+        <tr>
+          <td style="font-variant-numeric:tabular-nums;white-space:nowrap;">{{ r.timestamp[:16] }}</td>
+          <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ r.filename }}">{{ r.filename }}</td>
+          <td>{{ r.station or '-' }}</td>
+          <td style="font-size:10px;color:var(--text-muted);">{{ r.relay_family or '-' }}</td>
+          <td>
+            <span class="ec-badge {% if ec=='INRUSH' %}ec-inrush{% elif ec=='INTERNAL_FAULT' %}ec-internal{% elif ec=='THROUGH_FAULT' %}ec-through{% elif ec=='OVEREXCITATION' %}ec-overexcit{% elif ec=='MAL_OPERATE' %}ec-mal{% else %}ec-unk{% endif %}">
+              {{ ec | replace('_',' ') }}
+            </span>
+          </td>
+          <td>{{ r.predicted_conf or '-' }}%</td>
+          <td>{{ r.h2_ratio_max_pct or '-' }}</td>
+          <td>{{ r.h5_ratio_max_pct or '-' }}</td>
+          <td>{{ r.slope_worst_pct or '-' }}</td>
+          <td class="{% if r.action_required == 'True' %}action-yes{% endif %}">
+            {% if r.action_required == 'True' %}⚠ YA{% else %}—{% endif %}
+          </td>
+          <td>{{ r.confirmed_label or '—' }}</td>
+          <td class="{% if r.correct == 'True' %}correct-yes{% elif r.correct == 'False' %}correct-no{% endif %}">
+            {% if r.correct == 'True' %}✓{% elif r.correct == 'False' %}✗{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div style="text-align:center; padding:60px 20px; color:var(--text-muted);">
+  <div style="font-size:40px; margin-bottom:12px;">⬡</div>
+  <div style="font-size:15px; font-weight:700; margin-bottom:6px;">Belum ada riwayat event trafo</div>
+  <div style="font-size:12px;">Upload file COMTRADE dari rele 87T untuk memulai Phase 2.</div>
+</div>
+{% endif %}
+{% endblock %}

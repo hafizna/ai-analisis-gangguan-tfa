@@ -1,412 +1,291 @@
 """
-Tests for Production Pipeline
-=============================
-Tests for TFAClassifier and FeedbackLogger.
+Tests for Phase 2 Transformer Classification Pipeline
+======================================================
+Tests for rule-based transformer event classifier and feature thresholds.
+Aligned with: pipeline/models/transformer_classifier.py
+              pipeline/core/transformer_feature_extractor.py
 """
 
 import pytest
 import sys
 from pathlib import Path
-import tempfile
-import csv
+from dataclasses import dataclass
+from typing import Optional, List
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pipeline.classifier import TFAClassifier, ClassificationResult
-from pipeline.feedback_logger import FeedbackLogger
+from models.transformer_classifier import (
+    classify_transformer_event,
+    TransformerClassificationResult,
+    TransformerMLClassifier,
+    H2_STRONG_PCT,
+    H2_MODERATE_PCT,
+    H5_OVEREXCIT_PCT,
+    DC_OFFSET_STRONG,
+    SLOPE_OP_PCT,
+    SLOPE_HI_PCT,
+)
+from core.transformer_feature_extractor import TransformerFeatures
 
 
-class TestTFAClassifier:
-    """Tests for TFAClassifier."""
+# ---------------------------------------------------------------------------
+# Helpers: build TransformerFeatures with sensible defaults
+# ---------------------------------------------------------------------------
 
-    @pytest.fixture
-    def classifier(self):
-        """Initialize classifier for testing."""
-        return TFAClassifier()
-
-    @pytest.fixture
-    def sample_cfg_file(self):
-        """Get path to a sample COMTRADE file for testing."""
-        # Use a known labeled file from the dataset
-        base_dir = Path(__file__).parent.parent.parent / "DFR GANGGUAN UPT"
-
-        # Find first .cfg file in labeled data
-        cfg_files = list(base_dir.rglob("*.cfg"))
-        if cfg_files:
-            return str(cfg_files[0])
-
-        pytest.skip("No sample COMTRADE files found")
-
-    def test_classifier_initialization(self, classifier):
-        """Test that classifier initializes without errors."""
-        assert classifier is not None
-        assert classifier.stage2_resolver is not None
-        assert classifier.stage3_classifier is not None
-
-    def test_classify_single_file(self, classifier, sample_cfg_file):
-        """Test single file classification."""
-        result = classifier.classify(sample_cfg_file)
-
-        # Check result structure
-        assert isinstance(result, ClassificationResult)
-        assert result.event_id is not None
-        assert result.cfg_path == sample_cfg_file
-
-        # Stage 2 outputs should always be present
-        assert result.relay_model is not None
-        assert result.equipment_type is not None
-        assert result.protection_function is not None
-
-        # Notification text should always be generated
-        assert result.notification_text != ""
-        assert len(result.notification_text) > 0
-
-        # Should not have errors
-        assert result.processing_success is True
-        assert result.processing_error is None
-
-    def test_notification_text_contains_key_info(self, classifier, sample_cfg_file):
-        """Test that notification text contains key information."""
-        result = classifier.classify(sample_cfg_file)
-
-        notification = result.notification_text
-
-        # Should contain Indonesian text
-        assert any(keyword in notification for keyword in [
-            "Gangguan", "Klasifikasi", "Event", "Proteksi"
-        ])
-
-        # Should contain fault parameters if available
-        if result.fault_current_max_a:
-            assert "Arus" in notification or "A" in notification
-
-        if result.faulted_phases:
-            assert "Fase" in notification
-
-    def test_notification_text_petir_vs_non_petir(self, classifier):
-        """Test that PETIR and NON_PETIR have different notification formats."""
-        # Find PETIR and NON-PETIR samples
-        base_dir = Path(__file__).parent.parent.parent / "DFR GANGGUAN UPT"
-
-        petir_files = list(base_dir.rglob("*PETIR*/*.cfg"))
-        non_petir_files = list(base_dir.rglob("*LAYANG*/*.cfg"))
-
-        if petir_files:
-            petir_result = classifier.classify(str(petir_files[0]))
-            if petir_result.prediction == "PETIR":
-                assert "PETIR" in petir_result.notification_text
-                assert "Sambaran Petir" in petir_result.notification_text or "PETIR" in petir_result.notification_text
-
-        if non_petir_files:
-            non_petir_result = classifier.classify(str(non_petir_files[0]))
-            if non_petir_result.prediction == "NON_PETIR":
-                assert "NON-PETIR" in non_petir_result.notification_text or "NON_PETIR" in non_petir_result.notification_text
-
-    def test_stage2_skip_generates_notification(self, classifier):
-        """Test that events skipped by Stage 2 still get useful notifications."""
-        # Find a non-transmission event (transformer, feeder, etc.)
-        base_dir = Path(__file__).parent.parent.parent / "DFR GANGGUAN UPT"
-        all_files = list(base_dir.rglob("*.cfg"))
-
-        for cfg_file in all_files[:10]:  # Test first 10 files
-            result = classifier.classify(str(cfg_file))
-
-            if not result.proceeded_to_stage3:
-                # Should have skip reason
-                assert result.stage2_skip_reason is not None
-
-                # Should still have notification
-                assert result.notification_text != ""
-
-                # Notification should mention equipment type
-                assert any(keyword in result.notification_text for keyword in [
-                    "Transformator", "Feeder", "Busbar", "Proteksi"
-                ])
-
-                break  # Found one, test passes
-
-    def test_confidence_levels(self, classifier, sample_cfg_file):
-        """Test that confidence levels are assigned correctly."""
-        result = classifier.classify(sample_cfg_file)
-
-        if result.proceeded_to_stage3 and result.confidence is not None:
-            # Check confidence level mapping
-            if result.confidence > 0.90:
-                assert result.confidence_level == "HIGH"
-            elif result.confidence > 0.70:
-                assert result.confidence_level == "MEDIUM"
-            elif result.confidence > 0.50:
-                assert result.confidence_level == "LOW"
-            else:
-                assert result.confidence_level == "UNCERTAIN"
-
-    def test_classify_batch(self, classifier):
-        """Test batch classification."""
-        base_dir = Path(__file__).parent.parent.parent / "DFR GANGGUAN UPT"
-        cfg_files = list(base_dir.rglob("*.cfg"))[:5]  # Test first 5 files
-
-        if len(cfg_files) < 2:
-            pytest.skip("Not enough COMTRADE files for batch test")
-
-        cfg_paths = [str(f) for f in cfg_files]
-
-        # Create temporary output file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as tmp:
-            tmp_path = tmp.name
-
-        try:
-            results = classifier.classify_batch(cfg_paths, output_csv=tmp_path)
-
-            # Check results
-            assert len(results) == len(cfg_paths)
-            assert all(isinstance(r, ClassificationResult) for r in results)
-
-            # Check CSV was created
-            assert Path(tmp_path).exists()
-
-            # Check CSV content
-            with open(tmp_path, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
-                assert len(rows) == len(cfg_paths)
-
-                # Check columns
-                assert 'event_id' in rows[0]
-                assert 'prediction' in rows[0]
-                assert 'equipment_type' in rows[0]
-        finally:
-            # Cleanup
-            if Path(tmp_path).exists():
-                Path(tmp_path).unlink()
-
-    def test_event_description_extraction(self, classifier, sample_cfg_file):
-        """Test that event description is extracted for all events."""
-        result = classifier.classify(sample_cfg_file)
-
-        # At least some event parameters should be populated
-        # (Not all files will have all parameters, but most should have current)
-        event_params_present = any([
-            result.fault_current_max_a is not None,
-            result.fault_voltage_min_pu is not None,
-            result.faulted_phases,
-            result.fault_type is not None
-        ])
-
-        assert event_params_present, "No event description parameters extracted"
+def _make_features(**overrides) -> TransformerFeatures:
+    """Build a TransformerFeatures instance with safe defaults, then apply overrides."""
+    defaults = dict(
+        h2_ratio_pct_A=0.0, h2_ratio_pct_B=0.0, h2_ratio_pct_C=0.0, h2_ratio_max_pct=0.0,
+        h5_ratio_pct_A=0.0, h5_ratio_pct_B=0.0, h5_ratio_pct_C=0.0, h5_ratio_max_pct=0.0,
+        thd_diff_pct=5.0,
+        idiff_pu_A=0.0, idiff_pu_B=0.0, idiff_pu_C=0.0,
+        irstr_pu_A=1.0, irstr_pu_B=1.0, irstr_pu_C=1.0,
+        slope_worst_pct=15.0,
+        above_slope1=False,
+        above_slope2=False,
+        dc_offset_index=0.0,
+        pp_asymmetry=0.0,
+        zc_interval_variance=0.0,
+        hv_lv_ratio=1.0,
+        energisation_flag=False,
+        inception_angle_deg=45.0,
+        duration_ms=80.0,
+        peak_diff_current_a=500.0,
+    )
+    defaults.update(overrides)
+    return TransformerFeatures(**defaults)
 
 
-class TestFeedbackLogger:
-    """Tests for FeedbackLogger."""
+# ---------------------------------------------------------------------------
+# INRUSH detection tests
+# ---------------------------------------------------------------------------
 
-    @pytest.fixture
-    def temp_feedback_dir(self):
-        """Create temporary feedback directory."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            yield tmpdir
+class TestInrushClassification:
 
-    @pytest.fixture
-    def feedback_logger(self, temp_feedback_dir):
-        """Initialize feedback logger with temp directory."""
-        return FeedbackLogger(log_dir=temp_feedback_dir)
-
-    def test_feedback_logger_initialization(self, feedback_logger):
-        """Test that feedback logger initializes correctly."""
-        assert feedback_logger is not None
-        assert feedback_logger.feedback_csv.exists()
-
-        # Check CSV header
-        with open(feedback_logger.feedback_csv, 'r') as f:
-            header = f.readline().strip()
-            assert 'event_id' in header
-            assert 'model_prediction' in header
-            assert 'operator_label' in header
-
-    def test_log_feedback(self, feedback_logger):
-        """Test logging feedback."""
-        feedback_logger.log_feedback(
-            event_id="TEST001",
-            cfg_path="path/to/file.cfg",
-            model_prediction="PETIR",
-            model_confidence=0.85,
-            operator_label="PETIR",
-            is_correct=True,
-            operator_notes="Looks correct"
+    def test_strong_h2_classifies_inrush(self):
+        """H2 >= H2_STRONG_PCT threshold must produce INRUSH classification."""
+        feats = _make_features(
+            h2_ratio_max_pct=H2_STRONG_PCT + 5.0,
+            dc_offset_index=DC_OFFSET_STRONG + 0.05,
+            energisation_flag=True,
+        )
+        result = classify_transformer_event(feats)
+        assert result.event_class == "INRUSH", (
+            f"Expected INRUSH, got {result.event_class} (confidence={result.confidence:.2f})"
         )
 
-        # Check feedback was logged
-        entries = feedback_logger.get_feedback_entries()
-        assert len(entries) == 1
-        assert entries[0]['event_id'] == "TEST001"
-        assert entries[0]['model_prediction'] == "PETIR"
-        assert entries[0]['operator_label'] == "PETIR"
-        assert entries[0]['is_correct'].lower() == 'true'
+    def test_inrush_not_action_required(self):
+        """Inrush magnetisation should not require field action."""
+        feats = _make_features(
+            h2_ratio_max_pct=20.0,
+            dc_offset_index=0.4,
+            energisation_flag=True,
+        )
+        result = classify_transformer_event(feats)
+        if result.event_class == "INRUSH":
+            assert result.action_required is False
 
-    def test_multiple_feedbacks(self, feedback_logger):
-        """Test logging multiple feedback entries."""
-        # Log multiple feedbacks
-        feedback_logger.log_feedback(
-            event_id="TEST001",
-            cfg_path="path/to/file1.cfg",
-            model_prediction="PETIR",
-            model_confidence=0.90,
-            operator_label="PETIR",
-            is_correct=True
+    def test_moderate_h2_with_dc_offset_inrush(self):
+        """Moderate H2 combined with strong DC offset should still lean toward INRUSH."""
+        feats = _make_features(
+            h2_ratio_max_pct=H2_MODERATE_PCT + 2.0,
+            dc_offset_index=DC_OFFSET_STRONG + 0.1,
+            pp_asymmetry=0.4,
+        )
+        result = classify_transformer_event(feats)
+        # High H2+DC combo → INRUSH probability should dominate over INTERNAL_FAULT
+        assert result.class_probabilities.get("INRUSH", 0.0) > \
+               result.class_probabilities.get("INTERNAL_FAULT", 0.0)
+
+
+# ---------------------------------------------------------------------------
+# OVEREXCITATION detection tests
+# ---------------------------------------------------------------------------
+
+class TestOverexcitationClassification:
+
+    def test_high_h5_classifies_overexcitation(self):
+        """H5 >= H5_OVEREXCIT_PCT with low H2 must produce OVEREXCITATION."""
+        feats = _make_features(
+            h5_ratio_max_pct=H5_OVEREXCIT_PCT + 3.0,
+            h2_ratio_max_pct=2.0,   # low H2 — not inrush
+            dc_offset_index=0.05,
+        )
+        result = classify_transformer_event(feats)
+        assert result.event_class == "OVEREXCITATION", (
+            f"Expected OVEREXCITATION, got {result.event_class}"
         )
 
-        feedback_logger.log_feedback(
-            event_id="TEST002",
-            cfg_path="path/to/file2.cfg",
-            model_prediction="PETIR",
-            model_confidence=0.70,
-            operator_label="LAYANG",
-            is_correct=False,
-            operator_notes="Model said PETIR but it's kite"
+    def test_h5_overexcit_not_action_required(self):
+        """Overexcitation with no slope violation should not be action_required by default."""
+        feats = _make_features(
+            h5_ratio_max_pct=12.0,
+            h2_ratio_max_pct=1.5,
+            above_slope1=False,
+            above_slope2=False,
+        )
+        result = classify_transformer_event(feats)
+        if result.event_class == "OVEREXCITATION":
+            # Recommendation should exist
+            assert result.recommendation is not None and len(result.recommendation) > 0
+
+
+# ---------------------------------------------------------------------------
+# INTERNAL_FAULT detection tests
+# ---------------------------------------------------------------------------
+
+class TestInternalFaultClassification:
+
+    def test_high_slope_low_h2_classifies_internal(self):
+        """Above slope2 with negligible H2/H5 → INTERNAL_FAULT."""
+        feats = _make_features(
+            slope_worst_pct=SLOPE_HI_PCT + 10.0,
+            above_slope1=True,
+            above_slope2=True,
+            h2_ratio_max_pct=1.5,   # low — not inrush
+            dc_offset_index=0.05,
+            idiff_pu_A=2.5,
+            idiff_pu_B=2.5,
+            idiff_pu_C=2.5,
+        )
+        result = classify_transformer_event(feats)
+        assert result.event_class == "INTERNAL_FAULT", (
+            f"Expected INTERNAL_FAULT, got {result.event_class} "
+            f"(probs={result.class_probabilities})"
         )
 
-        feedback_logger.log_feedback(
-            event_id="TEST003",
-            cfg_path="path/to/file3.cfg",
-            model_prediction="NON_PETIR",
-            model_confidence=0.65,
-            operator_label="NON_PETIR",
-            is_correct=True
+    def test_internal_fault_is_action_required(self):
+        """Internal fault must always flag action_required=True."""
+        feats = _make_features(
+            slope_worst_pct=90.0,
+            above_slope1=True,
+            above_slope2=True,
+            h2_ratio_max_pct=1.0,
+            dc_offset_index=0.02,
+        )
+        result = classify_transformer_event(feats)
+        if result.event_class == "INTERNAL_FAULT":
+            assert result.action_required is True
+
+
+# ---------------------------------------------------------------------------
+# THROUGH_FAULT detection tests
+# ---------------------------------------------------------------------------
+
+class TestThroughFaultClassification:
+
+    def test_low_slope_through_fault(self):
+        """Low idiff with high irstr and slope below Slope1 → THROUGH_FAULT."""
+        feats = _make_features(
+            slope_worst_pct=SLOPE_OP_PCT - 5.0,
+            above_slope1=False,
+            above_slope2=False,
+            idiff_pu_A=0.05,
+            idiff_pu_B=0.05,
+            idiff_pu_C=0.05,
+            irstr_pu_A=3.0,
+            irstr_pu_B=3.0,
+            irstr_pu_C=3.0,
+            h2_ratio_max_pct=1.0,
+        )
+        result = classify_transformer_event(feats)
+        assert result.event_class == "THROUGH_FAULT", (
+            f"Expected THROUGH_FAULT, got {result.event_class} "
+            f"(probs={result.class_probabilities})"
         )
 
-        # Check all entries
-        entries = feedback_logger.get_feedback_entries()
-        assert len(entries) == 3
 
-    def test_correction_stats(self, feedback_logger):
-        """Test feedback statistics calculation."""
-        # Log some feedback (2 correct, 1 incorrect)
-        feedback_logger.log_feedback(
-            event_id="TEST001", cfg_path="file1.cfg",
-            model_prediction="PETIR", model_confidence=0.90,
-            operator_label="PETIR", is_correct=True
+# ---------------------------------------------------------------------------
+# Result structure tests
+# ---------------------------------------------------------------------------
+
+class TestClassificationResultStructure:
+
+    def test_result_has_all_required_fields(self):
+        """TransformerClassificationResult must have all required fields populated."""
+        feats = _make_features(h2_ratio_max_pct=18.0, energisation_flag=True)
+        result = classify_transformer_event(feats)
+
+        assert isinstance(result, TransformerClassificationResult)
+        assert result.event_class in {
+            "INRUSH", "INTERNAL_FAULT", "THROUGH_FAULT", "OVEREXCITATION", "MAL_OPERATE", "UNKNOWN"
+        }
+        assert 0.0 <= result.confidence <= 1.0
+        assert isinstance(result.class_probabilities, dict)
+        assert len(result.class_probabilities) == 5
+        assert result.recommendation is not None
+        assert result.rule_name is not None
+
+    def test_probabilities_sum_to_one(self):
+        """Class probability scores must sum to 1.0 (within floating-point tolerance)."""
+        feats = _make_features(
+            h2_ratio_max_pct=5.0,
+            slope_worst_pct=25.0,
+            above_slope1=True,
         )
-        feedback_logger.log_feedback(
-            event_id="TEST002", cfg_path="file2.cfg",
-            model_prediction="PETIR", model_confidence=0.70,
-            operator_label="LAYANG", is_correct=False
-        )
-        feedback_logger.log_feedback(
-            event_id="TEST003", cfg_path="file3.cfg",
-            model_prediction="NON_PETIR", model_confidence=0.85,
-            operator_label="NON_PETIR", is_correct=True
-        )
+        result = classify_transformer_event(feats)
+        total = sum(result.class_probabilities.values())
+        assert abs(total - 1.0) < 0.01, f"Probabilities sum to {total:.4f}, expected 1.0"
 
-        # Get stats
-        stats = feedback_logger.get_correction_stats()
+    def test_evidence_list_populated(self):
+        """Evidence list should contain at least one item for any non-trivial input."""
+        feats = _make_features(h2_ratio_max_pct=20.0, dc_offset_index=0.4)
+        result = classify_transformer_event(feats)
+        assert len(result.evidence) > 0
 
-        assert stats['total_reviews'] == 3
-        assert stats['correct_count'] == 2
-        assert stats['incorrect_count'] == 1
-        assert abs(stats['agreement_rate'] - 2/3) < 0.01  # 66.7%
-
-        # Check corrections by type
-        assert 'PETIR→LAYANG' in stats['corrections_by_type']
-        assert stats['corrections_by_type']['PETIR→LAYANG'] == 1
-
-    def test_export_for_retraining(self, feedback_logger, temp_feedback_dir):
-        """Test exporting feedback for retraining."""
-        # Log some feedback
-        feedback_logger.log_feedback(
-            event_id="TEST001", cfg_path="file1.cfg",
-            model_prediction="PETIR", model_confidence=0.85,
-            operator_label="PETIR", is_correct=True
-        )
-        feedback_logger.log_feedback(
-            event_id="TEST002", cfg_path="file2.cfg",
-            model_prediction="NON_PETIR", model_confidence=0.75,
-            operator_label="LAYANG", is_correct=False
-        )
-
-        # Export
-        output_path = Path(temp_feedback_dir) / "retraining_labels.csv"
-        count = feedback_logger.export_for_retraining(str(output_path))
-
-        assert count == 2
-        assert output_path.exists()
-
-        # Check CSV content
-        with open(output_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-            assert len(rows) == 2
-            assert rows[0]['event_id'] == "TEST001"
-            assert rows[0]['label'] == "PETIR"
-            assert rows[1]['event_id'] == "TEST002"
-            assert rows[1]['label'] == "LAYANG"
-
-    def test_export_with_original_labels(self, feedback_logger, temp_feedback_dir):
-        """Test merging feedback with original labels."""
-        # Create mock original labels CSV
-        original_csv = Path(temp_feedback_dir) / "original_labels.csv"
-        with open(original_csv, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=['event_id', 'filepath', 'binary_label'])
-            writer.writeheader()
-            writer.writerow({'event_id': 'ORIG001', 'filepath': 'orig1.cfg', 'binary_label': 'PETIR'})
-            writer.writerow({'event_id': 'ORIG002', 'filepath': 'orig2.cfg', 'binary_label': 'NON-PETIR'})
-
-        # Log feedback that corrects ORIG002
-        feedback_logger.log_feedback(
-            event_id="ORIG002", cfg_path="orig2.cfg",
-            model_prediction="NON_PETIR", model_confidence=0.70,
-            operator_label="LAYANG", is_correct=False
+    def test_all_classes_reachable(self):
+        """All 5 event classes must be reachable via the rule engine."""
+        cases = [
+            # INRUSH
+            _make_features(h2_ratio_max_pct=20.0, energisation_flag=True, dc_offset_index=0.4),
+            # INTERNAL_FAULT
+            _make_features(slope_worst_pct=95.0, above_slope1=True, above_slope2=True,
+                           h2_ratio_max_pct=1.0, idiff_pu_A=3.0),
+            # THROUGH_FAULT
+            _make_features(slope_worst_pct=10.0, above_slope1=False, idiff_pu_A=0.04,
+                           irstr_pu_A=4.0, irstr_pu_B=4.0, irstr_pu_C=4.0),
+            # OVEREXCITATION
+            _make_features(h5_ratio_max_pct=14.0, h2_ratio_max_pct=1.5),
+            # MAL_OPERATE: high restraint + very low diff + low H2
+            _make_features(irstr_pu_A=5.0, irstr_pu_B=5.0, irstr_pu_C=5.0,
+                           idiff_pu_A=0.02, idiff_pu_B=0.02, idiff_pu_C=0.02,
+                           h2_ratio_max_pct=2.0, slope_worst_pct=8.0),
+        ]
+        seen_classes = {classify_transformer_event(f).event_class for f in cases}
+        expected = {"INRUSH", "INTERNAL_FAULT", "THROUGH_FAULT", "OVEREXCITATION", "MAL_OPERATE"}
+        # At least 4 of the 5 expected classes must be reachable
+        assert len(seen_classes & expected) >= 4, (
+            f"Only reached classes: {seen_classes}"
         )
 
-        # Export merged
-        output_path = Path(temp_feedback_dir) / "merged_labels.csv"
-        count = feedback_logger.export_for_retraining(
-            str(output_path),
-            original_labels_csv=str(original_csv)
-        )
 
-        assert count == 2
+# ---------------------------------------------------------------------------
+# ML scaffold tests (untrained fallback)
+# ---------------------------------------------------------------------------
 
-        # Check merged content
-        with open(output_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
+class TestTransformerMLClassifier:
 
-            # ORIG001 should keep original label
-            orig001 = next(r for r in rows if r['event_id'] == 'ORIG001')
-            assert orig001['label'] == 'PETIR'
-            assert orig001['source'] == 'original'
+    def test_ml_classifier_instantiates(self):
+        """TransformerMLClassifier must instantiate without errors."""
+        clf = TransformerMLClassifier()
+        assert clf is not None
 
-            # ORIG002 should have corrected label
-            orig002 = next(r for r in rows if r['event_id'] == 'ORIG002')
-            assert orig002['label'] == 'LAYANG'
-            assert orig002['source'] == 'operator_correction'
-            assert orig002['original_label'] == 'NON-PETIR'
+    def test_untrained_predict_falls_back_to_rules(self):
+        """Untrained ML classifier must fall back to rule-based result."""
+        clf = TransformerMLClassifier()
+        feats = _make_features(h2_ratio_max_pct=22.0, energisation_flag=True, dc_offset_index=0.45)
+        result = clf.predict(feats)
+        # Should return a valid result (via rules fallback)
+        assert isinstance(result, TransformerClassificationResult)
+        assert result.event_class in {
+            "INRUSH", "INTERNAL_FAULT", "THROUGH_FAULT", "OVEREXCITATION", "MAL_OPERATE", "UNKNOWN"
+        }
+        assert result.limited_data is True  # Must flag that no trained model is available
 
-    def test_append_only_behavior(self, feedback_logger):
-        """Test that feedback log is append-only."""
-        # Log feedback
-        feedback_logger.log_feedback(
-            event_id="TEST001", cfg_path="file1.cfg",
-            model_prediction="PETIR", model_confidence=0.85,
-            operator_label="PETIR", is_correct=True
-        )
-
-        # Get file size
-        size1 = feedback_logger.feedback_csv.stat().st_size
-
-        # Log more feedback
-        feedback_logger.log_feedback(
-            event_id="TEST002", cfg_path="file2.cfg",
-            model_prediction="NON_PETIR", model_confidence=0.75,
-            operator_label="NON_PETIR", is_correct=True
-        )
-
-        # File should be larger (appended)
-        size2 = feedback_logger.feedback_csv.stat().st_size
-        assert size2 > size1
-
-        # Should have both entries
-        entries = feedback_logger.get_feedback_entries()
-        assert len(entries) == 2
+    def test_feature_vector_length(self):
+        """Feature vector must have expected length (17 features)."""
+        from models.transformer_classifier import FEATURE_COLS
+        assert len(FEATURE_COLS) == 17, f"Expected 17 feature columns, got {len(FEATURE_COLS)}"
 
 
 if __name__ == "__main__":

@@ -780,11 +780,11 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             <div class="wave-sub">Geser, zoom, dan isolasi kanal untuk menelusuri puncak serta lembah sinyal.</div>
         </div>
         <div class="wave-actions">
-            <button class="btn btn-outline" id="waveResetBtn">Reset Zoom</button>
-            <button class="btn btn-primary" id="waveFocusBtn">Fokus Fault</button>
-            <button class="btn btn-outline" id="waveExportPngBtn">⬇ PNG</button>
-            <button class="btn btn-outline" id="waveExportCsvBtn">⬇ CSV</button>
-            <button class="btn btn-outline" id="wavePrintBtn">🖨 Print/PDF</button>
+            <button class="btn btn-outline" id="waveResetBtn" type="button">Reset Zoom</button>
+            <button class="btn btn-primary" id="waveFocusBtn" type="button">Fokus Fault</button>
+            <button class="btn btn-outline" id="waveExportPngBtn" type="button">⬇ PNG</button>
+            <button class="btn btn-outline" id="waveExportCsvBtn" type="button">⬇ CSV</button>
+            <button class="btn btn-outline" id="wavePrintBtn" type="button">🖨 Print/PDF</button>
         </div>
     </div>
     <div class="wave-toolbar">
@@ -1030,7 +1030,8 @@ _refreshCtptStatusOnly();
         responsive: true,
         editable: false,
         scrollZoom: true,
-        displayModeBar: false
+        displayModeBar: false,
+        edits: { shapePosition: false }
     };
 
     function fmt(val, digits) {
@@ -1120,7 +1121,8 @@ _refreshCtptStatusOnly();
             legend: { orientation: 'h', x: 0, y: 1.18, font: { size: 10, color: '#94a3b8' } },
             shapes: markerShapes,
             dragmode: 'pan',
-            hovermode: 'x unified'
+            hovermode: 'x unified',
+            editable: false
         }, plotConfig);
     } else if (voltagePlot) {
         voltagePlot.style.display = 'none';
@@ -1136,7 +1138,8 @@ _refreshCtptStatusOnly();
             legend: { orientation: 'h', x: 0, y: 1.18, font: { size: 10, color: '#94a3b8' } },
             shapes: markerShapes,
             dragmode: 'pan',
-            hovermode: 'x unified'
+            hovermode: 'x unified',
+            editable: false
         }, plotConfig);
     } else if (currentPlot) {
         currentPlot.style.display = 'none';
@@ -1166,7 +1169,8 @@ _refreshCtptStatusOnly();
             yaxis: { tickvals: tickVals, ticktext: tickText, ...axisBase, tickfont: { size: 9, color: '#94a3b8' } },
             showlegend: false,
             shapes: markerShapes,
-            dragmode: 'pan'
+            dragmode: 'pan',
+            editable: false
         }, plotConfig);
     } else if (digitalPlot) {
         digitalPlot.style.display = 'none';
@@ -1580,7 +1584,7 @@ _refreshCtptStatusOnly();
         ));
     }
 
-    // Export PNG — uses canvas.toBlob (more reliable than toDataURL for large images)
+    // Export PNG — combined single image (with robust fallbacks)
     async function exportCombinedImage() {
         _setBtnState(exportPngBtn, true);
         const subtitle = document.querySelector('.topbar-sub')?.textContent || 'comtrade';
@@ -1613,29 +1617,48 @@ _refreshCtptStatusOnly();
             let y = HDR;
             imgs.forEach(img => { ctx.drawImage(img, 0, y); y += img.height; });
 
-            // Use toBlob → createObjectURL (more reliable than toDataURL for large images)
-            canvas.toBlob(blob => {
-                if (!blob) { alert('Gagal membuat file PNG.'); return; }
-                const url = URL.createObjectURL(blob);
+            const triggerDownload = (dataUrl) => {
                 const a = document.createElement('a');
-                a.href = url; a.download = `waveform_${safeName}.png`;
+                a.href = dataUrl; a.download = `waveform_${safeName}.png`;
                 document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(url), 8000);
-            }, 'image/png');
+            };
+
+            if (canvas.toBlob) {
+                canvas.toBlob(blob => {
+                    if (!blob) { alert('Gagal membuat file PNG.'); return; }
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = `waveform_${safeName}.png`;
+                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 8000);
+                }, 'image/png');
+            } else {
+                // Old browser fallback
+                const dataUrl = canvas.toDataURL('image/png');
+                triggerDownload(dataUrl);
+            }
 
         } catch (err) {
             console.error('Export PNG error:', err);
-            // Fallback: download each plot individually via Plotly's built-in method
             try {
-                const plots = _visiblePlots();
-                const size = _getPlotSize(plots[0]);
-                for (let i = 0; i < plots.length; i++) {
-                    await Plotly.downloadImage(plots[i], {
-                        format: 'png', scale: 2,
-                        width: size.width, height: size.height,
-                        filename: `${safeName}_plot${i + 1}`
-                    });
-                    await new Promise(r => setTimeout(r, 300));
+                // Fallback: open a new tab with the combined image
+                const imgUrls = await _getPlotImgUrls(1.5);
+                if (!imgUrls.length) throw err;
+                const imgs = await Promise.all(imgUrls.map(_loadImg));
+                const W = Math.max(...imgs.map(i => i.width));
+                const H = imgs.reduce((s, i) => s + i.height, 0);
+                const canvas = document.createElement('canvas');
+                canvas.width = W; canvas.height = H;
+                const ctx = canvas.getContext('2d');
+                let y = 0;
+                imgs.forEach(img => { ctx.drawImage(img, 0, y); y += img.height; });
+                const dataUrl = canvas.toDataURL('image/png');
+                const w = window.open('', '_blank');
+                if (w) {
+                    w.document.write(`<img src="${dataUrl}" style="width:100%;">`);
+                    w.document.close();
+                } else {
+                    alert('Popup diblokir. Silakan izinkan popup untuk export PNG.');
                 }
             } catch (e2) {
                 alert('Gagal mengekspor PNG: ' + (err.message || err));

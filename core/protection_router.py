@@ -9,17 +9,44 @@ from dataclasses import dataclass
 from typing import Optional, List
 from enum import Enum
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 
+def _normalize_status_name(name: str) -> str:
+    """Normalize status channel name for robust matching."""
+    if not name:
+        return ""
+    # Uppercase, replace separators with spaces, collapse whitespace
+    s = name.upper()
+    s = re.sub(r"[\\._\\-/]+", " ", s)
+    s = re.sub(r"\\s+", " ", s).strip()
+    return s
+
+
+def _name_variants(name: str) -> list[str]:
+    """Return matching variants: raw, normalized, and compact (no spaces)."""
+    raw = (name or "").upper().strip()
+    norm = _normalize_status_name(name)
+    compact = norm.replace(" ", "")
+    # Preserve order, drop empties
+    variants = []
+    for v in (raw, norm, compact):
+        if v and v not in variants:
+            variants.append(v)
+    return variants
+
+
 class ProtectionType(Enum):
     """Protection element types in PLN transmission system."""
-    DIFFERENTIAL = "87L"       # Line current differential
-    DISTANCE = "21"            # Distance protection (impedance)
-    DIRECTIONAL_EF = "67N"     # Directional earth fault
-    OVERCURRENT = "50/51"      # Overcurrent
-    UNKNOWN = "UNKNOWN"        # Could not determine
+    DIFFERENTIAL = "87L"            # Line current differential
+    TRANSFORMER_DIFF = "87T"        # Transformer differential (Phase 2)
+    DISTANCE = "21"                 # Distance protection (impedance)
+    DIRECTIONAL_EF = "67N"          # Directional earth fault
+    OVERCURRENT = "50/51"           # Overcurrent
+    TRANSFORMER_OVERCURRENT = "51T" # Transformer overcurrent / thermal (Phase 2)
+    UNKNOWN = "UNKNOWN"             # Could not determine
 
 
 class TeleprotectionScheme(Enum):
@@ -107,12 +134,20 @@ def determine_protection(record) -> ProtectionEvent:
     status_dict = {ch.name: ch.samples for ch in record.status_channels}
 
     # Search for protection operate signals
+    xfmr_diff_operated = _check_transformer_diff_operate(status_names, status_dict)
     diff_operated = _check_differential_operate(status_names, status_dict)
     dist_operated, dist_zones, dist_phases = _check_distance_operate(status_names, status_dict)
     ef_operated = _check_directional_ef_operate(status_names, status_dict)
 
     # Determine primary protection
-    if dist_operated:
+    # 87T takes priority — if transformer-specific signals found, route to Phase 2 classifier
+    if xfmr_diff_operated:
+        primary_protection = ProtectionType.TRANSFORMER_DIFF
+        confidence = 0.90
+        classifiable = True   # Phase 2 transformer classifier
+        skip_reason = None
+
+    elif dist_operated:
         primary_protection = ProtectionType.DISTANCE
         operated_zones = dist_zones
         operated_phases = dist_phases
@@ -126,9 +161,9 @@ def determine_protection(record) -> ProtectionEvent:
         primary_protection = ProtectionType.DIFFERENTIAL
         confidence = 0.9
 
-        # Differential protection → classifiable = False (not ready for M2 yet)
+        # 87L line differential → not the transformer classifier
         classifiable = False
-        skip_reason = "87L differential trip - awaiting differential analysis module"
+        skip_reason = "87L line differential trip - awaiting line differential analysis module"
 
     elif ef_operated:
         primary_protection = ProtectionType.DIRECTIONAL_EF
@@ -204,6 +239,48 @@ def determine_protection(record) -> ProtectionEvent:
     )
 
 
+def _check_transformer_diff_operate(status_names: List[str], status_dict: dict) -> bool:
+    """
+    Check if transformer differential protection (87T) operated.
+
+    Distinguishes 87T (transformer) from 87L (line) by looking for transformer-specific
+    channel name patterns from major relay families:
+      - ABB RET615/RET670: "87T:Operate", "PDIF:Operate", "TR_DIFF_TRIP"
+      - Siemens 7UT:       "87T TRIP", "TRANSFORMER DIFF", "DIFF OPERATE"
+      - SEL-387:           "87T", "TR_87T_TRIP", "DIFF OP"
+      - GE T60:            "87T OPERATE", "XFMR DIFF", "T60_87T"
+      - Micom P640:        "PDIF_TRIP", "87T_OPERATE"
+      - NARI PCS-985T:     "87T_ACT", "DIFF_ACT", "TR87T"
+
+    Deliberately conservative — requires explicit transformer keywords
+    to avoid false-matching line differential signals.
+    """
+    # Patterns that are specific to TRANSFORMER differential (not line 87L)
+    xfmr_patterns = [
+        '87T', 'TR_DIFF', 'XFMR_DIFF', 'TRANSFORMER DIFF',
+        'TRDIFF', 'TR87', 'PDIF',          # ABB RET615 IEC 61850 PDIF LN
+        'DIFF OPERATE', 'DIFF_OPERATE',    # Siemens 7UT
+        'DIFF OP',                          # SEL-387: "DIFF OP" output
+        'XFMR DIFF', 'XFMR_DIFF',          # GE T60: "XFMR DIFF OPERATE"
+        'TRAFO', 'TRANSF', 'TXD',          # Generic transformer keywords
+        '87T_ACT', 'DIFF_ACT',             # NARI PCS-985T
+    ]
+    operate_keywords = ['OPERATE', 'TRIP', 'ACT', 'OP', 'TRIG']
+
+    for name in status_names:
+        variants = _name_variants(name)
+        has_xfmr = any(p in v for v in variants for p in xfmr_patterns)
+        has_operate = any(k in v for v in variants for k in operate_keywords)
+
+        if has_xfmr and has_operate:
+            samples = status_dict.get(name, [])
+            if len(samples) > 0 and samples.sum() > 0:
+                logger.debug(f"87T transformer differential operated: {name} ({samples.sum()} samples)")
+                return True
+
+    return False
+
+
 def _check_differential_operate(status_names: List[str], status_dict: dict) -> bool:
     """Check if 87L differential operated (issued trip command)."""
     # Siemens: "87L:I-DIFF*:Operate"
@@ -218,10 +295,10 @@ def _check_differential_operate(status_names: List[str], status_dict: dict) -> b
                         ]
 
     for name in status_names:
-        name_upper = name.upper()
+        variants = _name_variants(name)
         # Must have both diff pattern AND operate keyword
-        has_diff = any(p in name_upper for p in patterns)
-        has_operate = any(k in name_upper for k in operate_keywords)
+        has_diff = any(p in v for v in variants for p in patterns)
+        has_operate = any(k in v for v in variants for k in operate_keywords)
 
         if has_diff and has_operate:
             samples = status_dict.get(name, [])
@@ -303,9 +380,9 @@ def _check_distance_operate(status_names: List[str], status_dict: dict) -> tuple
     # External DFR (Indonesian): "LP OPRT R WTS2", "MPU MAIN 1 TRIP (S) UNGARAN 1"
 
     for name in status_names:
-        name_upper = name.upper()
+        variants = _name_variants(name)
 
-        is_distance = any(k in name_upper for k in [
+        is_distance = any(k in v for v in variants for k in [
             '21 ', '21:', 'DIST', 'ZONE', 'Z1', 'Z2', 'Z3',
             'DISTN', 'DISTANCE',
             'LP OPRT', 'LP OPERATE',    # External DFR Indonesian: "LP OPRT R WTS2"
@@ -321,7 +398,7 @@ def _check_distance_operate(status_names: List[str], status_dict: dict) -> tuple
             'LINE PICKUP',              # GE D60: "LINE PICKUP OP" (line distance pickup)
         ])
         # SEND alone is not enough — only count operate/trip signals
-        is_operate = any(k in name_upper for k in [
+        is_operate = any(k in v for v in variants for k in [
             'OPERATE', 'TRIP', 'OPRT',
             '.OP', '.TRP',              # PCS900: "21Q1.Op", "CB1.TrpA"
             'PICKUP',                   # ABB: "Dis.Pickup L2"
@@ -336,15 +413,15 @@ def _check_distance_operate(status_names: List[str], status_dict: dict) -> tuple
                 logger.debug(f"Distance/line protection operated: {name} ({samples.sum()} samples)")
 
                 # Extract zone
-                if any(k in name_upper for k in ['Z1', 'Z 1', 'ZONE 1', 'ZONE1', '21Q1', 'DZ1', 'ZM1']):
+                if any(k in v for v in variants for k in ['Z1', 'Z 1', 'ZONE 1', 'ZONE1', '21Q1', 'DZ1', 'ZM1']):
                     zones.append('Z1')
-                elif any(k in name_upper for k in ['Z2', 'Z 2', 'ZONE 2', 'ZONE2', '21Q2', 'DZ2', 'ZM2']):
+                elif any(k in v for v in variants for k in ['Z2', 'Z 2', 'ZONE 2', 'ZONE2', '21Q2', 'DZ2', 'ZM2']):
                     zones.append('Z2')
-                elif any(k in name_upper for k in ['Z3', 'Z 3', 'ZONE 3', 'ZONE3', '21Q3', 'DZ3', 'ZM3']):
+                elif any(k in v for v in variants for k in ['Z3', 'Z 3', 'ZONE 3', 'ZONE3', '21Q3', 'DZ3', 'ZM3']):
                     zones.append('Z3')
 
                 # Extract phase using unified helper
-                ph = _extract_phase_from_name(name_upper)
+                ph = _extract_phase_from_name(_normalize_status_name(name))
                 if ph:
                     phases.append(ph)
 
@@ -352,8 +429,8 @@ def _check_distance_operate(status_names: List[str], status_dict: dict) -> tuple
     # They confirm distance operated AND add zone info
     import re as _re
     for name in status_names:
-        name_upper = name.upper().strip()
-        if _re.match(r'^Z\d$', name_upper):
+        name_upper = _normalize_status_name(name)
+        if _re.match(r'^Z\\d$', name_upper):
             samples = status_dict.get(name, [])
             if len(samples) > 0 and samples.sum() > 0:
                 operated = True
@@ -372,9 +449,9 @@ def _check_directional_ef_operate(status_names: List[str], status_dict: dict) ->
     # Alstom/GE: "DEF*"
 
     for name in status_names:
-        name_upper = name.upper()
-        is_67n = any(k in name_upper for k in ['67N', 'DEF'])
-        is_operate = any(k in name_upper for k in ['OPERATE', 'TRIP'])
+        variants = _name_variants(name)
+        is_67n = any(k in v for v in variants for k in ['67N', 'DEF'])
+        is_operate = any(k in v for v in variants for k in ['OPERATE', 'TRIP'])
 
         if is_67n and is_operate:
             samples = status_dict.get(name, [])
@@ -419,12 +496,12 @@ def _check_generic_trip_fallback(status_names: List[str], status_dict: dict) -> 
     ]
 
     for name in status_names:
-        name_upper = name.upper()
-        if any(p in name_upper for p in GENERIC_PATTERNS):
+        variants = _name_variants(name)
+        if any(p in v for v in variants for p in GENERIC_PATTERNS):
             samples = status_dict.get(name, [])
             if len(samples) > 0 and samples.sum() > 0:
                 operated = True
-                ph = _extract_phase_from_name(name_upper)
+                ph = _extract_phase_from_name(_normalize_status_name(name))
                 if ph:
                     phases.append(ph)
 
@@ -447,7 +524,7 @@ def _detect_operated_phases(status_names: List[str], status_dict: dict) -> List[
         'A PHASE FAULT', 'B PHASE FAULT', 'C PHASE FAULT',
     ]
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         if any(k in name_upper for k in explicit_fault_keywords):
             samples = status_dict.get(name, [])
             if len(samples) > 0 and samples.sum() > 0:
@@ -460,7 +537,7 @@ def _detect_operated_phases(status_names: List[str], status_dict: dict) -> List[
 
     # Priority 2: trip/operate channels with phase suffix
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         has_operate = any(k in name_upper for k in ['OPERATE', 'OPRT', 'TRIP', 'PICKUP'])
         if has_operate:
             samples = status_dict.get(name, [])
@@ -475,7 +552,7 @@ def _detect_operated_phases(status_names: List[str], status_dict: dict) -> List[
 def _detect_teleprotection_scheme(status_names: List[str], status_dict: dict) -> TeleprotectionScheme:
     """Detect teleprotection scheme from status channels."""
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         if 'POTT' in name_upper:
             return TeleprotectionScheme.POTT
         elif 'PUTT' in name_upper:
@@ -493,7 +570,7 @@ def _check_permission_received(status_names: List[str], status_dict: dict) -> bo
     # Generic: "RECV", "RECEIVE"
 
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         if any(k in name_upper for k in ['RECV', 'RECEIVE', 'PERM']):
             samples = status_dict.get(name, [])
             if len(samples) > 0 and samples.sum() > 0:
@@ -507,7 +584,7 @@ def _check_comms_failure(status_names: List[str], status_dict: dict) -> bool:
     # Siemens: "Prot. interf.*:Connection broken"
 
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         if any(k in name_upper for k in ['BROKEN', 'FAIL', 'LOSS', 'COMMS FAIL']):
             samples = status_dict.get(name, [])
             if len(samples) > 0 and samples.sum() > 0:
@@ -522,7 +599,7 @@ def _detect_trip_type(status_names: List[str], status_dict: dict) -> str:
     # Generic: "1 PHS TRIP", "3 PHS TRIP", "1-POLE", "3-POLE"
 
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         samples = status_dict.get(name, [])
 
         if len(samples) > 0 and samples.sum() > 0:
@@ -554,7 +631,7 @@ def _check_auto_reclose_attempted(status_names: List[str], status_dict: dict) ->
         '1-POLE OPEN',                      # Siemens 7SA: "CB1:Circuit break.:Position 1-pole phsA:open"
     ]
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         if any(k in name_upper for k in ar_keywords):
             samples = status_dict.get(name, [])
             if len(samples) > 0 and samples.sum() > 0:
@@ -562,7 +639,7 @@ def _check_auto_reclose_attempted(status_names: List[str], status_dict: dict) ->
 
     # "Any Pole Dead" / "All Pole Dead" / "Position*open" going 0→1→0 = CB opened then reclosed
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         is_pole_open = (
             any(k in name_upper for k in ['POLE DEAD', 'ANY POLE', 'ALL POLE'])
             or ('POSITION' in name_upper and 'OPEN' in name_upper)  # Siemens 7SA CB position
@@ -616,7 +693,7 @@ def _check_auto_reclose_successful(status_names: List[str], status_dict: dict) -
     found_failure = False
 
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         samples = status_dict.get(name, [])
         if len(samples) == 0 or samples.sum() == 0:
             continue
@@ -633,7 +710,7 @@ def _check_auto_reclose_successful(status_names: List[str], status_dict: dict) -
 
     # "Any/All Pole Dead" or "Position*open" going 0→1→0 means CB reclosed successfully
     for name in status_names:
-        name_upper = name.upper()
+        name_upper = _normalize_status_name(name)
         is_pole_open = (
             any(k in name_upper for k in ['POLE DEAD', 'ANY POLE', 'ALL POLE'])
             or ('POSITION' in name_upper and 'OPEN' in name_upper)  # Siemens 7SA

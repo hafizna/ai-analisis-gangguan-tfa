@@ -24,6 +24,16 @@ def _extract_line_tag(channel_name: str) -> Optional[str]:
     return None
 
 
+def _normalize_status_name(name: str) -> str:
+    """Normalize status channel name for robust matching."""
+    if not name:
+        return ""
+    s = name.upper()
+    s = re.sub(r"[\\._\\-/]+", " ", s)
+    s = re.sub(r"\\s+", " ", s).strip()
+    return s
+
+
 def _pick_current_channel(record, canonical_name: str, preferred_tag: Optional[str] = None):
     candidates = [
         ch for ch in record.analog_channels
@@ -207,7 +217,7 @@ def _recording_starts_in_dead_time(record) -> bool:
     EXCL_KW    = ['ALARM', 'TEST', 'BLOCK']
 
     for ch in record.status_channels:
-        nu = ch.name.upper()
+        nu = _normalize_status_name(ch.name)
         if any(e in nu for e in EXCL_KW):
             continue
         if not any(k in nu for k in CB_OPEN_KW):
@@ -233,7 +243,7 @@ def _build_dead_time_event(record) -> Optional[FaultEvent]:
 
     reclose_time = None
     for ch in record.status_channels:
-        nu = ch.name.upper()
+        nu = _normalize_status_name(ch.name)
         if any(e in nu for e in EXCL_KW):
             continue
         if not any(k in nu for k in CB_OPEN_KW):
@@ -248,7 +258,7 @@ def _build_dead_time_event(record) -> Optional[FaultEvent]:
     # Also check AR success channel
     AR_SUCCESS_KW = ['AR SUCC', 'SUCC_RCLS', 'RECLOSE SUCC', '.79.SUCC']
     for ch in record.status_channels:
-        nu = ch.name.upper()
+        nu = _normalize_status_name(ch.name)
         if any(k in nu for k in AR_SUCCESS_KW) and ch.samples.sum() > 0:
             diff = np.diff(ch.samples)
             rises = np.where(diff > 0)[0]
@@ -321,7 +331,7 @@ def _detect_from_status_channels(record) -> Optional[FaultEvent]:
     _extract_phase = _extract_phase_from_name
 
     for ch in record.status_channels:
-        name_upper = ch.name.upper()
+        name_upper = _normalize_status_name(ch.name)
 
         # Skip non-trip channels
         if any(ex in name_upper for ex in EXCLUDE_KEYWORDS):
@@ -350,7 +360,7 @@ def _detect_from_status_channels(record) -> Optional[FaultEvent]:
         # This handles external DFR contact bounce (multiple brief pulses = one sustained event).
         # IMPORTANT: skip channels that represent CB open/dead-time (pole-open position signals)
         # — those stay high during the entire AR dead time and would inflate fault duration.
-        name_upper_ch = ch.name.upper()
+        name_upper_ch = _normalize_status_name(ch.name)
         is_pole_position = (
             'POSITION' in name_upper_ch and 'OPEN' in name_upper_ch
         ) or any(k in name_upper_ch for k in ['POLE DEAD', '1-POLE OPEN', '1POLE OPEN', 'ANY POLE', 'ALL POLE', '52B'])
@@ -563,7 +573,7 @@ def _detect_reclose_from_status(record, inception_idx):
     success_times = []
     failure_times = []
     for ch in record.status_channels:
-        name_upper = ch.name.upper()
+        name_upper = _normalize_status_name(ch.name)
         transitions = np.diff(ch.samples)
         rising = np.where(transitions > 0)[0]
         if len(rising) == 0:
@@ -579,7 +589,7 @@ def _detect_reclose_from_status(record, inception_idx):
     # Detect AR attempts and assign success/failure
     seen_reclose_times = set()
     for ch in record.status_channels:
-        name_upper = ch.name.upper()
+        name_upper = _normalize_status_name(ch.name)
         if not any(kw in name_upper for kw in AR_ATTEMPT_KW):
             continue
 
@@ -606,7 +616,7 @@ def _detect_reclose_from_status(record, inception_idx):
 
     # "Any/All Pole Dead" falling edge (1→0) after inception = CB reclosed
     for ch in record.status_channels:
-        name_upper = ch.name.upper()
+        name_upper = _normalize_status_name(ch.name)
         if not any(k in name_upper for k in POLE_DEAD_KW):
             continue
         transitions = np.diff(ch.samples)
