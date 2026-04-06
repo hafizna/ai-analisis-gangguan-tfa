@@ -29,7 +29,8 @@ def _normalize_status_name(name: str) -> str:
     if not name:
         return ""
     s = name.upper()
-    s = re.sub(r"[\\._\\-/]+", " ", s)
+    # Replace separators (., _, /, -) with spaces.
+    s = re.sub(r"[._/\\-]+", " ", s)
     s = re.sub(r"\\s+", " ", s).strip()
     return s
 

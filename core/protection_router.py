@@ -20,7 +20,8 @@ def _normalize_status_name(name: str) -> str:
         return ""
     # Uppercase, replace separators with spaces, collapse whitespace
     s = name.upper()
-    s = re.sub(r"[\\._\\-/]+", " ", s)
+    # Replace separators (., _, /, -) with spaces.
+    s = re.sub(r"[._/\\-]+", " ", s)
     s = re.sub(r"\\s+", " ", s).strip()
     return s
 
