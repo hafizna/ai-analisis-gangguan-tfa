@@ -263,11 +263,19 @@ def _check_transformer_diff_operate(status_names: List[str], status_dict: dict) 
         'DIFF OPERATE', 'DIFF_OPERATE',    # Siemens 7UT
         'DIFF OP',                          # SEL-387: "DIFF OP" output
         'XFMR DIFF', 'XFMR_DIFF',          # GE T60: "XFMR DIFF OPERATE"
-        'TRAFO', 'TRANSF', 'TXD',          # Generic transformer keywords
+        'TRAFO', 'TRANSF', 'TRF', 'TX',     # Generic transformer keywords
         '87T_ACT', 'DIFF_ACT',             # NARI PCS-985T
+        'IDIFF', 'IDIF',                    # Some relays label differential as IDIFF
+    ]
+    # Transformer-only hints that are unlikely for line differential
+    xfmr_only_hints = [
+        'REF', 'RESTRICTED EARTH',          # REF used for transformer/generator
+        'HV', 'LV', 'WINDING', 'TAP',        # Winding / tap indicators
+        'BUCHHOLZ', 'OLTC',                 # Transformer-specific signals
     ]
     operate_keywords = ['OPERATE', 'TRIP', 'ACT', 'OP', 'TRIG']
 
+    # First pass: explicit 87T / transformer-labeled differential operate
     for name in status_names:
         variants = _name_variants(name)
         has_xfmr = any(p in v for v in variants for p in xfmr_patterns)
@@ -277,6 +285,17 @@ def _check_transformer_diff_operate(status_names: List[str], status_dict: dict) 
             samples = status_dict.get(name, [])
             if len(samples) > 0 and samples.sum() > 0:
                 logger.debug(f"87T transformer differential operated: {name} ({samples.sum()} samples)")
+                return True
+
+    # Second pass: REF / LV / HV indicators combined with operate = transformer event
+    for name in status_names:
+        variants = _name_variants(name)
+        has_xfmr_hint = any(h in v for v in variants for h in xfmr_only_hints)
+        has_operate = any(k in v for v in variants for k in operate_keywords)
+        if has_xfmr_hint and has_operate:
+            samples = status_dict.get(name, [])
+            if len(samples) > 0 and samples.sum() > 0:
+                logger.debug(f"Transformer-specific operate detected: {name} ({samples.sum()} samples)")
                 return True
 
     return False
