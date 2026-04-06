@@ -757,6 +757,8 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         <div class="wave-actions">
             <button class="btn btn-outline" id="waveResetBtn">Reset Zoom</button>
             <button class="btn btn-primary" id="waveFocusBtn">Fokus Fault</button>
+            <button class="btn btn-outline" id="waveExportPngBtn">Export PNG</button>
+            <button class="btn btn-outline" id="wavePrintBtn">Print/PDF</button>
         </div>
     </div>
     <div class="wave-toolbar">
@@ -989,11 +991,20 @@ _refreshCtptStatusOnly();
     const peakResultEl = document.getElementById('peakResult');
     const measureCurrentBtn = document.getElementById('measureCurrentBtn');
     const measureVoltageBtn = document.getElementById('measureVoltageBtn');
+    const exportPngBtn = document.getElementById('waveExportPngBtn');
+    const printBtn = document.getElementById('wavePrintBtn');
 
     const meta = wf.meta || {};
     const markers = wf.markers || {};
     const tIn = markers.inception_ms || 0;
     const tOut = markers.clearing_ms || 0;
+    const plotConfig = {
+        displaylogo: false,
+        responsive: true,
+        editable: false,
+        scrollZoom: true,
+        displayModeBar: false
+    };
 
     function fmt(val, digits) {
         if (val === undefined || val === null || isNaN(val)) return '-';
@@ -1071,8 +1082,9 @@ _refreshCtptStatusOnly();
             xaxis: { title: 'Waktu (ms)', gridcolor: 'rgba(148,163,184,0.2)' },
             yaxis: { title: 'Tegangan (kV)', gridcolor: 'rgba(148,163,184,0.2)' },
             legend: { orientation: 'h', x: 0, y: 1.15, font: { size: 10 } },
-            shapes: markerShapes
-        }, { displaylogo: false, responsive: true, editable: true });
+            shapes: markerShapes,
+            dragmode: 'pan'
+        }, plotConfig);
     } else if (voltagePlot) {
         voltagePlot.style.display = 'none';
     }
@@ -1085,8 +1097,9 @@ _refreshCtptStatusOnly();
             xaxis: { title: 'Waktu (ms)', gridcolor: 'rgba(148,163,184,0.2)' },
             yaxis: { title: 'Arus (A)', gridcolor: 'rgba(148,163,184,0.2)' },
             legend: { orientation: 'h', x: 0, y: 1.15, font: { size: 10 } },
-            shapes: markerShapes
-        }, { displaylogo: false, responsive: true, editable: true });
+            shapes: markerShapes,
+            dragmode: 'pan'
+        }, plotConfig);
     } else if (currentPlot) {
         currentPlot.style.display = 'none';
     }
@@ -1114,8 +1127,9 @@ _refreshCtptStatusOnly();
             xaxis: { title: 'Waktu (ms)', gridcolor: 'rgba(148,163,184,0.2)' },
             yaxis: { tickvals: tickVals, ticktext: tickText, gridcolor: 'rgba(148,163,184,0.1)' },
             showlegend: false,
-            shapes: markerShapes
-        }, { displaylogo: false, responsive: true });
+            shapes: markerShapes,
+            dragmode: 'pan'
+        }, plotConfig);
     } else if (digitalPlot) {
         digitalPlot.style.display = 'none';
         if (toggleDigital) toggleDigital.checked = false;
@@ -1324,6 +1338,12 @@ _refreshCtptStatusOnly();
             if (ev['xaxis.range[0]'] || ev['xaxis.autorange']) autoScaleY(currentPlot, iState);
         });
     }
+    if (digitalPlot) {
+        digitalPlot.on('plotly_relayout', (ev) => {
+            syncX(digitalPlot, voltagePlot, ev);
+            syncX(digitalPlot, currentPlot, ev);
+        });
+    }
 
     let activeMeasure = 'current';
     function setMeasure(mode) {
@@ -1444,6 +1464,96 @@ _refreshCtptStatusOnly();
             drawCursors();
         });
     }
+
+    function _getPlotSize(plotRef) {
+        if (!plotRef) return { width: 1000, height: 360 };
+        const rect = plotRef.getBoundingClientRect();
+        return {
+            width: Math.max(800, Math.floor(rect.width)),
+            height: Math.max(260, Math.floor(rect.height))
+        };
+    }
+
+    function _imgToCanvas(imgUrl) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = imgUrl;
+        });
+    }
+
+    async function exportCombinedImage() {
+        const plots = [];
+        if (voltagePlot && voltagePlot.style.display !== 'none') plots.push(voltagePlot);
+        if (currentPlot && currentPlot.style.display !== 'none') plots.push(currentPlot);
+        if (digitalPlot && digitalPlot.style.display !== 'none') plots.push(digitalPlot);
+        if (!plots.length) return;
+
+        const size = _getPlotSize(plots[0]);
+        const imgUrls = await Promise.all(
+            plots.map(p => Plotly.toImage(p, { format: 'png', width: size.width, height: size.height }))
+        );
+        const imgs = await Promise.all(imgUrls.map(_imgToCanvas));
+
+        const totalHeight = imgs.reduce((sum, img) => sum + img.height, 0);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(...imgs.map(i => i.width));
+        canvas.height = totalHeight + 40;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        let y = 20;
+        imgs.forEach(img => {
+            ctx.drawImage(img, 0, y);
+            y += img.height;
+        });
+
+        const link = document.createElement('a');
+        link.download = 'comtrade_waveforms.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+    }
+
+    async function printCombined() {
+        const plots = [];
+        if (voltagePlot && voltagePlot.style.display !== 'none') plots.push(voltagePlot);
+        if (currentPlot && currentPlot.style.display !== 'none') plots.push(currentPlot);
+        if (digitalPlot && digitalPlot.style.display !== 'none') plots.push(digitalPlot);
+        if (!plots.length) return;
+
+        const size = _getPlotSize(plots[0]);
+        const imgUrls = await Promise.all(
+            plots.map(p => Plotly.toImage(p, { format: 'png', width: size.width, height: size.height }))
+        );
+        const imgs = await Promise.all(imgUrls.map(_imgToCanvas));
+
+        const totalHeight = imgs.reduce((sum, img) => sum + img.height, 0);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(...imgs.map(i => i.width));
+        canvas.height = totalHeight + 40;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        let y = 20;
+        imgs.forEach(img => {
+            ctx.drawImage(img, 0, y);
+            y += img.height;
+        });
+
+        const dataUrl = canvas.toDataURL('image/png');
+        const w = window.open('', '_blank');
+        if (!w) return;
+        w.document.write(`<img src=\"${dataUrl}\" style=\"width:100%;\">`);
+        w.document.close();
+        w.focus();
+        w.print();
+    }
+
+    if (exportPngBtn) exportPngBtn.addEventListener('click', exportCombinedImage);
+    if (printBtn) printBtn.addEventListener('click', printCombined);
 })();
 </script>
 {% endif %}

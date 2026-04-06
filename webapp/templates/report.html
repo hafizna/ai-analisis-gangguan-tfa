@@ -101,6 +101,14 @@
     }
     .rec-box p { font-size: 11px; line-height: 1.7; color: #0f172a; }
 
+    /* â”€â”€ Waveform â”€â”€ */
+    .wave-img {
+        width: 100%;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        margin-top: 6px;
+    }
+
     /* ── Footer ── */
     .rpt-footer {
         margin-top: 24px; padding-top: 10px;
@@ -262,6 +270,12 @@
 <div class="rec-box">
     <p>{{ analysis.recommendation }}</p>
 </div>
+{% endif %}
+
+<!-- Waveform -->
+{% if analysis.waveform_b64 %}
+<div class="sec-label">Rekaman Gelombang COMTRADE</div>
+<img class="wave-img" src="data:image/png;base64,{{ analysis.waveform_b64 }}" alt="Waveform COMTRADE">
 {% endif %}
 
 <!-- SOE -->
