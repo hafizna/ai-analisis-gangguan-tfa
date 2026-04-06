@@ -1063,6 +1063,170 @@ def _generate_waveform_plot(cfg_path: str, inception_ms: float, duration_ms: flo
         return ""
 
 
+def _downsample_minmax(t_arr, y_arr, target_points: int = 4000):
+    """
+    Downsample using min/max per bucket to preserve peaks.
+    Returns (t, y) numpy arrays.
+    """
+    import numpy as np
+
+    n = len(t_arr)
+    if n == 0:
+        return np.array([]), np.array([])
+    if n <= target_points:
+        return t_arr, y_arr
+
+    buckets = max(1, target_points // 2)
+    bucket_size = int(np.ceil(n / buckets))
+    xs, ys = [], []
+
+    for start in range(0, n, bucket_size):
+        end = min(n, start + bucket_size)
+        seg_y = y_arr[start:end]
+        if seg_y.size == 0:
+            continue
+        seg_t = t_arr[start:end]
+        i_min = int(np.argmin(seg_y))
+        i_max = int(np.argmax(seg_y))
+
+        if seg_t[i_min] <= seg_t[i_max]:
+            xs.extend([seg_t[i_min], seg_t[i_max]])
+            ys.extend([seg_y[i_min], seg_y[i_max]])
+        else:
+            xs.extend([seg_t[i_max], seg_t[i_min]])
+            ys.extend([seg_y[i_max], seg_y[i_min]])
+
+    return np.array(xs), np.array(ys)
+
+
+def _digital_change_points(t_arr, y_arr, target_points: int = 4000):
+    """
+    Reduce digital channels to change points so step plots stay light.
+    """
+    import numpy as np
+
+    n = len(t_arr)
+    if n == 0:
+        return np.array([]), np.array([])
+
+    changes = np.where(np.diff(y_arr) != 0)[0] + 1
+    idx = np.concatenate(([0], changes, [n - 1]))
+    idx = np.unique(idx)
+    if len(idx) > target_points:
+        step = max(1, int(np.ceil(len(idx) / target_points)))
+        idx = idx[::step]
+
+    return t_arr[idx], y_arr[idx]
+
+
+def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: float) -> dict:
+    """
+    Prepare a lightweight, JSON-safe payload for interactive waveform viewing.
+    Downsamples to keep the UI responsive while preserving peaks.
+    """
+    try:
+        import numpy as np
+    except Exception:
+        return {}
+
+    record = parse_comtrade(cfg_path)
+    if record is None or len(record.time) == 0:
+        return {}
+
+    t_ms = np.array(record.time, dtype=float) * 1000.0
+    total_samples = len(t_ms)
+
+    # Preferred ordering and color map
+    priority = ["VA", "VB", "VC", "VAB", "VBC", "VCA", "IA", "IB", "IC", "IN", "I0", "3I0", "IG", "IF"]
+    color_map = {
+        "VA": "#ef4444",
+        "VB": "#3b82f6",
+        "VC": "#10b981",
+        "IA": "#f97316",
+        "IB": "#06b6d4",
+        "IC": "#a78bfa",
+        "IN": "#facc15",
+        "I0": "#facc15",
+        "3I0": "#facc15",
+    }
+
+    analog_all = [ch for ch in record.analog_channels if len(ch.samples) == total_samples]
+    def _prio_key(ch):
+        name = (ch.canonical_name or ch.name or "").upper()
+        return priority.index(name) if name in priority else 999
+    analog_sorted = sorted(analog_all, key=_prio_key)
+    max_analog = 12
+    analog_chs = analog_sorted[:max_analog]
+    analog_truncated = len(analog_sorted) > max_analog
+
+    digital_all = [ch for ch in record.status_channels if len(ch.samples) == total_samples]
+    digital_active = [ch for ch in digital_all if len(np.unique(ch.samples)) > 1]
+    max_digital = 16
+    digital_chs = digital_active[:max_digital]
+    digital_truncated = len(digital_active) > max_digital
+
+    channels = []
+    for ch in analog_chs:
+        name = ch.canonical_name or ch.name or ch.id
+        name_u = name.upper()
+        color = color_map.get(name_u, "#94a3b8")
+
+        y = np.array(ch.samples, dtype=float)
+        def _safe_stat(val):
+            return float(val) if np.isfinite(val) else 0.0
+        x_ds, y_ds = _downsample_minmax(t_ms, y, target_points=4000)
+
+        channels.append({
+            "id": ch.id,
+            "name": ch.name,
+            "canonical": ch.canonical_name,
+            "measurement": ch.measurement,
+            "unit": ch.unit,
+            "color": color,
+            "x": x_ds.tolist(),
+            "y": y_ds.tolist(),
+            "min": _safe_stat(np.min(y)) if y.size else 0.0,
+            "max": _safe_stat(np.max(y)) if y.size else 0.0,
+            "rms": _safe_stat(np.sqrt(np.mean(y ** 2))) if y.size else 0.0,
+        })
+
+    digital = []
+    for ch in digital_chs:
+        y = np.array(ch.samples, dtype=int)
+        x_ds, y_ds = _digital_change_points(t_ms, y, target_points=4000)
+        digital.append({
+            "id": ch.id,
+            "name": ch.name,
+            "x": x_ds.tolist(),
+            "y": y_ds.tolist(),
+            "events": int(len(np.where(np.diff(y) != 0)[0])) if y.size else 0,
+        })
+
+    # Estimate sampling rate from time axis
+    if total_samples > 1:
+        dt = np.mean(np.diff(t_ms)) / 1000.0
+        sampling_hz = float(1.0 / dt) if dt > 0 else 0.0
+    else:
+        sampling_hz = 0.0
+
+    return {
+        "meta": {
+            "total_samples": total_samples,
+            "sampling_hz": sampling_hz,
+            "duration_ms": float(t_ms[-1] - t_ms[0]) if total_samples else 0.0,
+            "analog_total": len(analog_all),
+            "digital_total": len(digital_all),
+            "analog_truncated": analog_truncated,
+            "digital_truncated": digital_truncated,
+        },
+        "markers": {
+            "inception_ms": float(inception_ms or 0.0),
+            "clearing_ms": float((inception_ms or 0.0) + (duration_ms or 0.0)),
+        },
+        "channels": channels,
+        "digital": digital,
+    }
+
 @app.route("/")
 def index():
     return render_template("index.html", fault_categories=FAULT_CATEGORIES)
@@ -1180,6 +1344,11 @@ def upload_files():
         "assumed_vt_primary": _f(assumed_ratios.get("assumed_vt_primary"), 150000.0),
         "assumed_vt_secondary": _f(assumed_ratios.get("assumed_vt_secondary"), 100.0),
     }
+    analysis_payload["waveform_data"] = _build_waveform_payload(
+        str(cfg_path),
+        analysis_payload["fault_inception_ms"],
+        analysis_payload["fault_duration_ms"],
+    )
     analysis_payload["waveform_b64"] = _generate_waveform_plot(
         str(cfg_path),
         analysis_payload["fault_inception_ms"],
@@ -1312,6 +1481,11 @@ def analyze_from_browse():
         "assumed_vt_primary": _f(assumed_ratios.get("assumed_vt_primary"), 150000.0),
         "assumed_vt_secondary": _f(assumed_ratios.get("assumed_vt_secondary"), 100.0),
     }
+    analysis_payload["waveform_data"] = _build_waveform_payload(
+        str(cfg_path),
+        analysis_payload["fault_inception_ms"],
+        analysis_payload["fault_duration_ms"],
+    )
     analysis_payload["waveform_b64"] = _generate_waveform_plot(
         str(cfg_path),
         analysis_payload["fault_inception_ms"],
