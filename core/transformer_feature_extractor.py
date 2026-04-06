@@ -468,7 +468,14 @@ def _get_sampling_rate(record, time: np.ndarray) -> float:
     """Get sampling rate from record metadata or estimate from time axis."""
     rates = getattr(record, 'sampling_rates', [])
     if rates:
-        return float(rates[0].get('samp', 0) if isinstance(rates[0], dict) else rates[0])
+        first = rates[0]
+        if isinstance(first, dict):
+            # comtrade library may use keys like 'samp' or 'rate'
+            return float(first.get('samp', first.get('rate', 0)) or 0)
+        if isinstance(first, (list, tuple)) and len(first) >= 1:
+            # Our parser stores (rate_hz, end_sample)
+            return float(first[0] or 0)
+        return float(first or 0)
     if len(time) > 1:
         dt = float(np.median(np.diff(time[:min(100, len(time))])))
         return 1.0 / dt if dt > 0 else 0.0
