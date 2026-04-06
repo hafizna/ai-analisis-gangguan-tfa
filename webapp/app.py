@@ -1135,6 +1135,11 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
 
     t_ms = np.array(record.time, dtype=float) * 1000.0
     total_samples = len(t_ms)
+    # Shift time so fault inception sits at t=0 (more intuitive for analysis)
+    t0 = float(inception_ms or 0.0)
+    if t0 == 0.0 and total_samples:
+        t0 = float(t_ms[0])
+    t_ms = t_ms - t0
 
     # Preferred ordering and color map
     priority = ["VA", "VB", "VC", "VAB", "VBC", "VCA", "IA", "IB", "IC", "IN", "I0", "3I0", "IG", "IF"]
@@ -1220,8 +1225,8 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
             "digital_truncated": digital_truncated,
         },
         "markers": {
-            "inception_ms": float(inception_ms or 0.0),
-            "clearing_ms": float((inception_ms or 0.0) + (duration_ms or 0.0)),
+            "inception_ms": 0.0,
+            "clearing_ms": float(duration_ms or 0.0),
         },
         "channels": channels,
         "digital": digital,
