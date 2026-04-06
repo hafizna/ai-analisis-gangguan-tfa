@@ -240,6 +240,29 @@
         </main>
     </div>
 
+    <!-- ── Global loading overlay ─────────────────────────────────────────── -->
+    <div id="loadingOverlay" style="
+        display:none; position:fixed; inset:0;
+        background:rgba(11,17,32,0.88);
+        backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+        z-index:9999; align-items:center; justify-content:center;
+        flex-direction:column; gap:20px;">
+        <div class="tfa-spinner"></div>
+        <div id="loadingMsg" style="color:#94a3b8; font-size:13px; font-weight:600;
+             letter-spacing:0.08em; text-transform:uppercase;">Memproses...</div>
+        <div style="color:#475569; font-size:11px; margin-top:-8px;">Mohon tunggu sebentar</div>
+    </div>
+    <style>
+        @keyframes tfa-spin { to { transform: rotate(360deg); } }
+        .tfa-spinner {
+            width: 52px; height: 52px;
+            border: 3px solid rgba(255,255,255,0.08);
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: tfa-spin 0.75s linear infinite;
+            box-shadow: 0 0 20px rgba(59,130,246,0.25);
+        }
+    </style>
     <script>
         (function() {
             const saved = localStorage.getItem('theme') || 'light';
@@ -255,6 +278,36 @@
             const cur = document.documentElement.getAttribute('data-theme') || 'light';
             applyTheme(cur === 'dark' ? 'light' : 'dark', true);
         }
+
+        // ── Loading overlay helpers ──────────────────────────────────────────
+        function showLoading(msg) {
+            const el = document.getElementById('loadingOverlay');
+            if (!el) return;
+            const msgEl = document.getElementById('loadingMsg');
+            if (msgEl && msg) msgEl.textContent = msg;
+            el.style.display = 'flex';
+        }
+        function hideLoading() {
+            const el = document.getElementById('loadingOverlay');
+            if (el) el.style.display = 'none';
+        }
+
+        // Auto-attach to all standard form submits
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('form').forEach(function (form) {
+                // Skip forms that opt out with data-no-loading
+                if (form.dataset.noLoading) return;
+                form.addEventListener('submit', function () {
+                    const msg = form.dataset.loadingMsg || 'Memproses...';
+                    showLoading(msg);
+                });
+            });
+        });
+
+        // Hide overlay if navigating back (browser back button)
+        window.addEventListener('pageshow', function (ev) {
+            if (ev.persisted) hideLoading();
+        });
     </script>
     <script>
         fetch('/api/status').then(r => r.json()).then(data => {

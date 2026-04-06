@@ -103,7 +103,7 @@
         </p>
     </div>
 
-    <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data">
+    <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data" data-loading-msg="Menganalisis file COMTRADE...">
         <div class="drop-zone" id="dropZone">
             <div class="drop-icon">📤</div>
             <h3>Drag &amp; Drop Files Here</h3>

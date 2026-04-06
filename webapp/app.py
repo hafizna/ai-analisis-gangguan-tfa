@@ -980,59 +980,64 @@ def _generate_waveform_plot(cfg_path: str, inception_ms: float, duration_ms: flo
 
         h_ratios = [max(2, min(len(c), 8)) if pt == 'd' else 3 for c, pt in panels]
 
-        BG, PANEL_C, GRID_C, MUTED = '#0b1120', '#1e293b', '#1e293b', '#64748b'
-        CV = ['#ef4444', '#3b82f6', '#10b981']
-        CI = ['#f97316', '#06b6d4', '#a78bfa', '#facc15']
+        # Light/print-friendly palette
+        BG      = '#ffffff'
+        AX_BG   = '#f8fafc'
+        GRID_C  = '#e2e8f0'
+        MUTED   = '#64748b'
+        BORDER  = '#cbd5e1'
+        CV = ['#dc2626', '#2563eb', '#059669']          # Va Vb Vc — bold primaries
+        CI = ['#ea580c', '#0891b2', '#7c3aed', '#ca8a04']  # Ia Ib Ic IN
 
-        fig_h = max(4, sum(h_ratios) * 0.85 + 0.5)
+        fig_h = max(4, sum(h_ratios) * 0.95 + 0.5)
         fig = plt.figure(figsize=(13, fig_h), facecolor=BG)
         gs  = gridspec.GridSpec(len(panels), 1, figure=fig,
-                                height_ratios=h_ratios, hspace=0.07)
+                                height_ratios=h_ratios, hspace=0.10)
         axes = [fig.add_subplot(gs[i]) for i in range(len(panels))]
 
         t_in  = inception_ms
         t_out = inception_ms + duration_ms
 
         def _style(ax, ylabel):
-            ax.set_facecolor(BG)
-            ax.set_ylabel(ylabel, color=MUTED, fontsize=8)
-            ax.tick_params(colors=MUTED, labelsize=7, length=3)
+            ax.set_facecolor(AX_BG)
+            ax.set_ylabel(ylabel, color=MUTED, fontsize=8.5)
+            ax.tick_params(colors=MUTED, labelsize=7.5, length=3)
             for s in ax.spines.values():
-                s.set_edgecolor(GRID_C)
-            ax.grid(True, alpha=0.15, color=GRID_C, linewidth=0.6)
+                s.set_edgecolor(BORDER)
+            ax.grid(True, alpha=0.6, color=GRID_C, linewidth=0.6)
             ax.set_xlim(t_ms[0], t_ms[-1])
 
         def _markers(ax):
-            ax.axvline(t_in,  color='#f59e0b', lw=1.0, ls='--', alpha=0.85, zorder=5)
-            ax.axvline(t_out, color='#ef4444', lw=1.0, ls='--', alpha=0.85, zorder=5)
-            ax.axvspan(t_in, t_out, alpha=0.05, color='#f59e0b', zorder=1)
+            ax.axvline(t_in,  color='#d97706', lw=1.2, ls='--', alpha=0.9, zorder=5)
+            ax.axvline(t_out, color='#dc2626', lw=1.2, ls='--', alpha=0.9, zorder=5)
+            ax.axvspan(t_in, t_out, alpha=0.07, color='#f59e0b', zorder=1)
 
         leg_extra = [
-            Line2D([0], [0], color='#f59e0b', lw=1.2, ls='--', label='Inception'),
-            Line2D([0], [0], color='#ef4444', lw=1.2, ls='--', label='Clearing'),
+            Line2D([0], [0], color='#d97706', lw=1.4, ls='--', label='Inception'),
+            Line2D([0], [0], color='#dc2626', lw=1.4, ls='--', label='Clearing'),
         ]
+        leg_kw = dict(fontsize=7.5, facecolor='white', edgecolor=BORDER,
+                      labelcolor='#334155', framealpha=0.92)
 
         for ax_i, (chs, ptype) in enumerate(panels):
             ax = axes[ax_i]
             if ptype == 'v':
                 _style(ax, 'Tegangan (kV)')
                 for j, ch in enumerate(chs[:3]):
-                    ax.plot(t_ms, ch.samples, color=CV[j % 3], lw=0.7,
-                            label=ch.canonical_name or ch.name, alpha=0.9)
+                    ax.plot(t_ms, ch.samples, color=CV[j % 3], lw=0.85,
+                            label=ch.canonical_name or ch.name, alpha=0.95)
                 _markers(ax)
                 h, l = ax.get_legend_handles_labels()
                 ax.legend(h + leg_extra, l + ['Inception', 'Clearing'],
-                          loc='upper right', fontsize=7, facecolor=PANEL_C,
-                          edgecolor=GRID_C, labelcolor='#94a3b8', framealpha=0.85)
+                          loc='upper right', **leg_kw)
 
             elif ptype == 'i':
                 _style(ax, 'Arus (A)')
                 for j, ch in enumerate(chs[:4]):
-                    ax.plot(t_ms, ch.samples, color=CI[j % 4], lw=0.7,
-                            label=ch.canonical_name or ch.name, alpha=0.9)
+                    ax.plot(t_ms, ch.samples, color=CI[j % 4], lw=0.85,
+                            label=ch.canonical_name or ch.name, alpha=0.95)
                 _markers(ax)
-                ax.legend(loc='upper right', fontsize=7, facecolor=PANEL_C,
-                          edgecolor=GRID_C, labelcolor='#94a3b8', framealpha=0.85)
+                ax.legend(loc='upper right', **leg_kw)
 
             elif ptype == 'd':
                 _style(ax, 'Status Digital')
@@ -1040,20 +1045,20 @@ def _generate_waveform_plot(cfg_path: str, inception_ms: float, duration_ms: flo
                 for j, ch in enumerate(chs[:max_d]):
                     offset = (max_d - 1 - j) * 1.3
                     ax.step(t_ms, np.array(ch.samples, dtype=float) * 0.9 + offset,
-                            where='post', color='#60a5fa', lw=0.9, alpha=0.85)
+                            where='post', color='#3b82f6', lw=1.0, alpha=0.9)
                     ax.text(t_ms[0], offset + 0.45, (ch.name or '')[:28],
-                            color='#94a3b8', fontsize=6, va='center')
-                ax.axvline(t_in,  color='#f59e0b', lw=1.0, ls='--', alpha=0.85, zorder=5)
-                ax.axvline(t_out, color='#ef4444', lw=1.0, ls='--', alpha=0.85, zorder=5)
+                            color='#334155', fontsize=6.5, va='center', fontweight='600')
+                ax.axvline(t_in,  color='#d97706', lw=1.2, ls='--', alpha=0.9, zorder=5)
+                ax.axvline(t_out, color='#dc2626', lw=1.2, ls='--', alpha=0.9, zorder=5)
                 ax.set_yticks([])
 
         for ax in axes[:-1]:
             ax.tick_params(labelbottom=False)
-        axes[-1].set_xlabel('Waktu (ms dari trigger)', color=MUTED, fontsize=8)
+        axes[-1].set_xlabel('Waktu (ms dari trigger)', color=MUTED, fontsize=8.5)
 
-        plt.tight_layout(pad=0.4)
+        plt.tight_layout(pad=0.5)
         buf = _io.BytesIO()
-        fig.savefig(buf, format='png', dpi=110, bbox_inches='tight', facecolor=BG)
+        fig.savefig(buf, format='png', dpi=130, bbox_inches='tight', facecolor=BG)
         plt.close(fig)
         buf.seek(0)
         return _b64.b64encode(buf.read()).decode('ascii')

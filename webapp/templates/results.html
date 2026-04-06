@@ -817,7 +817,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 <div class="confirm-panel">
     <h3>Konfirmasi Penyebab</h3>
     <p>Pilih penyebab aktual untuk menyimpan ke riwayat dan meningkatkan akurasi model.</p>
-    <form action="{{ url_for('confirm_prediction') }}" method="POST">
+    <form action="{{ url_for('confirm_prediction') }}" method="POST" data-loading-msg="Menyimpan konfirmasi...">
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
             <div class="form-group">
                 <label for="fault_cause">Penyebab aktual</label>
@@ -877,6 +877,7 @@ function confirmRatiosAndReanalyze() {
         form.appendChild(input);
     }
     document.body.appendChild(form);
+    showLoading('Menghitung ulang dengan rasio baru...');
     form.submit();
 }
 
@@ -1074,16 +1075,26 @@ _refreshCtptStatusOnly();
         });
     }
 
+    const axisBase = {
+        color: '#94a3b8',
+        gridcolor: 'rgba(148,163,184,0.18)',
+        linecolor: 'rgba(148,163,184,0.25)',
+        zerolinecolor: 'rgba(148,163,184,0.25)',
+        tickfont: { size: 10, color: '#64748b' },
+        title: { font: { size: 11, color: '#94a3b8' } }
+    };
+
     if (voltageChannels.length) {
         Plotly.newPlot(voltagePlot, buildTraces(voltageChannels), {
-            margin: { l: 46, r: 24, t: 24, b: 32 },
+            margin: { l: 54, r: 20, t: 28, b: 30 },
             paper_bgcolor: 'rgba(0,0,0,0)',
-            plot_bgcolor: 'rgba(0,0,0,0)',
-            xaxis: { title: 'Waktu (ms)', gridcolor: 'rgba(148,163,184,0.2)' },
-            yaxis: { title: 'Tegangan (kV)', gridcolor: 'rgba(148,163,184,0.2)' },
-            legend: { orientation: 'h', x: 0, y: 1.15, font: { size: 10 } },
+            plot_bgcolor:  'rgba(0,0,0,0)',
+            xaxis: { ...axisBase, title: { text: 'Waktu (ms)', font: { size: 11, color: '#94a3b8' } } },
+            yaxis: { ...axisBase, title: { text: 'Tegangan (kV)', font: { size: 11, color: '#94a3b8' } }, tickformat: '.3g' },
+            legend: { orientation: 'h', x: 0, y: 1.18, font: { size: 10, color: '#94a3b8' } },
             shapes: markerShapes,
-            dragmode: 'pan'
+            dragmode: 'pan',
+            hovermode: 'x unified'
         }, plotConfig);
     } else if (voltagePlot) {
         voltagePlot.style.display = 'none';
@@ -1091,14 +1102,15 @@ _refreshCtptStatusOnly();
 
     if (currentChannels.length) {
         Plotly.newPlot(currentPlot, buildTraces(currentChannels), {
-            margin: { l: 46, r: 24, t: 24, b: 32 },
+            margin: { l: 54, r: 20, t: 28, b: 30 },
             paper_bgcolor: 'rgba(0,0,0,0)',
-            plot_bgcolor: 'rgba(0,0,0,0)',
-            xaxis: { title: 'Waktu (ms)', gridcolor: 'rgba(148,163,184,0.2)' },
-            yaxis: { title: 'Arus (A)', gridcolor: 'rgba(148,163,184,0.2)' },
-            legend: { orientation: 'h', x: 0, y: 1.15, font: { size: 10 } },
+            plot_bgcolor:  'rgba(0,0,0,0)',
+            xaxis: { ...axisBase, title: { text: 'Waktu (ms)', font: { size: 11, color: '#94a3b8' } } },
+            yaxis: { ...axisBase, title: { text: 'Arus (A)', font: { size: 11, color: '#94a3b8' } }, tickformat: '.3g' },
+            legend: { orientation: 'h', x: 0, y: 1.18, font: { size: 10, color: '#94a3b8' } },
             shapes: markerShapes,
-            dragmode: 'pan'
+            dragmode: 'pan',
+            hovermode: 'x unified'
         }, plotConfig);
     } else if (currentPlot) {
         currentPlot.style.display = 'none';
@@ -1111,21 +1123,21 @@ _refreshCtptStatusOnly();
             y: ch.y.map(v => v * 0.8 + offset),
             name: ch.name || ch.id,
             mode: 'lines',
-            line: { color: '#60a5fa', width: 1, shape: 'hv' },
-            hovertemplate: `${ch.name || ch.id}<br>%{x:.2f} ms<br>state %{customdata}<extra></extra>`,
+            line: { color: '#60a5fa', width: 1.2, shape: 'hv' },
+            hovertemplate: `${ch.name || ch.id}<br>%{x:.2f} ms — state %{customdata}<extra></extra>`,
             customdata: ch.y
         };
     });
 
     if (digitalTraces.length > 0) {
         const tickVals = digitalTraces.map((_, idx) => (digitalTraces.length - 1 - idx) * 1.6 + 0.4);
-        const tickText = (wf.digital || []).map(ch => (ch.name || ch.id || '').slice(0, 20));
+        const tickText = (wf.digital || []).map(ch => (ch.name || ch.id || '').slice(0, 22));
         Plotly.newPlot(digitalPlot, digitalTraces, {
-            margin: { l: 46, r: 24, t: 10, b: 30 },
+            margin: { l: 130, r: 20, t: 10, b: 36 },
             paper_bgcolor: 'rgba(0,0,0,0)',
-            plot_bgcolor: 'rgba(0,0,0,0)',
-            xaxis: { title: 'Waktu (ms)', gridcolor: 'rgba(148,163,184,0.2)' },
-            yaxis: { tickvals: tickVals, ticktext: tickText, gridcolor: 'rgba(148,163,184,0.1)' },
+            plot_bgcolor:  'rgba(0,0,0,0)',
+            xaxis: { ...axisBase, title: { text: 'Waktu (ms dari trigger)', font: { size: 11, color: '#94a3b8' } } },
+            yaxis: { tickvals: tickVals, ticktext: tickText, ...axisBase, tickfont: { size: 9, color: '#94a3b8' } },
             showlegend: false,
             shapes: markerShapes,
             dragmode: 'pan'
@@ -1133,6 +1145,22 @@ _refreshCtptStatusOnly();
     } else if (digitalPlot) {
         digitalPlot.style.display = 'none';
         if (toggleDigital) toggleDigital.checked = false;
+    }
+
+    // Auto-zoom to fault window on initial render
+    if (tOut > tIn) {
+        setTimeout(function () {
+            const pad = Math.max(30, (tOut - tIn) * 0.8);
+            const range = [tIn - pad, tOut + pad];
+            if (voltagePlot && voltagePlot.style.display !== 'none')
+                Plotly.relayout(voltagePlot, { 'xaxis.range': range });
+            if (currentPlot && currentPlot.style.display !== 'none')
+                Plotly.relayout(currentPlot,  { 'xaxis.range': range });
+            if (digitalPlot && digitalPlot.style.display !== 'none')
+                Plotly.relayout(digitalPlot,  { 'xaxis.range': range });
+            autoScaleY(voltagePlot, vState);
+            autoScaleY(currentPlot, iState);
+        }, 350);
     }
 
     if (listEl) {
@@ -1466,94 +1494,180 @@ _refreshCtptStatusOnly();
     }
 
     function _getPlotSize(plotRef) {
-        if (!plotRef) return { width: 1000, height: 360 };
+        if (!plotRef) return { width: 1200, height: 380 };
         const rect = plotRef.getBoundingClientRect();
         return {
-            width: Math.max(800, Math.floor(rect.width)),
-            height: Math.max(260, Math.floor(rect.height))
+            width:  Math.max(900,  Math.floor(rect.width)),
+            height: Math.max(280,  Math.floor(rect.height))
         };
+    }
+
+    function _setBtnState(btn, loading) {
+        if (!btn) return;
+        if (loading) {
+            btn._origText = btn.textContent;
+            btn.textContent = '⏳ Memuat...';
+            btn.disabled = true;
+            btn.style.opacity = '0.7';
+        } else {
+            btn.textContent = btn._origText || btn.textContent;
+            btn.disabled = false;
+            btn.style.opacity = '';
+        }
     }
 
     function _imgToCanvas(imgUrl) {
         return new Promise((resolve, reject) => {
             const img = new Image();
-            img.onload = () => resolve(img);
+            img.onload  = () => resolve(img);
             img.onerror = reject;
             img.src = imgUrl;
         });
     }
 
-    async function exportCombinedImage() {
+    // Builds a combined canvas from all visible plots (white background, 2× scale for crispness)
+    async function _buildCombinedCanvas(scale) {
+        scale = scale || 2;
         const plots = [];
         if (voltagePlot && voltagePlot.style.display !== 'none') plots.push(voltagePlot);
-        if (currentPlot && currentPlot.style.display !== 'none') plots.push(currentPlot);
-        if (digitalPlot && digitalPlot.style.display !== 'none') plots.push(digitalPlot);
-        if (!plots.length) return;
+        if (currentPlot && currentPlot.style.display !== 'none')  plots.push(currentPlot);
+        if (digitalPlot && digitalPlot.style.display !== 'none')  plots.push(digitalPlot);
+        if (!plots.length) return null;
 
         const size = _getPlotSize(plots[0]);
+        // Explicitly force white background in Plotly export so transparency is resolved
         const imgUrls = await Promise.all(
-            plots.map(p => Plotly.toImage(p, { format: 'png', width: size.width, height: size.height }))
+            plots.map(p => Plotly.toImage(p, {
+                format: 'png',
+                width:  size.width,
+                height: size.height,
+                scale:  scale
+            }))
         );
         const imgs = await Promise.all(imgUrls.map(_imgToCanvas));
 
-        const totalHeight = imgs.reduce((sum, img) => sum + img.height, 0);
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(...imgs.map(i => i.width));
-        canvas.height = totalHeight + 40;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const W = Math.max(...imgs.map(i => i.width));
+        const headerH = 64;
+        const H = imgs.reduce((s, i) => s + i.height, 0) + headerH + 24;
 
-        let y = 20;
+        const canvas = document.createElement('canvas');
+        canvas.width  = W;
+        canvas.height = H;
+        const ctx = canvas.getContext('2d');
+
+        // Background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, W, H);
+
+        // Header text
+        const title    = document.querySelector('.topbar-title')?.textContent  || 'TFA';
+        const subtitle = document.querySelector('.topbar-sub')?.textContent    || '';
+        const now      = new Date().toLocaleString('id-ID');
+        ctx.fillStyle  = '#0f172a';
+        ctx.font       = `bold ${14 * scale}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
+        ctx.fillText(title, 20, 28 * scale / 2);
+        ctx.fillStyle  = '#64748b';
+        ctx.font       = `${11 * scale}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
+        ctx.fillText(`${subtitle}  |  ${now}`, 20, 48 * scale / 2);
+
+        // Thin rule line
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth   = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, headerH - 4); ctx.lineTo(W, headerH - 4);
+        ctx.stroke();
+
+        // Draw each plot
+        let y = headerH;
         imgs.forEach(img => {
             ctx.drawImage(img, 0, y);
             y += img.height;
         });
+        return canvas;
+    }
 
-        const link = document.createElement('a');
-        link.download = 'comtrade_waveforms.png';
-        link.href = canvas.toDataURL('image/png');
-        link.click();
+    async function exportCombinedImage() {
+        _setBtnState(exportPngBtn, true);
+        try {
+            const canvas = await _buildCombinedCanvas(2);
+            if (!canvas) return;
+            const link = document.createElement('a');
+            const subtitle = document.querySelector('.topbar-sub')?.textContent || 'comtrade';
+            const safeName = subtitle.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 60);
+            link.download = `waveform_${safeName}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        } catch (err) {
+            console.error('Export PNG error:', err);
+            alert('Gagal mengekspor PNG. Coba lagi atau gunakan tombol Print/PDF.');
+        } finally {
+            _setBtnState(exportPngBtn, false);
+        }
     }
 
     async function printCombined() {
-        const plots = [];
-        if (voltagePlot && voltagePlot.style.display !== 'none') plots.push(voltagePlot);
-        if (currentPlot && currentPlot.style.display !== 'none') plots.push(currentPlot);
-        if (digitalPlot && digitalPlot.style.display !== 'none') plots.push(digitalPlot);
-        if (!plots.length) return;
-
-        const size = _getPlotSize(plots[0]);
-        const imgUrls = await Promise.all(
-            plots.map(p => Plotly.toImage(p, { format: 'png', width: size.width, height: size.height }))
-        );
-        const imgs = await Promise.all(imgUrls.map(_imgToCanvas));
-
-        const totalHeight = imgs.reduce((sum, img) => sum + img.height, 0);
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(...imgs.map(i => i.width));
-        canvas.height = totalHeight + 40;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        let y = 20;
-        imgs.forEach(img => {
-            ctx.drawImage(img, 0, y);
-            y += img.height;
-        });
-
-        const dataUrl = canvas.toDataURL('image/png');
+        // IMPORTANT: window.open MUST be called before any await to avoid popup blocker
         const w = window.open('', '_blank');
-        if (!w) return;
-        w.document.write(`<img src=\"${dataUrl}\" style=\"width:100%;\">`);
-        w.document.close();
-        w.focus();
-        w.print();
+        if (!w) {
+            alert('Popup diblokir browser.\nIzinkan popup untuk halaman ini, lalu coba lagi.');
+            return;
+        }
+        _setBtnState(printBtn, true);
+        // Show placeholder while loading
+        const subtitle = document.querySelector('.topbar-sub')?.textContent || '';
+        w.document.write(`<!DOCTYPE html><html><head><title>COMTRADE Waveforms</title></head>
+            <body style="margin:24px;font-family:sans-serif;color:#0f172a;">
+            <p style="color:#64748b;">Memuat waveform...</p></body></html>`);
+
+        try {
+            const canvas = await _buildCombinedCanvas(2);
+            if (!canvas) { w.close(); return; }
+            const dataUrl = canvas.toDataURL('image/png');
+            const now = new Date().toLocaleString('id-ID');
+            const html = `<!DOCTYPE html><html><head>
+                <title>COMTRADE — ${subtitle}</title>
+                <style>
+                    * { box-sizing: border-box; }
+                    body { margin: 24px; font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif; color: #0f172a; }
+                    h2  { font-size: 16px; margin: 0 0 4px; }
+                    p   { font-size: 12px; color: #64748b; margin: 0 0 16px; }
+                    img { width: 100%; display: block; border: 1px solid #e2e8f0; border-radius: 8px; }
+                    .print-btn {
+                        display: inline-block; margin-top: 20px;
+                        padding: 10px 24px; background: #3b82f6; color: white;
+                        border: none; border-radius: 8px; font-size: 14px;
+                        font-weight: 600; cursor: pointer; letter-spacing: 0.04em;
+                    }
+                    @media print {
+                        .print-btn { display: none; }
+                        body { margin: 0; }
+                    }
+                </style>
+            </head><body>
+                <h2>Rekaman Gelombang COMTRADE</h2>
+                <p>${subtitle} — diekspor ${now}</p>
+                <img src="${dataUrl}" alt="COMTRADE Waveform">
+                <br>
+                <button class="print-btn" onclick="window.print()">🖨 Cetak / Simpan sebagai PDF</button>
+            </body></html>`;
+
+            w.document.open();
+            w.document.write(html);
+            w.document.close();
+            w.focus();
+            // Auto-trigger print dialog after image renders (800 ms grace)
+            setTimeout(() => { try { w.print(); } catch(e) {} }, 800);
+        } catch (err) {
+            console.error('Print error:', err);
+            try { w.close(); } catch(e) {}
+            alert('Gagal menyiapkan cetak. Periksa konsol untuk detail.');
+        } finally {
+            _setBtnState(printBtn, false);
+        }
     }
 
     if (exportPngBtn) exportPngBtn.addEventListener('click', exportCombinedImage);
-    if (printBtn) printBtn.addEventListener('click', printCombined);
+    if (printBtn)     printBtn.addEventListener('click', printCombined);
 })();
 </script>
 {% endif %}
