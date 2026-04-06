@@ -95,7 +95,7 @@
                 <th>Fasa</th>
                 <th>Durasi</th>
                 <th>AR</th>
-                <th>Keyakinan</th>
+                <th>Skor Model</th>
             </tr>
         </thead>
         <tbody>
@@ -132,7 +132,18 @@
             <td style="font-size:12px;">{{ r.phases }}</td>
             <td style="font-size:12px;">{{ r.duration_ms | float | round(0) | int }} ms</td>
             <td style="font-size:12px;">{{ r.reclose_ok }}</td>
-            <td style="font-size:12px;">{{ (r.predicted_conf | float * 100) | round(0) | int }}%</td>
+            <td style="min-width:90px;">
+                {% set conf_pct = (r.predicted_conf | float * 100) | round(0) | int %}
+                {% if conf_pct >= 75 %}{% set cc = '#10b981' %}
+                {% elif conf_pct >= 50 %}{% set cc = '#f59e0b' %}
+                {% else %}{% set cc = '#ef4444' %}{% endif %}
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <div style="flex:1; height:5px; background:#1e293b; border-radius:3px; overflow:hidden;">
+                        <div style="width:{{ conf_pct }}%; height:100%; background:{{ cc }}; border-radius:3px;"></div>
+                    </div>
+                    <span style="font-size:11px; color:{{ cc }}; font-weight:700; white-space:nowrap;">{{ conf_pct }}%</span>
+                </div>
+            </td>
         </tr>
         {% endfor %}
         </tbody>

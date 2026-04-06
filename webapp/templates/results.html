@@ -581,6 +581,27 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 
 </div>
 
+{% if analysis.waveform_b64 %}
+<!-- ══ WAVEFORM (full width) ═══════════════════════════════════ -->
+<div style="grid-column:1/-1; background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; overflow:hidden;">
+    <div style="padding:12px 20px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <div class="r-section-label" style="margin:0;">Rekaman Gelombang COMTRADE</div>
+        <div style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:14px;">
+            <span><span style="color:#ef4444; font-weight:700;">Va</span>
+                  <span style="color:#3b82f6; font-weight:700;">Vb</span>
+                  <span style="color:#10b981; font-weight:700;">Vc</span></span>
+            <span><span style="color:#f97316; font-weight:700;">Ia</span>
+                  <span style="color:#06b6d4; font-weight:700;">Ib</span>
+                  <span style="color:#a78bfa; font-weight:700;">Ic</span></span>
+            <span style="color:#f59e0b;">-- Inception</span>
+            <span style="color:#ef4444;">-- Clearing</span>
+        </div>
+    </div>
+    <img src="data:image/png;base64,{{ analysis.waveform_b64 }}"
+         style="width:100%; display:block;" alt="Waveform COMTRADE">
+</div>
+{% endif %}
+
 <!-- ══ CONFIRM (full width) ════════════════════════════════════ -->
 <div class="confirm-panel">
     <h3>Konfirmasi Penyebab</h3>
