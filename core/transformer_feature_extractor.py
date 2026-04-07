@@ -57,6 +57,9 @@ SLOPE2_PCT                 = 80.0   # Dual-slope saturation knee
 IDIFF_OPERATE_PU           = 0.20   # Minimum operate threshold (20% of tap)
 ASYMMETRY_INRUSH_THRESHOLD = 0.35   # DC-offset asymmetry index ≥ 0.35 → inrush
 
+# Standard transformer ratings (MVA) commonly used in Indonesia (incl. IBT)
+STANDARD_MVA_RATINGS = [30, 60, 100, 150, 200, 250, 300, 315, 500]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Feature dataclass
@@ -119,6 +122,8 @@ class TransformerFeatures:
     # ── Energisation context ──────────────────────────────────────────────────
     energisation_flag: bool = False   # LV pre-fault current ≈ 0 (energising from HV)
     lv_prefault_irms_pu: Optional[float] = None  # pre-fault LV RMS in per-unit
+    estimated_mva: Optional[float] = None        # snapped to standard rating list
+    lv_base_current_a: Optional[float] = None    # base current from estimated MVA
 
     # ── Timing / general ─────────────────────────────────────────────────────
     inception_angle_deg: Optional[float] = None  # voltage angle at event inception
@@ -190,6 +195,13 @@ def extract_transformer_features(
 
     # ── Per-unit base ─────────────────────────────────────────────────────────
     i_base = _estimate_base_current(samples, rated_current_a, inception_idx, spc)
+    # Estimate MVA from HV side and derive LV base current for per-unit scaling.
+    est_mva = _estimate_mva_from_hv(samples, inception_idx, spc)
+    if est_mva is not None:
+        features.estimated_mva = _snap_to_standard_mva(est_mva)
+        features.lv_base_current_a = _estimate_lv_base_current(
+            samples, features.estimated_mva, inception_idx, spc
+        )
 
     # ── Compute differential / restraint ─────────────────────────────────────
     diff_a, rstr_a = _get_diff_rstr(samples, 'a', ch_map)
@@ -298,8 +310,9 @@ def extract_transformer_features(
     if i_lv_a_arr is not None and inception_idx > spc:
         prefault_lv = i_lv_a_arr[prefault_samples:inception_idx]
         rms_lv_pre = _rms(prefault_lv)
-        features.lv_prefault_irms_pu = (rms_lv_pre / i_base) if i_base > 0 else None
-        features.energisation_flag = rms_lv_pre < 0.05 * i_base if i_base > 0 else False
+        lv_base = features.lv_base_current_a if features.lv_base_current_a else i_base
+        features.lv_prefault_irms_pu = (rms_lv_pre / lv_base) if lv_base > 0 else None
+        features.energisation_flag = rms_lv_pre < 0.05 * lv_base if lv_base > 0 else False
 
     # ── Peak differential (absolute) ─────────────────────────────────────────
     if diff_a is not None and len(diff_a) > end_idx:
@@ -492,6 +505,61 @@ def _get_inception_idx(fault_event, time: np.ndarray, spc: int) -> int:
     return min(2 * spc, max(0, len(time) // 4))
 
 
+def _prefault_rms(arr: np.ndarray, inception_idx: int, spc: int) -> Optional[float]:
+    """RMS over one-cycle pre-fault window."""
+    if arr is None or inception_idx < spc:
+        return None
+    pre = arr[max(0, inception_idx - spc):inception_idx]
+    if len(pre) == 0:
+        return None
+    return _rms(pre)
+
+
+def _estimate_mva_from_hv(samples: dict, inception_idx: int, spc: int) -> Optional[float]:
+    """
+    Estimate transformer MVA from HV side pre-fault RMS V/I.
+    Assumes phase-to-ground voltage channels (kV) and phase current (A).
+    """
+    v_candidates = [samples.get('v_hv_a'), samples.get('v_hv_b'), samples.get('v_hv_c')]
+    i_candidates = [samples.get('i_hv_a'), samples.get('i_hv_b'), samples.get('i_hv_c')]
+
+    v_rms = [v for v in (_prefault_rms(v, inception_idx, spc) for v in v_candidates) if v]
+    i_rms = [i for i in (_prefault_rms(i, inception_idx, spc) for i in i_candidates) if i]
+    if not v_rms or not i_rms:
+        return None
+
+    v_ph_kv = float(np.mean(v_rms))
+    i_a = float(np.mean(i_rms))
+    if v_ph_kv <= 0.1 or i_a <= 0.1:
+        return None
+
+    # S_MVA = 3 * V_phase(kV) * I(A) / 1000
+    return (3.0 * v_ph_kv * i_a) / 1000.0
+
+
+def _snap_to_standard_mva(mva: float) -> float:
+    """Snap estimated MVA to nearest standard rating."""
+    if not STANDARD_MVA_RATINGS:
+        return float(mva)
+    return float(min(STANDARD_MVA_RATINGS, key=lambda x: abs(x - mva)))
+
+
+def _estimate_lv_base_current(samples: dict, mva: float, inception_idx: int, spc: int) -> Optional[float]:
+    """
+    Compute LV base current (A) from MVA and LV phase voltage.
+    Falls back to 20 kV if LV voltage channels are not available.
+    """
+    if not mva or mva <= 0:
+        return None
+    v_candidates = [samples.get('v_lv_a'), samples.get('v_lv_b'), samples.get('v_lv_c')]
+    v_rms = [v for v in (_prefault_rms(v, inception_idx, spc) for v in v_candidates) if v]
+    v_ph_kv = float(np.mean(v_rms)) if v_rms else 20.0
+    if v_ph_kv <= 0.1:
+        v_ph_kv = 20.0
+    # I_base = S_MVA * 1000 / (3 * V_phase_kV)
+    return (mva * 1000.0) / (3.0 * v_ph_kv)
+
+
 def _estimate_base_current(samples: dict, rated_a: float, inception_idx: int, spc: int) -> float:
     """
     Estimate per-unit base current.
@@ -578,6 +646,8 @@ def features_to_dict(f: TransformerFeatures) -> dict:
         'hv_lv_phase_diff_a_deg': f.hv_lv_phase_diff_a_deg,
         'energisation_flag':      f.energisation_flag,
         'lv_prefault_irms_pu':    f.lv_prefault_irms_pu,
+        'estimated_mva':          f.estimated_mva,
+        'lv_base_current_a':      f.lv_base_current_a,
         'inception_angle_deg':    f.inception_angle_deg,
         'fault_duration_ms':      f.fault_duration_ms,
         'peak_idiff_a':           f.peak_idiff_a,
