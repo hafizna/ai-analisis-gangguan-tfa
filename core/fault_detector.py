@@ -438,8 +438,28 @@ def _detect_from_waveforms(record) -> Optional[FaultEvent]:
     ic = _pick_current_channel(record, 'IC', active_line_tag)
 
     if not (ia and ib and ic):
-        logger.warning("Cannot detect fault: missing phase currents")
-        return None
+        # Fallback: transformer / DFR recordings may not have IA/IB/IC canonical names.
+        # Pick the 3 highest-energy current channels (by peak amplitude) as surrogates.
+        all_current_chs = [
+            ch for ch in record.analog_channels
+            if ch.measurement == "current" and len(ch.samples) > 0
+        ]
+        if len(all_current_chs) >= 3:
+            all_current_chs.sort(key=lambda c: float(np.max(np.abs(c.samples))), reverse=True)
+            ia, ib, ic = all_current_chs[0], all_current_chs[1], all_current_chs[2]
+            logger.debug(
+                "No IA/IB/IC canonical channels — using highest-energy surrogates: "
+                f"{ia.name}, {ib.name}, {ic.name}"
+            )
+        elif len(all_current_chs) > 0:
+            # Fewer than 3 channels — duplicate the best one so maths still work
+            while len(all_current_chs) < 3:
+                all_current_chs.append(all_current_chs[-1])
+            ia, ib, ic = all_current_chs[0], all_current_chs[1], all_current_chs[2]
+            logger.debug("Using fewer than 3 current channels (duplicated for fault detection)")
+        else:
+            logger.warning("Cannot detect fault: no current channels found")
+            return None
 
     if len(ia.samples) == 0 or len(record.time) == 0:
         logger.warning("Cannot detect fault: no samples")
@@ -500,7 +520,7 @@ def _detect_from_waveforms(record) -> Optional[FaultEvent]:
         faulted_phases.append('C')
 
     # Detect clearing (when current drops back to pre-fault levels)
-    clearing_idx = _detect_fault_clearing(ia, ib, ic, inception_idx, prefault_length)
+    clearing_idx = _detect_fault_clearing(ia, ib, ic, inception_idx, prefault_length, dt=dt)
     clearing_time = record.time[clearing_idx] if clearing_idx and clearing_idx < len(record.time) else None
 
     duration_ms = (clearing_time - inception_time) * 1000 if clearing_time else 0.0
@@ -521,33 +541,62 @@ def _detect_from_waveforms(record) -> Optional[FaultEvent]:
     )
 
 
-def _detect_fault_clearing(ia, ib, ic, inception_idx, prefault_length):
-    """Detect when fault current returns to pre-fault levels."""
+def _detect_fault_clearing(ia, ib, ic, inception_idx, prefault_length, dt=None):
+    """
+    Detect when fault current returns to pre-fault levels.
 
-    # Calculate pre-fault RMS
-    prefault_rms_a = np.sqrt(np.mean(ia.samples[:prefault_length]**2))
-    prefault_rms_b = np.sqrt(np.mean(ib.samples[:prefault_length]**2))
-    prefault_rms_c = np.sqrt(np.mean(ic.samples[:prefault_length]**2))
+    Uses a sliding half-cycle RMS window (not instantaneous samples) to avoid
+    false-early clearing on:
+      - Transformer inrush (current naturally drops in missing half-cycles)
+      - Single-phase faults where unfaulted phases stay near zero
+      - Pre-fault load ≈ 0 (energisation) where threshold_rms would be ~0
 
-    # Look for when current drops back to ~1.5x pre-fault levels
-    # (allowing some margin for transients)
-    threshold_a = prefault_rms_a * 1.5
-    threshold_b = prefault_rms_b * 1.5
-    threshold_c = prefault_rms_c * 1.5
+    Threshold = max(2.0 × prefault_rms, 0.15 × peak_fault_rms)
+    Confirmation = half-cycle RMS stays below threshold for one full cycle.
+    """
+    n = len(ia.samples)
 
-    # Search from inception forward
-    for i in range(inception_idx + 10, len(ia.samples)):
-        # Check instantaneous current
-        if (np.abs(ia.samples[i]) < threshold_a and
-            np.abs(ib.samples[i]) < threshold_b and
-            np.abs(ic.samples[i]) < threshold_c):
-            # Verify it stays low for at least 5 samples
-            if i + 5 < len(ia.samples):
-                window = slice(i, i+5)
-                if (np.all(np.abs(ia.samples[window]) < threshold_a) and
-                    np.all(np.abs(ib.samples[window]) < threshold_b) and
-                    np.all(np.abs(ic.samples[window]) < threshold_c)):
-                    return i
+    # Estimate samples-per-cycle (spc); default 96 for 4800 S/s / 50 Hz
+    if dt and dt > 0:
+        spc = max(8, int(round(0.02 / dt)))   # 1 cycle at 50 Hz
+    else:
+        spc = 96
+    half_spc = max(4, spc // 2)
+
+    # Pre-fault RMS (cycle-window, not the whole prefault region)
+    pf_win = slice(max(0, prefault_length - spc), prefault_length)
+    prefault_rms_a = float(np.sqrt(np.mean(ia.samples[pf_win] ** 2)))
+    prefault_rms_b = float(np.sqrt(np.mean(ib.samples[pf_win] ** 2)))
+    prefault_rms_c = float(np.sqrt(np.mean(ic.samples[pf_win] ** 2)))
+
+    # Peak fault RMS (first 3 cycles after inception)
+    fault_win = slice(inception_idx, min(inception_idx + 3 * spc, n))
+    peak_rms_a = float(np.sqrt(np.mean(ia.samples[fault_win] ** 2)))
+    peak_rms_b = float(np.sqrt(np.mean(ib.samples[fault_win] ** 2)))
+    peak_rms_c = float(np.sqrt(np.mean(ic.samples[fault_win] ** 2)))
+
+    # Threshold: at least 2× prefault, floor at 15% of peak fault RMS
+    threshold_a = max(prefault_rms_a * 2.0, peak_rms_a * 0.15)
+    threshold_b = max(prefault_rms_b * 2.0, peak_rms_b * 0.15)
+    threshold_c = max(prefault_rms_c * 2.0, peak_rms_c * 0.15)
+
+    # Minimum search start: at least 10ms after inception
+    min_start = inception_idx + half_spc
+
+    for i in range(min_start, n - spc):
+        win = slice(i, i + half_spc)
+        rms_a = float(np.sqrt(np.mean(ia.samples[win] ** 2)))
+        rms_b = float(np.sqrt(np.mean(ib.samples[win] ** 2)))
+        rms_c = float(np.sqrt(np.mean(ic.samples[win] ** 2)))
+
+        if rms_a < threshold_a and rms_b < threshold_b and rms_c < threshold_c:
+            # Confirm: sustained low for one full cycle
+            confirm_win = slice(i, i + spc)
+            rms_a2 = float(np.sqrt(np.mean(ia.samples[confirm_win] ** 2)))
+            rms_b2 = float(np.sqrt(np.mean(ib.samples[confirm_win] ** 2)))
+            rms_c2 = float(np.sqrt(np.mean(ic.samples[confirm_win] ** 2)))
+            if rms_a2 < threshold_a and rms_b2 < threshold_b and rms_c2 < threshold_c:
+                return i
 
     return None
 

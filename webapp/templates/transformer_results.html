@@ -400,6 +400,38 @@
       </div>
     </div>
 
+    <!-- Transformer nameplate / nominal current -->
+    <div class="x-card">
+      <div class="x-section-label">Estimasi Rating Trafo</div>
+      <div class="feat-grid" style="grid-template-columns: repeat(3, 1fr);">
+
+        <div class="feat-box">
+          <label class="feat-label">MVA Estimasi</label>
+          <span class="feat-val">{% if analysis.estimated_mva %}{{ "%.0f"|format(analysis.estimated_mva) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">MVA</span>
+          <span class="feat-flag" style="color:#64748b; font-size:10px;">Rating standar terdekat</span>
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">I Nominal HV</label>
+          <span class="feat-val">{% if analysis.hv_base_current_a %}{{ "%.0f"|format(analysis.hv_base_current_a) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">A</span>
+          <span class="feat-flag" style="color:#64748b; font-size:10px;">Sisi primer (W1)</span>
+        </div>
+
+        <div class="feat-box">
+          <label class="feat-label">I Nominal LV</label>
+          <span class="feat-val">{% if analysis.lv_base_current_a %}{{ "%.0f"|format(analysis.lv_base_current_a) }}{% else %}—{% endif %}</span>
+          <span class="feat-unit">A</span>
+          <span class="feat-flag" style="color:#64748b; font-size:10px;">Sisi sekunder (W2)</span>
+        </div>
+
+      </div>
+      <div style="margin-top:8px; font-size:10px; color:#334155;">
+        Estimasi dari tegangan dan arus pre-fault sisi HV. Digunakan sebagai basis per-unit (pu) untuk Idiff dan Irestraint.
+      </div>
+    </div>
+
     <!-- Narrative description -->
     <div class="x-card">
       <div class="x-section-label">Narasi Analisis</div>

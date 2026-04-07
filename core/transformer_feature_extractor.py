@@ -123,7 +123,8 @@ class TransformerFeatures:
     energisation_flag: bool = False   # LV pre-fault current ≈ 0 (energising from HV)
     lv_prefault_irms_pu: Optional[float] = None  # pre-fault LV RMS in per-unit
     estimated_mva: Optional[float] = None        # snapped to standard rating list
-    lv_base_current_a: Optional[float] = None    # base current from estimated MVA
+    hv_base_current_a: Optional[float] = None   # rated HV current used as pu base
+    lv_base_current_a: Optional[float] = None   # rated LV current from MVA estimate
 
     # ── Timing / general ─────────────────────────────────────────────────────
     inception_angle_deg: Optional[float] = None  # voltage angle at event inception
@@ -195,6 +196,7 @@ def extract_transformer_features(
 
     # ── Per-unit base ─────────────────────────────────────────────────────────
     i_base = _estimate_base_current(samples, rated_current_a, inception_idx, spc)
+    features.hv_base_current_a = float(i_base) if i_base > 0 else None
     # Estimate MVA from HV side and derive LV base current for per-unit scaling.
     est_mva = _estimate_mva_from_hv(samples, inception_idx, spc)
     if est_mva is not None:
@@ -647,7 +649,9 @@ def features_to_dict(f: TransformerFeatures) -> dict:
         'energisation_flag':      f.energisation_flag,
         'lv_prefault_irms_pu':    f.lv_prefault_irms_pu,
         'estimated_mva':          f.estimated_mva,
+        'hv_base_current_a':      f.hv_base_current_a,
         'lv_base_current_a':      f.lv_base_current_a,
+        'channels_available':     f.channels_available,
         'inception_angle_deg':    f.inception_angle_deg,
         'fault_duration_ms':      f.fault_duration_ms,
         'peak_idiff_a':           f.peak_idiff_a,

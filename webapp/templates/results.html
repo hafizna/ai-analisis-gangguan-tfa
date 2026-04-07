@@ -1178,9 +1178,11 @@ _refreshCtptStatusOnly();
     }
 
     // Auto-zoom to fault window on initial render
+    // Show 2 pre-fault cycles before inception and adequate post-clearing context
     if (tOut > tIn) {
         setTimeout(function () {
-            const pad = Math.max(30, (tOut - tIn) * 0.8);
+            const faultDur = tOut - tIn;
+            const pad = Math.max(80, faultDur * 1.5);
             const range = [tIn - pad, tOut + pad];
             if (voltagePlot && voltagePlot.style.display !== 'none')
                 Plotly.relayout(voltagePlot, { 'xaxis.range': range });
@@ -1291,8 +1293,13 @@ _refreshCtptStatusOnly();
     const focusBtn = document.getElementById('waveFocusBtn');
     if (focusBtn) {
         focusBtn.addEventListener('click', () => {
-            const pad = Math.max(20, (tOut - tIn) * 0.6);
-            const range = [tIn - pad, tOut + pad];
+            // Show 2 pre-fault cycles before inception + 2 post-clearing cycles for context
+            const faultDur = (tOut > tIn) ? (tOut - tIn) : 80;
+            const prePad  = Math.max(60, faultDur * 1.5);   // at least 60 ms pre-fault
+            const postPad = Math.max(60, faultDur * 1.5);   // at least 60 ms post-clearing
+            const rangeStart = (tOut > tIn) ? tIn - prePad : tIn - prePad;
+            const rangeEnd   = (tOut > tIn) ? tOut + postPad : tIn + postPad;
+            const range = [rangeStart, rangeEnd];
             if (voltagePlot) Plotly.relayout(voltagePlot, { 'xaxis.range': range });
             if (currentPlot) Plotly.relayout(currentPlot, { 'xaxis.range': range });
             if (digitalPlot) Plotly.relayout(digitalPlot, { 'xaxis.range': range });
@@ -1304,7 +1311,8 @@ _refreshCtptStatusOnly();
     let syncing = false;
     function syncX(sourcePlot, targetPlot, ev) {
         if (!targetPlot || syncing) return;
-        if (ev['xaxis.range[0]'] && ev['xaxis.range[1]']) {
+        // Use !== undefined (not truthiness) — range[0] can be 0 or negative ms
+        if (ev['xaxis.range[0]'] !== undefined && ev['xaxis.range[1]'] !== undefined) {
             syncing = true;
             Plotly.relayout(targetPlot, { 'xaxis.range': [ev['xaxis.range[0]'], ev['xaxis.range[1]']] }).then(() => { syncing = false; });
         } else if (ev['xaxis.autorange']) {

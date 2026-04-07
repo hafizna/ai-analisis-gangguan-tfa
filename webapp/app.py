@@ -1996,15 +1996,31 @@ def _inject_transformer_fields(result, payload: dict) -> None:
     payload['inception_angle_deg']   = _f(tf.get('inception_angle_deg'))
     payload['peak_idiff_a']          = _f(tf.get('peak_idiff_a'))
 
-    # Channel availability (from TransformerFeatures.channels_available dict)
-    # We reconstruct from the feature dict keys that are present
-    payload['channels_available']    = {}
-    for key in ['i_hv_a','i_hv_b','i_hv_c','i_lv_a','i_lv_b','i_lv_c',
-                'i_diff_a','i_diff_b','i_diff_c','i_rstr_a','i_rstr_b','i_rstr_c']:
-        payload['channels_available'][key] = False  # populated by feature extractor if present
+    # MVA / nominal current (for HV/LV current level display per IEEE C37.91)
+    payload['estimated_mva']         = _f(tf.get('estimated_mva'))
+    payload['hv_base_current_a']     = _f(tf.get('hv_base_current_a'))  # I_rated HV
+    payload['lv_base_current_a']     = _f(tf.get('lv_base_current_a'))  # I_rated LV
+    payload['fault_duration_ms']     = _f(tf.get('fault_duration_ms'))
+
+    # Channel availability (propagated from TransformerFeatures.channels_available)
+    raw_avail = tf.get('channels_available') or {}
+    payload['channels_available'] = {
+        key: bool(raw_avail.get(key, False))
+        for key in ['i_hv_a','i_hv_b','i_hv_c','i_lv_a','i_lv_b','i_lv_c',
+                    'i_diff_a','i_diff_b','i_diff_c','i_rstr_a','i_rstr_b','i_rstr_c']
+    }
+
+    # Classifier rule detail
+    payload['evidence']              = '; '.join(xr.evidence) if xr and xr.evidence else ''
+    payload['rule_name']             = xr.rule_name if xr else ''
+    payload['recommendation']        = xr.recommendation if xr else ''
+    payload['cause_pcts'] = [
+        {'name': k.replace('_', ' ').title(), 'pct': round(v * 100, 1)}
+        for k, v in (xr.class_probabilities.items() if xr else {})
+    ]
 
     # Warnings
-    payload['warnings'] = list(xr.warnings) if xr else []
+    payload['warnings'] = list(getattr(xr, 'warnings', [])) if xr else []
 
 
 def _save_xfmr_to_csv(row: dict) -> None:
