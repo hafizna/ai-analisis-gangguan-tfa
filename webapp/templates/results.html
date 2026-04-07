@@ -1581,94 +1581,103 @@ _refreshCtptStatusOnly();
             .filter(p => p && p.style.display !== 'none');
     }
 
-    // Get Plotly PNG data URLs for all visible plots
+    // Get Plotly PNG data URLs for all visible plots — each plot uses its own dimensions
     async function _getPlotImgUrls(scale) {
-        scale = scale || 2;
+        scale = scale || 1.5;
         const plots = _visiblePlots();
         if (!plots.length) return [];
-        const size = _getPlotSize(plots[0]);
-        return Promise.all(plots.map(p =>
-            Plotly.toImage(p, { format: 'png', width: size.width, height: size.height, scale })
-        ));
+        // Measure each plot individually (digital chart height ≠ voltage/current height)
+        return Promise.all(plots.map(p => {
+            const size = _getPlotSize(p);
+            return Plotly.toImage(p, { format: 'png', width: size.width, height: size.height, scale });
+        }));
     }
 
-    // Export PNG — combined single image (with robust fallbacks)
+    // Wrap canvas.toBlob in a Promise so errors are caught by the outer try-catch
+    function _canvasToBlob(canvas, type) {
+        return new Promise((resolve, reject) => {
+            if (canvas.toBlob) {
+                canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('toBlob returned null')), type || 'image/png');
+            } else {
+                // Synchronous fallback for older browsers
+                try {
+                    const dataUrl = canvas.toDataURL(type || 'image/png');
+                    // Convert data URL to Blob
+                    const arr = dataUrl.split(','), mime = arr[0].match(/:(.*?);/)[1];
+                    const bstr = atob(arr[1]);
+                    let n = bstr.length;
+                    const u8 = new Uint8Array(n);
+                    while (n--) u8[n] = bstr.charCodeAt(n);
+                    resolve(new Blob([u8], { type: mime }));
+                } catch (e) { reject(e); }
+            }
+        });
+    }
+
+    // Export PNG — combined single image of all visible plots with header
     async function exportCombinedImage() {
         _setBtnState(exportPngBtn, true);
-        const subtitle = document.querySelector('.topbar-sub')?.textContent || 'comtrade';
+        const subtitle = document.querySelector('.topbar-sub')?.textContent?.trim() || 'comtrade';
         const safeName = subtitle.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 60);
         try {
-            const imgUrls = await _getPlotImgUrls(2);
+            const imgUrls = await _getPlotImgUrls(1.5);
             if (!imgUrls.length) { alert('Tidak ada plot untuk diekspor.'); return; }
 
             const imgs = await Promise.all(imgUrls.map(_loadImg));
             const W = Math.max(...imgs.map(i => i.width));
-            const HDR = 72;  // header strip height
+            const HDR = 72;
             const H = imgs.reduce((s, i) => s + i.height, 0) + HDR;
+
             const canvas = document.createElement('canvas');
             canvas.width = W; canvas.height = H;
             const ctx = canvas.getContext('2d');
 
-            // White background
+            // White background + header
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, W, H);
-            // Header
             ctx.fillStyle = '#0f172a';
-            ctx.font = 'bold 26px Arial, sans-serif';
-            ctx.fillText(subtitle, 18, 32);
+            ctx.font = 'bold 24px Arial, sans-serif';
+            ctx.fillText(subtitle, 18, 30);
             ctx.fillStyle = '#64748b';
-            ctx.font = '18px Arial, sans-serif';
-            ctx.fillText('TFA — Rekaman Gelombang COMTRADE  |  ' + new Date().toLocaleString('id-ID'), 18, 56);
+            ctx.font = '15px Arial, sans-serif';
+            ctx.fillText('TFA — Rekaman Gelombang COMTRADE  |  ' + new Date().toLocaleString('id-ID'), 18, 54);
             ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(0, HDR - 2); ctx.lineTo(W, HDR - 2); ctx.stroke();
-            // Plots
+
+            // Stack plots vertically, each centred to canvas width
             let y = HDR;
-            imgs.forEach(img => { ctx.drawImage(img, 0, y); y += img.height; });
+            imgs.forEach(img => {
+                ctx.drawImage(img, Math.floor((W - img.width) / 2), y);
+                y += img.height;
+            });
 
-            const triggerDownload = (dataUrl) => {
-                const a = document.createElement('a');
-                a.href = dataUrl; a.download = `waveform_${safeName}.png`;
-                document.body.appendChild(a); a.click(); document.body.removeChild(a);
-            };
-
-            if (canvas.toBlob) {
-                canvas.toBlob(blob => {
-                    if (!blob) { alert('Gagal membuat file PNG.'); return; }
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = `waveform_${safeName}.png`;
-                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                    setTimeout(() => URL.revokeObjectURL(url), 8000);
-                }, 'image/png');
-            } else {
-                // Old browser fallback
-                const dataUrl = canvas.toDataURL('image/png');
-                triggerDownload(dataUrl);
-            }
+            // Await toBlob so any error is caught below
+            const blob = await _canvasToBlob(canvas, 'image/png');
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `waveform_${safeName}.png`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 8000);
 
         } catch (err) {
             console.error('Export PNG error:', err);
-            try {
-                // Fallback: open a new tab with the combined image
-                const imgUrls = await _getPlotImgUrls(1.5);
-                if (!imgUrls.length) throw err;
-                const imgs = await Promise.all(imgUrls.map(_loadImg));
-                const W = Math.max(...imgs.map(i => i.width));
-                const H = imgs.reduce((s, i) => s + i.height, 0);
-                const canvas = document.createElement('canvas');
-                canvas.width = W; canvas.height = H;
-                const ctx = canvas.getContext('2d');
-                let y = 0;
-                imgs.forEach(img => { ctx.drawImage(img, 0, y); y += img.height; });
-                const dataUrl = canvas.toDataURL('image/png');
-                const w = window.open('', '_blank');
-                if (w) {
-                    w.document.write(`<img src="${dataUrl}" style="width:100%;">`);
-                    w.document.close();
-                } else {
-                    alert('Popup diblokir. Silakan izinkan popup untuk export PNG.');
+            // Fallback: download each plot separately via Plotly.downloadImage
+            const plots = _visiblePlots();
+            if (plots.length) {
+                for (let i = 0; i < plots.length; i++) {
+                    const size = _getPlotSize(plots[i]);
+                    try {
+                        await Plotly.downloadImage(plots[i], {
+                            format: 'png',
+                            width: size.width,
+                            height: size.height,
+                            filename: `waveform_${safeName}_plot${i + 1}`
+                        });
+                    } catch (e2) {
+                        console.error('Plotly.downloadImage fallback failed:', e2);
+                    }
                 }
-            } catch (e2) {
+            } else {
                 alert('Gagal mengekspor PNG: ' + (err.message || err));
             }
         } finally {
@@ -1685,11 +1694,15 @@ _refreshCtptStatusOnly();
         if (oldDiv) oldDiv.remove();
 
         try {
-            const imgUrls = await _getPlotImgUrls(2);
+            // Use scale 1.5 — same as PNG export; scale 2 can exceed browser memory
+            const imgUrls = await _getPlotImgUrls(1.5);
             if (!imgUrls.length) { alert('Tidak ada plot untuk dicetak.'); return; }
 
-            const subtitle = document.querySelector('.topbar-sub')?.textContent || '';
+            const subtitle = document.querySelector('.topbar-sub')?.textContent?.trim() || '';
             const now = new Date().toLocaleString('id-ID');
+
+            // Wait for all images to load before injecting into print div
+            const imgs = await Promise.all(imgUrls.map(_loadImg));
 
             // Build hidden print-only container (appended to body, NOT inside .main-wrap)
             const div = document.createElement('div');
@@ -1702,18 +1715,21 @@ _refreshCtptStatusOnly();
                     <div style="font-size:12px;color:#64748b;">${subtitle} — ${now}</div>
                 </div>
             `;
-            imgUrls.forEach(url => {
-                const img = document.createElement('img');
-                img.src = url;
+            // Use already-loaded Image elements (guarantees paint before print)
+            imgs.forEach(img => {
+                img.style.width = '100%';
+                img.style.display = 'block';
+                img.style.marginBottom = '8px';
+                img.style.pageBreakInside = 'avoid';
                 div.appendChild(img);
             });
             document.body.appendChild(div);
 
-            // Small delay to let images fully paint before print dialog opens
-            await new Promise(r => setTimeout(r, 400));
+            // Flush layout then open print dialog
+            await new Promise(r => setTimeout(r, 300));
             window.print();
 
-            // Clean up after print dialog closes
+            // Clean up after print dialog closes (3s grace period)
             setTimeout(() => { try { div.remove(); } catch(e) {} }, 3000);
         } catch (err) {
             console.error('Print error:', err);
