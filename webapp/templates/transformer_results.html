@@ -307,9 +307,7 @@
                          background:var(--card-bg);color:var(--text);font-size:12px;resize:vertical;margin-bottom:10px;"></textarea>
         <button type="submit" class="btn btn-success" style="width:100%">Simpan Konfirmasi</button>
       </form>
-      <form method="POST" action="{{ url_for('index') }}" style="margin-top:8px;" data-no-loading>
-        <button type="submit" class="btn btn-outline" style="width:100%">Analisis File Baru</button>
-      </form>
+      <a href="{{ url_for('index') }}" class="btn btn-outline" style="width:100%;margin-top:8px;text-align:center;">Analisis File Baru</a>
     </div>
 
   </div>
