@@ -245,12 +245,9 @@
         <label class="confirm-label">Label yang dikonfirmasi:</label>
         <select name="confirmed_label" class="confirm-select" style="margin-bottom:10px;">
           <option value="">— Pilih —</option>
-          <option value="INRUSH MAGNETISASI">Inrush Magnetisasi</option>
-          <option value="GANGGUAN INTERNAL TRAFO">Gangguan Internal Trafo</option>
-          <option value="GANGGUAN EKSTERNAL (THROUGH)">Gangguan Eksternal (Through)</option>
-          <option value="TEGANGAN LEBIH / OVEREKSITASI">Tegangan Lebih / Overeksitasi</option>
-          <option value="KEMUNGKINAN MALOPERATE">Kemungkinan Maloperate</option>
-          <option value="LAIN-LAIN">Lain-lain</option>
+          {% for cat in fault_categories %}
+          <option value="{{ cat }}" {% if cat == predicted_event_class_label %}selected{% endif %}>{{ cat }}</option>
+          {% endfor %}
         </select>
         <textarea name="notes" placeholder="Catatan (opsional)..." rows="2"
                   style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);

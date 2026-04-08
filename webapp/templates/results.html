@@ -1061,6 +1061,16 @@ _refreshCtptStatusOnly();
     const voltageChannels = wf.channels.filter(ch => ch.measurement === 'voltage');
     const currentChannels = wf.channels.filter(ch => ch.measurement === 'current');
 
+    function channelLabel(ch) {
+        return ch.display_name || ch.canonical || ch.name || ch.id;
+    }
+
+    function bindPlotlyEvent(plotRef, eventName, handler) {
+        if (plotRef && typeof plotRef.on === 'function') {
+            plotRef.on(eventName, handler);
+        }
+    }
+
     function buildState(chs) {
         return chs.map(ch => ({
             x: ch.x.slice(),
@@ -1073,14 +1083,17 @@ _refreshCtptStatusOnly();
     const iState = buildState(currentChannels);
 
     function buildTraces(chs) {
-        return chs.map(ch => ({
+        return chs.map(ch => {
+            const label = channelLabel(ch);
+            return {
             x: ch.x,
             y: ch.y,
-            name: (ch.canonical || ch.name || ch.id) + (ch.unit ? ` (${ch.unit})` : ''),
+            name: label + (ch.unit ? ` (${ch.unit})` : ''),
             line: { color: ch.color || '#94a3b8', width: 1 },
             mode: 'lines',
-            hovertemplate: `${ch.canonical || ch.name || ch.id}<br>%{y:.3f} ${ch.unit || ''}<br>%{x:.2f} ms<extra></extra>`
-        }));
+            hovertemplate: `${label}<br>%{y:.3f} ${ch.unit || ''}<br>%{x:.2f} ms<extra></extra>`
+        };
+        });
     }
 
     const markerShapes = [];
@@ -1196,11 +1209,11 @@ _refreshCtptStatusOnly();
     }
 
     if (listEl) {
-        const vList = voltageChannels.map((ch, idx) => {
-            const label = ch.canonical || ch.name || ch.id;
+        const renderChannelRows = (rows, plotName) => rows.map(({ ch, idx }) => {
+            const label = channelLabel(ch);
             const stats = `min ${fmt(ch.min, 2)} | max ${fmt(ch.max, 2)} | rms ${fmt(ch.rms, 2)}`;
             return `
-            <label class=\"wave-channel\" data-plot=\"voltage\" data-trace=\"${idx}\">
+            <label class=\"wave-channel\" data-plot=\"${plotName}\" data-trace=\"${idx}\">
                 <input type=\"checkbox\" checked>
                 <span class=\"wave-dot\" style=\"background:${ch.color || '#94a3b8'}\"></span>
                 <span class=\"wave-meta\">
@@ -1212,27 +1225,26 @@ _refreshCtptStatusOnly();
                 </span>
             </label>`;
         }).join('');
-        const iList = currentChannels.map((ch, idx) => {
-            const label = ch.canonical || ch.name || ch.id;
-            const stats = `min ${fmt(ch.min, 2)} | max ${fmt(ch.max, 2)} | rms ${fmt(ch.rms, 2)}`;
+        const vList = renderChannelRows(voltageChannels.map((ch, idx) => ({ ch, idx })), 'voltage');
+        const currentRows = currentChannels.map((ch, idx) => ({ ch, idx }));
+        const currentGroups = [
+            ['Arus - HV/W1', 'current_hv'],
+            ['Arus - LV/W2', 'current_lv'],
+            ['Arus - Diferensial', 'current_diff'],
+            ['Arus - Restraint', 'current_restraint'],
+            ['Arus - Lainnya', 'current_other'],
+        ];
+        const iList = currentGroups.map(([title, groupKey]) => {
+            const rows = currentRows.filter(row => (row.ch.group || 'current_other') === groupKey);
+            if (!rows.length) return '';
             return `
-            <label class=\"wave-channel\" data-plot=\"current\" data-trace=\"${idx}\">
-                <input type=\"checkbox\" checked>
-                <span class=\"wave-dot\" style=\"background:${ch.color || '#94a3b8'}\"></span>
-                <span class=\"wave-meta\">
-                    <span class=\"wave-name\">${label}</span>
-                    <span class=\"wave-stats\">${stats}</span>
-                </span>
-                <span class=\"wave-tools\">
-                    <button class=\"wave-tool-btn\" data-action=\"lock\">Lock</button>
-                </span>
-            </label>`;
+            <div class=\"wave-group-title\">${title}</div>
+            ${renderChannelRows(rows, 'current')}`;
         }).join('');
         listEl.innerHTML = `
             <div class=\"wave-group-title\">Voltage</div>
             ${vList || '<div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Tidak ada kanal tegangan</div>'}
-            <div class=\"wave-group-title\">Current</div>
-            ${iList || '<div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Tidak ada kanal arus</div>'}
+            ${iList || '<div class=\"wave-group-title\">Current</div><div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Tidak ada kanal arus</div>'}
         `;
     }
 
@@ -1391,21 +1403,21 @@ _refreshCtptStatusOnly();
     }
 
     if (voltagePlot) {
-        voltagePlot.on('plotly_relayout', (ev) => {
+        bindPlotlyEvent(voltagePlot, 'plotly_relayout', (ev) => {
             syncX(voltagePlot, currentPlot, ev);
             syncX(voltagePlot, digitalPlot, ev);
-            if (ev['xaxis.range[0]'] || ev['xaxis.autorange']) autoScaleY(voltagePlot, vState);
+            if (ev['xaxis.range[0]'] !== undefined || ev['xaxis.autorange']) autoScaleY(voltagePlot, vState);
         });
     }
     if (currentPlot) {
-        currentPlot.on('plotly_relayout', (ev) => {
+        bindPlotlyEvent(currentPlot, 'plotly_relayout', (ev) => {
             syncX(currentPlot, voltagePlot, ev);
             syncX(currentPlot, digitalPlot, ev);
-            if (ev['xaxis.range[0]'] || ev['xaxis.autorange']) autoScaleY(currentPlot, iState);
+            if (ev['xaxis.range[0]'] !== undefined || ev['xaxis.autorange']) autoScaleY(currentPlot, iState);
         });
     }
     if (digitalPlot) {
-        digitalPlot.on('plotly_relayout', (ev) => {
+        bindPlotlyEvent(digitalPlot, 'plotly_relayout', (ev) => {
             syncX(digitalPlot, voltagePlot, ev);
             syncX(digitalPlot, currentPlot, ev);
         });
@@ -1494,13 +1506,13 @@ _refreshCtptStatusOnly();
     }
 
     if (voltagePlot) {
-        voltagePlot.on('plotly_hover', ev => {
+        bindPlotlyEvent(voltagePlot, 'plotly_hover', ev => {
             if (ev.points && ev.points.length) lastHoveredX.voltage = ev.points[0].x;
         });
         voltagePlot.addEventListener('click', e => _placeCursor('voltage', e.shiftKey));
     }
     if (currentPlot) {
-        currentPlot.on('plotly_hover', ev => {
+        bindPlotlyEvent(currentPlot, 'plotly_hover', ev => {
             if (ev.points && ev.points.length) lastHoveredX.current = ev.points[0].x;
         });
         currentPlot.addEventListener('click', e => _placeCursor('current', e.shiftKey));
@@ -1746,10 +1758,13 @@ _refreshCtptStatusOnly();
         }
         const analogChs  = wf.channels;
         const digitalChs = wf.digital || [];
-        const allChs = [...analogChs, ...digitalChs];
         const tArr = analogChs[0].x;
+        const csvEscape = (value) => {
+            const text = value === undefined || value === null ? '' : String(value);
+            return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+        };
 
-        const headers = ['t_ms', ...analogChs.map(c => (c.canonical || c.name || c.id) + (c.unit ? ` (${c.unit})` : '')),
+        const headers = ['t_ms', ...analogChs.map(c => channelLabel(c) + (c.unit ? ` (${c.unit})` : '')),
                          ...digitalChs.map(c => (c.name || c.id) + ' (digital)')];
 
         // Build rows (nearest-sample interpolation for digital channels whose x may differ)
@@ -1759,10 +1774,10 @@ _refreshCtptStatusOnly();
                 const di = Math.min(i, c.y.length - 1);
                 return c.y[di] !== undefined ? c.y[di] : '';
             });
-            return [t.toFixed(4), ...aVals, ...dVals].join(',');
+            return [t.toFixed(4), ...aVals, ...dVals].map(csvEscape).join(',');
         });
 
-        const csv = [headers.join(','), ...rows].join('\r\n');
+        const csv = [headers.map(csvEscape).join(','), ...rows].join('\r\n');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const subtitle = document.querySelector('.topbar-sub')?.textContent || 'comtrade';
         const safeName = subtitle.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 50);
