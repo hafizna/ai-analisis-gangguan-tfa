@@ -58,7 +58,7 @@
           <td style="font-size:10px;color:var(--text-muted);">{{ r.relay_family or '-' }}</td>
           <td>
             <span class="ec-badge {% if ec=='INRUSH' %}ec-inrush{% elif ec=='INTERNAL_FAULT' %}ec-internal{% elif ec=='THROUGH_FAULT' %}ec-through{% elif ec=='OVEREXCITATION' %}ec-overexcit{% elif ec=='MAL_OPERATE' %}ec-mal{% else %}ec-unk{% endif %}">
-              {{ ec | replace('_',' ') }}
+              {{ r.event_class_display or (ec | replace('_',' ')) }}
             </span>
           </td>
           <td>{{ r.predicted_conf or '-' }}%</td>
@@ -68,7 +68,7 @@
           <td class="{% if r.action_required == 'True' %}action-yes{% endif %}">
             {% if r.action_required == 'True' %}⚠ YA{% else %}—{% endif %}
           </td>
-          <td>{{ r.confirmed_label or '—' }}</td>
+          <td>{{ r.confirmed_label_display or '—' }}</td>
           <td class="{% if r.correct == 'True' %}correct-yes{% elif r.correct == 'False' %}correct-no{% endif %}">
             {% if r.correct == 'True' %}✓{% elif r.correct == 'False' %}✗{% else %}—{% endif %}
           </td>

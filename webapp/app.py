@@ -1168,6 +1168,66 @@ def _digital_change_points(t_arr, y_arr, target_points: int = 4000):
     return t_arr[idx], y_arr[idx]
 
 
+def _infer_waveform_side(ch) -> str | None:
+    """Infer winding/side tags from raw channel identifiers for UI display."""
+    text = " ".join(
+        _s(part, "")
+        for part in (getattr(ch, "name", ""), getattr(ch, "id", ""), getattr(ch, "canonical_name", ""))
+        if part
+    ).upper()
+    text = re.sub(r"[_:/\-]+", " ", text)
+    if re.search(r"\b(DIFF|IDIFF|87T|OPERATE|OP)\b", text):
+        return "DIFF"
+    if re.search(r"\b(RSTR|RESTRAINT|IRSTR|BIAS)\b", text):
+        return "RESTRAINT"
+    if re.search(r"\b(HV|W1|IW1|IW1[A-Z0-9]*|W1[A-Z0-9]*|PRIMARY|PRI|WIND1|WINDING1)\b", text):
+        return "HV/W1"
+    if re.search(r"\b(LV|W2|IW2|IW2[A-Z0-9]*|W2[A-Z0-9]*|SECONDARY|SEC|WIND2|WINDING2)\b", text):
+        return "LV/W2"
+    return None
+
+
+def _classify_waveform_group(ch) -> str:
+    measurement = _s(getattr(ch, "measurement", ""), "").lower()
+    side = _infer_waveform_side(ch)
+    if measurement == "current":
+        if side == "HV/W1":
+            return "current_hv"
+        if side == "LV/W2":
+            return "current_lv"
+        if side == "DIFF":
+            return "current_diff"
+        if side == "RESTRAINT":
+            return "current_restraint"
+        return "current_other"
+    if measurement == "voltage":
+        if side == "HV/W1":
+            return "voltage_hv"
+        if side == "LV/W2":
+            return "voltage_lv"
+        return "voltage_other"
+    return measurement or "other"
+
+
+def _build_waveform_display_name(ch, duplicate_canonicals: Counter) -> str:
+    """Keep transformer side information visible even when canonical names collide."""
+    canonical = _s(getattr(ch, "canonical_name", ""), "").strip()
+    raw_name = _s(getattr(ch, "name", ""), "").strip()
+    base = canonical or raw_name or _s(getattr(ch, "id", ""), "").strip() or "CHANNEL"
+    measurement = _s(getattr(ch, "measurement", ""), "").lower()
+    side = _infer_waveform_side(ch)
+
+    dup_key = (measurement, canonical.upper()) if canonical else None
+    is_duplicate = bool(dup_key and duplicate_canonicals.get(dup_key, 0) > 1)
+    is_generic = bool(re.fullmatch(r"(?:V[ABCN]|I[ABCN]|IN|I0|3I0|VN|V0)", base.upper()))
+
+    if side and (is_duplicate or is_generic):
+        return f"{base} ({side})"
+    if is_duplicate and raw_name and raw_name.upper() != base.upper():
+        return f"{base} [{raw_name}]"
+    return base
+
+
 def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: float) -> dict:
     """
     Prepare a lightweight, JSON-safe payload for interactive waveform viewing.
@@ -1205,9 +1265,29 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
     }
 
     analog_all = [ch for ch in record.analog_channels if len(ch.samples) == total_samples]
+    duplicate_canonicals = Counter(
+        (_s(ch.measurement, "").lower(), _s(ch.canonical_name, "").upper())
+        for ch in analog_all
+        if _s(ch.canonical_name, "").strip()
+    )
+    group_order = {
+        "voltage_hv": 0,
+        "voltage_lv": 1,
+        "voltage_other": 2,
+        "current_hv": 3,
+        "current_lv": 4,
+        "current_diff": 5,
+        "current_restraint": 6,
+        "current_other": 7,
+    }
+
     def _prio_key(ch):
         name = (ch.canonical_name or ch.name or "").upper()
-        return priority.index(name) if name in priority else 999
+        return (
+            group_order.get(_classify_waveform_group(ch), 99),
+            priority.index(name) if name in priority else 999,
+            _s(ch.name, "").upper(),
+        )
     analog_sorted = sorted(analog_all, key=_prio_key)
     max_analog = 12
     analog_chs = analog_sorted[:max_analog]
@@ -1224,6 +1304,9 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
         name = ch.canonical_name or ch.name or ch.id
         name_u = name.upper()
         color = color_map.get(name_u, "#94a3b8")
+        display_name = _build_waveform_display_name(ch, duplicate_canonicals)
+        group = _classify_waveform_group(ch)
+        side = _infer_waveform_side(ch)
 
         y = np.array(ch.samples, dtype=float)
         def _safe_stat(val):
@@ -1234,7 +1317,10 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
             "id": ch.id,
             "name": ch.name,
             "canonical": ch.canonical_name,
+            "display_name": display_name,
             "measurement": ch.measurement,
+            "group": group,
+            "side": side,
             "unit": ch.unit,
             "color": color,
             "x": x_ds.tolist(),
@@ -1421,7 +1507,12 @@ def results():
         return redirect(url_for("index"))
     # Phase 2: route transformer events to dedicated template
     if analysis.get("event_type") == "TRANSFORMER":
-        return render_template("transformer_results.html", analysis=analysis)
+        return render_template(
+            "transformer_results.html",
+            analysis=analysis,
+            fault_categories=XFMR_FAULT_CATEGORIES,
+            predicted_event_class_label=_xfmr_event_class_label(analysis.get("event_class")),
+        )
     return render_template("results.html",
                            analysis=analysis,
                            fault_categories=FAULT_CATEGORIES)
@@ -1943,6 +2034,38 @@ XFMR_FAULT_CATEGORIES = [
     "LAIN-LAIN",
 ]
 
+XFMR_EVENT_CLASS_LABELS = {
+    "INRUSH": "INRUSH MAGNETISASI",
+    "INTERNAL_FAULT": "GANGGUAN INTERNAL TRAFO",
+    "THROUGH_FAULT": "GANGGUAN EKSTERNAL (THROUGH)",
+    "OVEREXCITATION": "TEGANGAN LEBIH / OVEREKSITASI",
+    "MAL_OPERATE": "KEMUNGKINAN MALOPERATE",
+    "LAIN-LAIN": "LAIN-LAIN",
+}
+
+XFMR_LABEL_TO_EVENT_CLASS = {
+    _normalize_label(label): code
+    for code, label in XFMR_EVENT_CLASS_LABELS.items()
+}
+
+
+def _xfmr_confirmed_to_event_class(value: str) -> str:
+    norm = _normalize_label(value)
+    return XFMR_LABEL_TO_EVENT_CLASS.get(norm, norm)
+
+
+def _xfmr_event_class_label(value: str) -> str:
+    code = _xfmr_confirmed_to_event_class(value)
+    return XFMR_EVENT_CLASS_LABELS.get(code, value or "-")
+
+
+def _xfmr_row_correct_flag(row: dict):
+    pred = _xfmr_confirmed_to_event_class(_s(row.get("event_class"), "").strip())
+    conf = _xfmr_confirmed_to_event_class(_s(row.get("confirmed_label"), "").strip())
+    if not pred or not conf:
+        return None
+    return pred == conf
+
 
 def _inject_transformer_fields(result, payload: dict) -> None:
     """
@@ -2115,13 +2238,14 @@ def confirm_transformer():
     if not analysis:
         return redirect(url_for("index"))
 
-    confirmed_label = request.form.get("confirmed_label", "").strip()
+    confirmed_input = request.form.get("confirmed_label", "").strip()
+    confirmed_label = _xfmr_confirmed_to_event_class(confirmed_input)
     notes           = request.form.get("notes", "").strip()
 
-    pred = _s(analysis.get("event_class"), "UNKNOWN")
+    pred = _xfmr_confirmed_to_event_class(_s(analysis.get("event_class"), "UNKNOWN"))
     corr = (
-        "True"  if _normalize_label(confirmed_label) == _normalize_label(pred) else
-        "False" if confirmed_label else ""
+        "True"  if confirmed_label and confirmed_label == pred else
+        "False" if confirmed_input else ""
     )
 
     row = {
@@ -2133,7 +2257,7 @@ def confirm_transformer():
         "predicted_label":    _s(analysis.get("label")),
         "predicted_conf":     _s(round(_f(analysis.get("confidence")) * 100, 1)),
         "rule_name":          _s(analysis.get("rule_name")),
-        "confirmed_label":    confirmed_label,
+        "confirmed_label":    confirmed_label or confirmed_input,
         "correct":            corr,
         "notes":              notes,
         "h2_ratio_max_pct":   _s(round(_f(analysis.get("h2_ratio_max_pct")), 2)),
@@ -2162,7 +2286,12 @@ def transformer_history():
     """History page for transformer 87T events."""
     rows = _load_xfmr_history(limit=200)
     total = len(rows)
-    confirmed = [r for r in rows if r.get("confirmed_label")]
+    for r in rows:
+        eval_flag = _xfmr_row_correct_flag(r)
+        r["correct"] = "True" if eval_flag is True else ("False" if eval_flag is False else "")
+        r["confirmed_label_display"] = _xfmr_event_class_label(r.get("confirmed_label"))
+        r["event_class_display"] = _xfmr_event_class_label(r.get("event_class"))
+    confirmed = [r for r in rows if _xfmr_confirmed_to_event_class(r.get("confirmed_label", ""))]
     correct   = [r for r in confirmed if r.get("correct") == "True"]
     accuracy  = round(len(correct) / len(confirmed) * 100, 1) if confirmed else 0
 
@@ -2211,10 +2340,14 @@ def transformer_trends():
 def transformer_data_status():
     """Phase 2 data readiness dashboard — shows how many labeled events per class."""
     rows = _load_xfmr_history()
-    confirmed = [r for r in rows if r.get("confirmed_label")]
+    confirmed = [r for r in rows if _xfmr_confirmed_to_event_class(r.get("confirmed_label", ""))]
 
     from collections import Counter
-    confirmed_dist = Counter(r.get("confirmed_label", "") for r in confirmed)
+    confirmed_dist = Counter(
+        _xfmr_confirmed_to_event_class(r.get("confirmed_label", ""))
+        for r in confirmed
+        if _xfmr_confirmed_to_event_class(r.get("confirmed_label", ""))
+    )
     synthetic_dir  = Path(__file__).parent.parent / "data" / "synthetic" / "transformer"
 
     # Count synthetic files per class
