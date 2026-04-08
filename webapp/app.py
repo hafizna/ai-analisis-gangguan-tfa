@@ -2098,6 +2098,15 @@ def _inject_transformer_fields(result, payload: dict) -> None:
 
     xr = getattr(result, 'transformer_result', None)
     tf = getattr(result, 'transformer_features', None) or {}
+    class_probs = getattr(xr, 'class_probabilities', {}) if xr else {}
+    if not isinstance(class_probs, dict):
+        class_probs = {}
+
+    evidence = getattr(xr, 'evidence', '') if xr else ''
+    if isinstance(evidence, (list, tuple)):
+        evidence_text = '; '.join(_s(x, '') for x in evidence if _s(x, '').strip())
+    else:
+        evidence_text = _s(evidence, '')
 
     payload['event_class']           = xr.event_class if xr else 'UNKNOWN'
     payload['action_required']       = bool(xr.action_required) if xr else False
@@ -2152,12 +2161,12 @@ def _inject_transformer_fields(result, payload: dict) -> None:
     }
 
     # Classifier rule detail
-    payload['evidence']              = '; '.join(xr.evidence) if xr and xr.evidence else ''
+    payload['evidence']              = evidence_text
     payload['rule_name']             = xr.rule_name if xr else ''
     payload['recommendation']        = xr.recommendation if xr else ''
     payload['cause_pcts'] = [
         {'name': k.replace('_', ' ').title(), 'pct': round(v * 100, 1)}
-        for k, v in (xr.class_probabilities.items() if xr else {})
+        for k, v in class_probs.items()
     ]
 
     # Warnings
