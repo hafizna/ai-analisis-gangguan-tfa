@@ -1170,11 +1170,18 @@ def _digital_change_points(t_arr, y_arr, target_points: int = 4000):
 
 def _infer_waveform_side(ch) -> str | None:
     """Infer winding/side tags from raw channel identifiers for UI display."""
-    text = " ".join(
+    raw_text = " ".join(
         _s(part, "")
         for part in (getattr(ch, "name", ""), getattr(ch, "id", ""), getattr(ch, "canonical_name", ""))
         if part
     ).upper()
+    if re.search(r"\[[^\]]*-\s*1\]", raw_text):
+        return "HV/W1"
+    if re.search(r"\[[^\]]*-\s*2\]", raw_text):
+        return "LV/W2"
+    if re.search(r"\[[^\]]*-\s*3\]", raw_text):
+        return "TV/W3"
+    text = raw_text
     text = re.sub(r"[_:/\-]+", " ", text)
     if re.search(r"\b(DIFF|IDIFF|87T|OPERATE|OP)\b", text):
         return "DIFF"
@@ -1184,6 +1191,8 @@ def _infer_waveform_side(ch) -> str | None:
         return "HV/W1"
     if re.search(r"\b(LV|W2|IW2|IW2[A-Z0-9]*|W2[A-Z0-9]*|SECONDARY|SEC|WIND2|WINDING2)\b", text):
         return "LV/W2"
+    if re.search(r"\b(TV|W3|IW3|IW3[A-Z0-9]*|W3[A-Z0-9]*|TERTIARY|TERT|WIND3|WINDING3)\b", text):
+        return "TV/W3"
     return None
 
 
@@ -1195,6 +1204,8 @@ def _classify_waveform_group(ch) -> str:
             return "current_hv"
         if side == "LV/W2":
             return "current_lv"
+        if side == "TV/W3":
+            return "current_tv"
         if side == "DIFF":
             return "current_diff"
         if side == "RESTRAINT":
@@ -1205,6 +1216,8 @@ def _classify_waveform_group(ch) -> str:
             return "voltage_hv"
         if side == "LV/W2":
             return "voltage_lv"
+        if side == "TV/W3":
+            return "voltage_tv"
         return "voltage_other"
     return measurement or "other"
 
@@ -1273,12 +1286,14 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
     group_order = {
         "voltage_hv": 0,
         "voltage_lv": 1,
-        "voltage_other": 2,
-        "current_hv": 3,
-        "current_lv": 4,
-        "current_diff": 5,
-        "current_restraint": 6,
-        "current_other": 7,
+        "voltage_tv": 2,
+        "voltage_other": 3,
+        "current_hv": 4,
+        "current_lv": 5,
+        "current_tv": 6,
+        "current_diff": 7,
+        "current_restraint": 8,
+        "current_other": 9,
     }
 
     def _prio_key(ch):
@@ -1484,6 +1499,9 @@ def upload_files():
         "assumed_vt_primary": _f(assumed_ratios.get("assumed_vt_primary"), 150000.0),
         "assumed_vt_secondary": _f(assumed_ratios.get("assumed_vt_secondary"), 100.0),
     }
+    # Phase 2: add transformer-specific fields if applicable.
+    # Without this, uploaded 87T records fall back to the generic line-fault results page.
+    _inject_transformer_fields(result, analysis_payload)
     analysis_payload["waveform_data"] = _build_waveform_payload(
         str(cfg_path),
         analysis_payload["fault_inception_ms"],
