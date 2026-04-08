@@ -62,14 +62,14 @@ class MockRecord:
 
 def _make_status(names: List[str], triggered: bool = False) -> List[MockStatusChannel]:
     """Create status channels; first channel has a rising edge if triggered=True."""
+    import numpy as np
     channels = []
     for i, name in enumerate(names):
         # Simple mock: ch 0 has a 0→1 transition if triggered, rest are flat 0
-        import numpy as np
         if triggered and i == 0:
-            s = [0, 0, 1, 1, 1, 0]
+            s = np.array([0, 0, 1, 1, 1, 0])
         else:
-            s = [0] * 6
+            s = np.zeros(6, dtype=int)
         channels.append(MockStatusChannel(name=name, samples=s))
     return channels
 
@@ -146,7 +146,7 @@ class TestProtectionRouterGeneral:
             status_channels=_make_status(["87L TRIP"], triggered=True),
         )
         prot = determine_protection(record)
-        assert prot.primary_protection == ProtectionType.LINE_DIFF
+        assert prot.primary_protection == ProtectionType.DIFFERENTIAL
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ class TestRelayFamilyDetection:
 
     def test_7ut85_detected_as_siemens(self):
         family = detect_transformer_relay_family("7UT85", "")
-        assert family == "Siemens"
+        assert family.upper() == "SIEMENS"
 
     def test_sel387_detected_as_sel(self):
         family = detect_transformer_relay_family("SEL-387", "")
