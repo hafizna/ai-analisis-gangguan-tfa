@@ -10,6 +10,7 @@
 
     const voltageWrap = document.getElementById('waveVoltageWrap');
     const voltagePlot = document.getElementById('waveVoltagePlot');
+    const showVoltagePanel = !!(voltageWrap && voltagePlot);
     const currentHvWrap = document.getElementById('waveCurrentHvWrap');
     const currentHvPlot = document.getElementById('waveCurrentHvPlot');
     const currentLvWrap = document.getElementById('waveCurrentLvWrap');
@@ -71,7 +72,7 @@
         hintEl.textContent = notes.join('  |  ');
     }
 
-    const voltageChannels = wf.channels.filter(ch => ch.measurement === 'voltage');
+    const voltageChannels = showVoltagePanel ? wf.channels.filter(ch => ch.measurement === 'voltage') : [];
     const currentChannels = wf.channels.filter(ch => ch.measurement === 'current');
 
     function channelLabel(ch) {
@@ -96,21 +97,21 @@
     const currentGroupDefs = [
         {
             key: 'current_hv',
-            title: 'Arus - HV',
+            title: 'Arus HV',
             groups: ['current_hv'],
             wrap: currentHvWrap,
             plot: currentHvPlot
         },
         {
             key: 'current_lv',
-            title: 'Arus - LV / TV',
-            groups: ['current_lv', 'current_tv', 'current_other'],
+            title: 'Arus LV',
+            groups: ['current_lv', 'current_tv'],
             wrap: currentLvWrap,
             plot: currentLvPlot
         },
         {
             key: 'current_diff',
-            title: 'Arus - Diferensial & Bias',
+            title: 'Arus Diferensial & Bias',
             groups: ['current_diff', 'current_restraint'],
             wrap: currentDiffWrap,
             plot: currentDiffPlot
@@ -126,6 +127,12 @@
     const currentStates = Object.fromEntries(
         currentGroupDefs.map(def => [def.key, buildState(currentChannelSets[def.key])])
     );
+    const genericCurrentChannels = currentChannels.filter(ch => (ch.group || 'current_other') === 'current_other');
+    const hasStructuredCurrent = currentChannels.some(ch => (ch.group || '') !== 'current_other');
+    if (!hasStructuredCurrent && genericCurrentChannels.length) {
+        currentChannelSets.current_lv = genericCurrentChannels;
+        currentStates.current_lv = buildState(genericCurrentChannels);
+    }
 
     function buildTraces(chs) {
         return chs.map(ch => {
@@ -134,7 +141,7 @@
             x: ch.x,
             y: ch.y,
             name: label + (ch.unit ? ` (${ch.unit})` : ''),
-            line: { color: ch.color || '#94a3b8', width: 1 },
+            line: { color: ch.color || '#94a3b8', width: 1.4, dash: ch.line_dash || 'solid' },
             mode: 'lines',
             hovertemplate: `${label}<br>%{y:.3f} ${ch.unit || ''}<br>%{x:.2f} ms<extra></extra>`
         };
@@ -186,7 +193,7 @@
         return true;
     }
 
-    const hasVoltagePlot = renderAnalogPlot(voltagePlot, voltageChannels, 'Tegangan (kV)');
+    const hasVoltagePlot = showVoltagePanel ? renderAnalogPlot(voltagePlot, voltageChannels, 'Tegangan (kV)') : false;
     if (voltageWrap) {
         voltageWrap.style.display = hasVoltagePlot ? 'flex' : 'none';
     }
@@ -204,12 +211,15 @@
     const lvDef = currentGroupDefs.find(d => d.key === 'current_lv');
     if (lvDef && lvDef.hasPlot && lvDef.wrap) {
         const lvChs = currentChannelSets['current_lv'] || [];
-        const hasActualLv = lvChs.some(ch => ch.group === 'current_lv' || ch.group === 'current_tv');
-        if (!hasActualLv) {
-            const titleEl = lvDef.wrap.querySelector('.wave-subplot-title');
-            if (titleEl) titleEl.textContent = 'Arus';
-            lvDef.title = 'Arus';
-        }
+        const hasLv = lvChs.some(ch => ch.group === 'current_lv');
+        const hasTv = lvChs.some(ch => ch.group === 'current_tv');
+        const hasGeneric = lvChs.some(ch => (ch.group || 'current_other') === 'current_other');
+        const titleEl = lvDef.wrap.querySelector('.wave-subplot-title');
+        if (hasGeneric && !hasLv && !hasTv) lvDef.title = 'Arus';
+        else if (hasLv && hasTv) lvDef.title = 'Arus LV / TV';
+        else if (hasTv) lvDef.title = 'Arus TV';
+        else lvDef.title = 'Arus LV';
+        if (titleEl) titleEl.textContent = lvDef.title;
     }
 
     const digitalTraces = (wf.digital || []).map((ch, idx) => {
@@ -262,7 +272,7 @@
     }
 
     function visiblePlotRefs() {
-        return [voltagePlot, ...currentDefsWithPlots().map(def => def.plot), digitalPlot]
+        return [...(showVoltagePanel ? [voltagePlot] : []), ...currentDefsWithPlots().map(def => def.plot), digitalPlot]
             .filter(isPlotVisible);
     }
 
@@ -273,7 +283,7 @@
             const faultDur = tOut - tIn;
             const pad = Math.max(80, faultDur * 1.5);
             const range = [tIn - pad, tOut + pad];
-            if (isPlotVisible(voltagePlot))
+            if (showVoltagePanel && isPlotVisible(voltagePlot))
                 Plotly.relayout(voltagePlot, { 'xaxis.range': range });
             currentDefsWithPlots().forEach(def => {
                 if (isPlotVisible(def.plot)) {
@@ -282,7 +292,7 @@
             });
             if (isPlotVisible(digitalPlot))
                 Plotly.relayout(digitalPlot,  { 'xaxis.range': range });
-            autoScaleY(voltagePlot, vState);
+            if (showVoltagePanel) autoScaleY(voltagePlot, vState);
             currentDefsWithPlots().forEach(def => autoScaleY(def.plot, getCurrentStateRef(def.key)));
         }, 350);
     }
@@ -304,7 +314,6 @@
                 </span>
             </label>`;
         }).join('');
-        const vList = renderChannelRows(voltageChannels.map((ch, idx) => ({ ch, idx })), 'voltage');
         const iList = currentGroupDefs.map(def => {
             const rows = currentChannelSets[def.key].map((ch, idx) => ({ ch, idx }));
             if (!rows.length) return '';
@@ -312,9 +321,12 @@
             <div class=\"wave-group-title\">${def.title}</div>
             ${renderChannelRows(rows, def.key)}`;
         }).join('');
+        const vList = showVoltagePanel ? `
+            <div class=\"wave-group-title\">Tegangan</div>
+            ${renderChannelRows(voltageChannels.map((ch, idx) => ({ ch, idx })), 'voltage') || '<div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Tidak ada kanal tegangan</div>'}
+        ` : '';
         listEl.innerHTML = `
-            <div class=\"wave-group-title\">Voltage</div>
-            ${vList || '<div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Tidak ada kanal tegangan</div>'}
+            ${vList}
             ${iList || '<div class=\"wave-group-title\">Current</div><div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Tidak ada kanal arus</div>'}
         `;
     }
@@ -702,6 +714,15 @@
         return visiblePlotRefs();
     }
 
+    function getExportAnalogChannels() {
+        const analog = [];
+        if (showVoltagePanel) analog.push(...voltageChannels);
+        currentGroupDefs.forEach(def => {
+            analog.push(...(currentChannelSets[def.key] || []));
+        });
+        return analog;
+    }
+
     // Get Plotly PNG data URLs for all visible plots — each plot uses its own dimensions
     async function _getPlotImgUrls(scale) {
         scale = scale || 1.5;
@@ -862,10 +883,10 @@
 
     // CSV export — download waveform time-series as a spreadsheet-ready CSV
     function exportCSV() {
-        if (!wf || !wf.channels || !wf.channels.length) {
+        const analogChs = getExportAnalogChannels();
+        if (!analogChs.length) {
             alert('Tidak ada data waveform untuk diekspor.'); return;
         }
-        const analogChs  = wf.channels;
         const digitalChs = wf.digital || [];
         const tArr = analogChs[0].x;
         const csvEscape = (value) => {
