@@ -111,9 +111,9 @@ _ABB_PATTERNS: List[tuple] = [
     (r'\bDIFB\b|\bIDIFF_B\b|\bIDIF_B\b|\bIDIFF\.B\b|\bPDIF.*B\b',                 'IDIFB'),
     (r'\bDIFC\b|\bIDIFF_C\b|\bIDIF_C\b|\bIDIFF\.C\b|\bPDIF.*C\b',                 'IDIFC'),
     # Restraint
-    (r'\bRSTRA\b|\bIRSTR_A\b|\bIRST_A\b|\bIDIFF.*RST.*A\b',                       'IRSTA'),
-    (r'\bRSTRB\b|\bIRSTR_B\b|\bIRST_B\b|\bIDIFF.*RST.*B\b',                       'IRSTB'),
-    (r'\bRSTRC\b|\bIRSTR_C\b|\bIRST_C\b|\bIDIFF.*RST.*C\b',                       'IRSTC'),
+    (r'\bRSTRA\b|\bIRSTA\b|\bIRSTR_A\b|\bIRST_A\b|\bIDIFF.*RST.*A\b',             'IRSTA'),
+    (r'\bRSTRB\b|\bIRSTB\b|\bIRSTR_B\b|\bIRST_B\b|\bIDIFF.*RST.*B\b',             'IRSTB'),
+    (r'\bRSTRC\b|\bIRSTC\b|\bIRSTR_C\b|\bIRST_C\b|\bIDIFF.*RST.*C\b',             'IRSTC'),
     # Neutral
     (r'\bINW1\b|\bIN_W1\b|\bINHV\b|\bIN_HV\b',                                    'INW1'),
     (r'\bINW2\b|\bIN_W2\b|\bINLV\b|\bIN_LV\b',                                    'INW2'),
@@ -146,12 +146,12 @@ _SIEMENS_PATTERNS: List[tuple] = [
 # --- SEL-387 / SEL-387A / SEL-387E -----------------------------------------
 # SEL uses IW1A…IW2C for winding currents (Winding1, Winding2)
 _SEL_PATTERNS: List[tuple] = [
-    (r'\bIW1A\b|\bI_W1_A\b',    'IW1A'),
-    (r'\bIW1B\b|\bI_W1_B\b',    'IW1B'),
-    (r'\bIW1C\b|\bI_W1_C\b',    'IW1C'),
-    (r'\bIW2A\b|\bI_W2_A\b',    'IW2A'),
-    (r'\bIW2B\b|\bI_W2_B\b',    'IW2B'),
-    (r'\bIW2C\b|\bI_W2_C\b',    'IW2C'),
+    (r'\bIW1A\b|\bI_W1_A\b|\bIAW1\b',    'IW1A'),
+    (r'\bIW1B\b|\bI_W1_B\b|\bIBW1\b',    'IW1B'),
+    (r'\bIW1C\b|\bI_W1_C\b|\bICW1\b',    'IW1C'),
+    (r'\bIW2A\b|\bI_W2_A\b|\bIAW2\b',    'IW2A'),
+    (r'\bIW2B\b|\bI_W2_B\b|\bIBW2\b',    'IW2B'),
+    (r'\bIW2C\b|\bI_W2_C\b|\bICW2\b',    'IW2C'),
     (r'\bIW3A\b|\bI_W3_A\b',    'IW3A'),
     (r'\bIW3B\b|\bI_W3_B\b',    'IW3B'),
     (r'\bIW3C\b|\bI_W3_C\b',    'IW3C'),

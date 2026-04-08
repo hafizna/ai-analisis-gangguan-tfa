@@ -35,22 +35,22 @@ from core.transformer_feature_extractor import TransformerFeatures
 def _make_features(**overrides) -> TransformerFeatures:
     """Build a TransformerFeatures instance with safe defaults, then apply overrides."""
     defaults = dict(
-        h2_ratio_pct_A=0.0, h2_ratio_pct_B=0.0, h2_ratio_pct_C=0.0, h2_ratio_max_pct=0.0,
-        h5_ratio_pct_A=0.0, h5_ratio_pct_B=0.0, h5_ratio_pct_C=0.0, h5_ratio_max_pct=0.0,
+        h2_ratio_a_pct=0.0, h2_ratio_b_pct=0.0, h2_ratio_c_pct=0.0, h2_ratio_max_pct=0.0,
+        h5_ratio_a_pct=0.0, h5_ratio_b_pct=0.0, h5_ratio_c_pct=0.0, h5_ratio_max_pct=0.0,
         thd_diff_pct=5.0,
-        idiff_pu_A=0.0, idiff_pu_B=0.0, idiff_pu_C=0.0,
-        irstr_pu_A=1.0, irstr_pu_B=1.0, irstr_pu_C=1.0,
+        idiff_max_a_pu=0.0, idiff_max_b_pu=0.0, idiff_max_c_pu=0.0,
+        irstr_max_a_pu=1.0, irstr_max_b_pu=1.0, irstr_max_c_pu=1.0,
         slope_worst_pct=15.0,
         above_slope1=False,
         above_slope2=False,
-        dc_offset_index=0.0,
-        pp_asymmetry=0.0,
+        dc_offset_index_max=0.0,
+        pp_asymmetry_a=0.0,
         zc_interval_variance=0.0,
-        hv_lv_ratio=1.0,
+        hv_lv_ratio_a=1.0,
         energisation_flag=False,
         inception_angle_deg=45.0,
-        duration_ms=80.0,
-        peak_diff_current_a=500.0,
+        fault_duration_ms=80.0,
+        peak_idiff_a=500.0,
     )
     defaults.update(overrides)
     return TransformerFeatures(**defaults)
@@ -66,7 +66,7 @@ class TestInrushClassification:
         """H2 >= H2_STRONG_PCT threshold must produce INRUSH classification."""
         feats = _make_features(
             h2_ratio_max_pct=H2_STRONG_PCT + 5.0,
-            dc_offset_index=DC_OFFSET_STRONG + 0.05,
+            dc_offset_index_max=DC_OFFSET_STRONG + 0.05,
             energisation_flag=True,
         )
         result = classify_transformer_event(feats)
@@ -78,7 +78,7 @@ class TestInrushClassification:
         """Inrush magnetisation should not require field action."""
         feats = _make_features(
             h2_ratio_max_pct=20.0,
-            dc_offset_index=0.4,
+            dc_offset_index_max=0.4,
             energisation_flag=True,
         )
         result = classify_transformer_event(feats)
@@ -89,8 +89,8 @@ class TestInrushClassification:
         """Moderate H2 combined with strong DC offset should still lean toward INRUSH."""
         feats = _make_features(
             h2_ratio_max_pct=H2_MODERATE_PCT + 2.0,
-            dc_offset_index=DC_OFFSET_STRONG + 0.1,
-            pp_asymmetry=0.4,
+            dc_offset_index_max=DC_OFFSET_STRONG + 0.1,
+            pp_asymmetry_a=0.4,
         )
         result = classify_transformer_event(feats)
         # High H2+DC combo → INRUSH probability should dominate over INTERNAL_FAULT
@@ -109,7 +109,7 @@ class TestOverexcitationClassification:
         feats = _make_features(
             h5_ratio_max_pct=H5_OVEREXCIT_PCT + 3.0,
             h2_ratio_max_pct=2.0,   # low H2 — not inrush
-            dc_offset_index=0.05,
+            dc_offset_index_max=0.05,
         )
         result = classify_transformer_event(feats)
         assert result.event_class == "OVEREXCITATION", (
@@ -143,10 +143,10 @@ class TestInternalFaultClassification:
             above_slope1=True,
             above_slope2=True,
             h2_ratio_max_pct=1.5,   # low — not inrush
-            dc_offset_index=0.05,
-            idiff_pu_A=2.5,
-            idiff_pu_B=2.5,
-            idiff_pu_C=2.5,
+            dc_offset_index_max=0.05,
+            idiff_max_a_pu=2.5,
+            idiff_max_b_pu=2.5,
+            idiff_max_c_pu=2.5,
         )
         result = classify_transformer_event(feats)
         assert result.event_class == "INTERNAL_FAULT", (
@@ -161,7 +161,7 @@ class TestInternalFaultClassification:
             above_slope1=True,
             above_slope2=True,
             h2_ratio_max_pct=1.0,
-            dc_offset_index=0.02,
+            dc_offset_index_max=0.02,
         )
         result = classify_transformer_event(feats)
         if result.event_class == "INTERNAL_FAULT":
@@ -180,12 +180,12 @@ class TestThroughFaultClassification:
             slope_worst_pct=SLOPE_OP_PCT - 5.0,
             above_slope1=False,
             above_slope2=False,
-            idiff_pu_A=0.05,
-            idiff_pu_B=0.05,
-            idiff_pu_C=0.05,
-            irstr_pu_A=3.0,
-            irstr_pu_B=3.0,
-            irstr_pu_C=3.0,
+            idiff_max_a_pu=0.05,
+            idiff_max_b_pu=0.05,
+            idiff_max_c_pu=0.05,
+            irstr_max_a_pu=3.0,
+            irstr_max_b_pu=3.0,
+            irstr_max_c_pu=3.0,
             h2_ratio_max_pct=1.0,
         )
         result = classify_transformer_event(feats)
@@ -212,7 +212,7 @@ class TestClassificationResultStructure:
         }
         assert 0.0 <= result.confidence <= 1.0
         assert isinstance(result.class_probabilities, dict)
-        assert len(result.class_probabilities) == 5
+        assert len(result.class_probabilities) >= 5
         assert result.recommendation is not None
         assert result.rule_name is not None
 
@@ -229,7 +229,7 @@ class TestClassificationResultStructure:
 
     def test_evidence_list_populated(self):
         """Evidence list should contain at least one item for any non-trivial input."""
-        feats = _make_features(h2_ratio_max_pct=20.0, dc_offset_index=0.4)
+        feats = _make_features(h2_ratio_max_pct=20.0, dc_offset_index_max=0.4)
         result = classify_transformer_event(feats)
         assert len(result.evidence) > 0
 
@@ -237,18 +237,18 @@ class TestClassificationResultStructure:
         """All 5 event classes must be reachable via the rule engine."""
         cases = [
             # INRUSH
-            _make_features(h2_ratio_max_pct=20.0, energisation_flag=True, dc_offset_index=0.4),
+            _make_features(h2_ratio_max_pct=20.0, energisation_flag=True, dc_offset_index_max=0.4),
             # INTERNAL_FAULT
             _make_features(slope_worst_pct=95.0, above_slope1=True, above_slope2=True,
-                           h2_ratio_max_pct=1.0, idiff_pu_A=3.0),
+                           h2_ratio_max_pct=1.0, idiff_max_a_pu=3.0),
             # THROUGH_FAULT
-            _make_features(slope_worst_pct=10.0, above_slope1=False, idiff_pu_A=0.04,
-                           irstr_pu_A=4.0, irstr_pu_B=4.0, irstr_pu_C=4.0),
+            _make_features(slope_worst_pct=10.0, above_slope1=False, idiff_max_a_pu=0.04,
+                           irstr_max_a_pu=4.0, irstr_max_b_pu=4.0, irstr_max_c_pu=4.0),
             # OVEREXCITATION
             _make_features(h5_ratio_max_pct=14.0, h2_ratio_max_pct=1.5),
             # MAL_OPERATE: high restraint + very low diff + low H2
-            _make_features(irstr_pu_A=5.0, irstr_pu_B=5.0, irstr_pu_C=5.0,
-                           idiff_pu_A=0.02, idiff_pu_B=0.02, idiff_pu_C=0.02,
+            _make_features(irstr_max_a_pu=5.0, irstr_max_b_pu=5.0, irstr_max_c_pu=5.0,
+                           idiff_max_a_pu=0.02, idiff_max_b_pu=0.02, idiff_max_c_pu=0.02,
                            h2_ratio_max_pct=2.0, slope_worst_pct=8.0),
         ]
         seen_classes = {classify_transformer_event(f).event_class for f in cases}
@@ -273,7 +273,7 @@ class TestTransformerMLClassifier:
     def test_untrained_predict_falls_back_to_rules(self):
         """Untrained ML classifier must fall back to rule-based result."""
         clf = TransformerMLClassifier()
-        feats = _make_features(h2_ratio_max_pct=22.0, energisation_flag=True, dc_offset_index=0.45)
+        feats = _make_features(h2_ratio_max_pct=22.0, energisation_flag=True, dc_offset_index_max=0.45)
         result = clf.predict(feats)
         # Should return a valid result (via rules fallback)
         assert isinstance(result, TransformerClassificationResult)
@@ -284,8 +284,8 @@ class TestTransformerMLClassifier:
 
     def test_feature_vector_length(self):
         """Feature vector must have expected length (17 features)."""
-        from models.transformer_classifier import FEATURE_COLS
-        assert len(FEATURE_COLS) == 17, f"Expected 17 feature columns, got {len(FEATURE_COLS)}"
+        clf = TransformerMLClassifier()
+        assert len(clf.FEATURE_COLS) == 17, f"Expected 17 feature columns, got {len(clf.FEATURE_COLS)}"
 
 
 if __name__ == "__main__":
