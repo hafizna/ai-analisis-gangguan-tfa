@@ -1168,25 +1168,24 @@ def _digital_change_points(t_arr, y_arr, target_points: int = 4000):
     return t_arr[idx], y_arr[idx]
 
 
-def _infer_waveform_side(ch) -> str | None:
-    """Infer winding/side tags from raw channel identifiers for UI display."""
-    raw_text = " ".join(
+def _waveform_raw_text(ch) -> str:
+    return " ".join(
         _s(part, "")
         for part in (getattr(ch, "name", ""), getattr(ch, "id", ""), getattr(ch, "canonical_name", ""))
         if part
     ).upper()
+
+
+def _infer_waveform_winding(ch) -> str | None:
+    """Infer transformer winding tags from raw channel identifiers."""
+    raw_text = _waveform_raw_text(ch)
     if re.search(r"\[[^\]]*-\s*1\]", raw_text):
         return "HV/W1"
     if re.search(r"\[[^\]]*-\s*2\]", raw_text):
         return "LV/W2"
     if re.search(r"\[[^\]]*-\s*3\]", raw_text):
         return "TV/W3"
-    text = raw_text
-    text = re.sub(r"[_:/\-]+", " ", text)
-    if re.search(r"\b(DIFF|IDIFF|87T|OPERATE|OP)\b", text):
-        return "DIFF"
-    if re.search(r"\b(RSTR|RESTRAINT|IRSTR|BIAS)\b", text):
-        return "RESTRAINT"
+    text = re.sub(r"[_:/\-\[\]\(\)]+", " ", raw_text)
     if re.search(r"\b(HV|W1|IW1|IW1[A-Z0-9]*|W1[A-Z0-9]*|PRIMARY|PRI|WIND1|WINDING1)\b", text):
         return "HV/W1"
     if re.search(r"\b(LV|W2|IW2|IW2[A-Z0-9]*|W2[A-Z0-9]*|SECONDARY|SEC|WIND2|WINDING2)\b", text):
@@ -1196,46 +1195,171 @@ def _infer_waveform_side(ch) -> str | None:
     return None
 
 
+def _infer_waveform_family(ch) -> str | None:
+    """Infer special current families such as differential and bias."""
+    text = re.sub(r"[_:/\-\[\]\(\)]+", " ", _waveform_raw_text(ch))
+    if re.search(r"\b(DIFF|IDIFF|87T|OPERATE|OP)\b", text):
+        return "DIFF"
+    if re.search(r"\b(RSTR|RESTRAINT|IRSTR|BIAS)\b", text):
+        return "RESTRAINT"
+    return None
+
+
+def _infer_waveform_phase(ch) -> str | None:
+    """Infer phase tags so traces can be rendered as IA, IB, and IC consistently."""
+    sources = [
+        _s(getattr(ch, "canonical_name", ""), "").upper(),
+        _s(getattr(ch, "name", ""), "").upper(),
+        _s(getattr(ch, "id", ""), "").upper(),
+    ]
+    patterns = (
+        r"\b[IV]W[123]([ABCN])\b",
+        r"\b(?:I|V)([ABCN])\b",
+        r"\[\s*(?:I|V)?([ABCN])\s*-\s*\d+\s*\]",
+        r"\b(?:DIFF|IDIFF|BIAS|RESTRAINT|RSTR)[ _-]*([ABCN])\b",
+    )
+    for src in sources:
+        if not src:
+            continue
+        for pattern in patterns:
+            match = re.search(pattern, src)
+            if match:
+                return match.group(1)
+        fallback = re.search(r"([ABCN])$", src)
+        if fallback:
+            return fallback.group(1)
+    return None
+
+
+def _infer_waveform_side(ch) -> str | None:
+    """Infer a user-facing side/family tag from raw channel identifiers."""
+    family = _infer_waveform_family(ch)
+    if family:
+        return family
+    return _infer_waveform_winding(ch)
+
+
+def _waveform_side_short(side: str | None) -> str | None:
+    return {
+        "HV/W1": "HV",
+        "LV/W2": "LV",
+        "TV/W3": "TV",
+    }.get(side)
+
+
+def _waveform_color_and_dash(group: str, phase: str | None, winding: str | None) -> tuple[str, str]:
+    phase_palette = {
+        "A": "#ef4444",
+        "B": "#2563eb",
+        "C": "#16a34a",
+        "N": "#eab308",
+    }
+    diff_side_palette = {
+        "HV/W1": "#b91c1c",
+        "LV/W2": "#1d4ed8",
+        "TV/W3": "#15803d",
+    }
+    bias_side_palette = {
+        "HV/W1": "#f97316",
+        "LV/W2": "#06b6d4",
+        "TV/W3": "#8b5cf6",
+    }
+    if group == "current_diff":
+        return diff_side_palette.get(winding, phase_palette.get(phase, "#dc2626")), "solid"
+    if group == "current_restraint":
+        return bias_side_palette.get(winding, phase_palette.get(phase, "#0ea5e9")), "dash"
+    return phase_palette.get(phase, "#94a3b8"), "solid"
+
+
 def _classify_waveform_group(ch) -> str:
     measurement = _s(getattr(ch, "measurement", ""), "").lower()
-    side = _infer_waveform_side(ch)
+    family = _infer_waveform_family(ch)
+    winding = _infer_waveform_winding(ch)
     if measurement == "current":
-        if side == "HV/W1":
-            return "current_hv"
-        if side == "LV/W2":
-            return "current_lv"
-        if side == "TV/W3":
-            return "current_tv"
-        if side == "DIFF":
+        if family == "DIFF":
             return "current_diff"
-        if side == "RESTRAINT":
+        if family == "RESTRAINT":
             return "current_restraint"
+        if winding == "HV/W1":
+            return "current_hv"
+        if winding == "LV/W2":
+            return "current_lv"
+        if winding == "TV/W3":
+            return "current_tv"
         return "current_other"
     if measurement == "voltage":
-        if side == "HV/W1":
+        if winding == "HV/W1":
             return "voltage_hv"
-        if side == "LV/W2":
+        if winding == "LV/W2":
             return "voltage_lv"
-        if side == "TV/W3":
+        if winding == "TV/W3":
             return "voltage_tv"
         return "voltage_other"
     return measurement or "other"
 
 
+def _waveform_priority_key(ch) -> tuple:
+    phase_order = {"A": 0, "B": 1, "C": 2, "N": 3}
+    winding_order = {"HV/W1": 0, "LV/W2": 1, "TV/W3": 2}
+    group_order = {
+        "voltage_hv": 0,
+        "voltage_lv": 1,
+        "voltage_tv": 2,
+        "voltage_other": 3,
+        "current_hv": 4,
+        "current_lv": 5,
+        "current_tv": 6,
+        "current_diff": 7,
+        "current_restraint": 8,
+        "current_other": 9,
+    }
+    canonical = _s(getattr(ch, "canonical_name", ""), "").upper()
+    name = _s(getattr(ch, "name", ""), "").upper()
+    group = _classify_waveform_group(ch)
+    phase = _infer_waveform_phase(ch)
+    winding = _infer_waveform_winding(ch)
+    return (
+        group_order.get(group, 99),
+        winding_order.get(winding, 99),
+        phase_order.get(phase, 99),
+        canonical or name,
+        name,
+    )
+
+
 def _build_waveform_display_name(ch, duplicate_canonicals: Counter) -> str:
-    """Keep transformer side information visible even when canonical names collide."""
+    """Keep transformer current labels explicit as IA HV, IA LV, Idiff HV, and Bias LV."""
     canonical = _s(getattr(ch, "canonical_name", ""), "").strip()
     raw_name = _s(getattr(ch, "name", ""), "").strip()
     base = canonical or raw_name or _s(getattr(ch, "id", ""), "").strip() or "CHANNEL"
     measurement = _s(getattr(ch, "measurement", ""), "").lower()
-    side = _infer_waveform_side(ch)
+    group = _classify_waveform_group(ch)
+    winding = _infer_waveform_winding(ch)
+    winding_short = _waveform_side_short(winding)
+    phase = _infer_waveform_phase(ch)
+
+    if measurement == "current":
+        if group in {"current_hv", "current_lv", "current_tv"} and phase:
+            return f"I{phase} {winding_short or ''}".strip()
+        if group == "current_diff":
+            if phase:
+                return f"Idiff {phase}"
+            if winding_short:
+                return f"Idiff {winding_short}"
+            return "Idiff"
+        if group == "current_restraint":
+            if phase:
+                return f"Bias {phase}"
+            if winding_short:
+                return f"Bias {winding_short}"
+            return "Bias"
 
     dup_key = (measurement, canonical.upper()) if canonical else None
     is_duplicate = bool(dup_key and duplicate_canonicals.get(dup_key, 0) > 1)
     is_generic = bool(re.fullmatch(r"(?:V[ABCN]|I[ABCN]|IN|I0|3I0|VN|V0)", base.upper()))
 
-    if side and (is_duplicate or is_generic):
-        return f"{base} ({side})"
+    if winding_short and (is_duplicate or is_generic):
+        return f"{base} {winding_short}"
     if is_duplicate and raw_name and raw_name.upper() != base.upper():
         return f"{base} [{raw_name}]"
     return base
@@ -1263,48 +1387,14 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
         t0 = float(t_ms[0])
     t_ms = t_ms - t0
 
-    # Preferred ordering and color map
-    priority = ["VA", "VB", "VC", "VAB", "VBC", "VCA", "IA", "IB", "IC", "IN", "I0", "3I0", "IG", "IF"]
-    color_map = {
-        "VA": "#ef4444",
-        "VB": "#3b82f6",
-        "VC": "#10b981",
-        "IA": "#f97316",
-        "IB": "#06b6d4",
-        "IC": "#a78bfa",
-        "IN": "#facc15",
-        "I0": "#facc15",
-        "3I0": "#facc15",
-    }
-
     analog_all = [ch for ch in record.analog_channels if len(ch.samples) == total_samples]
     duplicate_canonicals = Counter(
         (_s(ch.measurement, "").lower(), _s(ch.canonical_name, "").upper())
         for ch in analog_all
         if _s(ch.canonical_name, "").strip()
     )
-    group_order = {
-        "voltage_hv": 0,
-        "voltage_lv": 1,
-        "voltage_tv": 2,
-        "voltage_other": 3,
-        "current_hv": 4,
-        "current_lv": 5,
-        "current_tv": 6,
-        "current_diff": 7,
-        "current_restraint": 8,
-        "current_other": 9,
-    }
-
-    def _prio_key(ch):
-        name = (ch.canonical_name or ch.name or "").upper()
-        return (
-            group_order.get(_classify_waveform_group(ch), 99),
-            priority.index(name) if name in priority else 999,
-            _s(ch.name, "").upper(),
-        )
-    analog_sorted = sorted(analog_all, key=_prio_key)
-    max_analog = 12
+    analog_sorted = sorted(analog_all, key=_waveform_priority_key)
+    max_analog = 24
     analog_chs = analog_sorted[:max_analog]
     analog_truncated = len(analog_sorted) > max_analog
 
@@ -1316,12 +1406,12 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
 
     channels = []
     for ch in analog_chs:
-        name = ch.canonical_name or ch.name or ch.id
-        name_u = name.upper()
-        color = color_map.get(name_u, "#94a3b8")
         display_name = _build_waveform_display_name(ch, duplicate_canonicals)
         group = _classify_waveform_group(ch)
         side = _infer_waveform_side(ch)
+        winding = _infer_waveform_winding(ch)
+        phase = _infer_waveform_phase(ch)
+        color, line_dash = _waveform_color_and_dash(group, phase, winding)
 
         y = np.array(ch.samples, dtype=float)
         def _safe_stat(val):
@@ -1336,8 +1426,11 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
             "measurement": ch.measurement,
             "group": group,
             "side": side,
+            "winding": winding,
+            "phase": phase,
             "unit": ch.unit,
             "color": color,
+            "line_dash": line_dash,
             "x": x_ds.tolist(),
             "y": y_ds.tolist(),
             "min": _safe_stat(np.min(y)) if y.size else 0.0,

@@ -550,7 +550,7 @@
     <div class="wave-head">
         <div>
             <div class="wave-title">COMTRADE Explorer — Trafo</div>
-            <div class="wave-sub">Arus HV, LV, Diferensial & Bias ditampilkan terpisah. Geser atau zoom untuk analisa lebih lanjut.</div>
+            <div class="wave-sub">Arus HV, arus LV, serta arus diferensial dan bias ditampilkan terpisah agar fase IA, IB, dan IC lebih jelas.</div>
         </div>
         <div class="wave-actions">
             <button class="btn btn-outline" id="waveResetBtn" type="button">Reset Zoom</button>
@@ -572,16 +572,12 @@
     <div class="wave-grid">
         <div class="wave-channel-list" id="waveChannelList"></div>
         <div class="wave-plot-stack">
-            <div class="wave-subplot" id="waveVoltageWrap">
-                <div class="wave-subplot-title">Tegangan</div>
-                <div id="waveVoltagePlot" class="wave-plot wave-plot-small"></div>
-            </div>
             <div class="wave-subplot" id="waveCurrentHvWrap">
                 <div class="wave-subplot-title">Arus HV</div>
                 <div id="waveCurrentHvPlot" class="wave-plot wave-plot-small"></div>
             </div>
             <div class="wave-subplot" id="waveCurrentLvWrap">
-                <div class="wave-subplot-title">Arus LV / TV</div>
+                <div class="wave-subplot-title">Arus LV</div>
                 <div id="waveCurrentLvPlot" class="wave-plot wave-plot-small"></div>
             </div>
             <div class="wave-subplot" id="waveCurrentDiffWrap">
@@ -597,7 +593,6 @@
     <div class="wave-measure">
         <span>Measure:</span>
         <button class="btn btn-outline" id="measureCurrentBtn">Current</button>
-        <button class="btn btn-outline" id="measureVoltageBtn">Voltage</button>
         <span>Cursor A: <strong id="cursorAVal">-</strong></span>
         <span>Cursor B: <strong id="cursorBVal">-</strong></span>
         <span>Δt: <strong id="cursorDeltaT">-</strong></span>
