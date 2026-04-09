@@ -37,6 +37,7 @@ class AnalogChannel:
     scale_a: float              # Raw COMTRADE channel scale factor "a" (metadata)
     scale_b: float              # Raw COMTRADE channel offset "b" (metadata)
     samples: np.ndarray         # Waveform in PRIMARY values: kV for voltage, A for current
+    pors: str = "P"             # COMTRADE P/S flag: values already primary ("P") or secondary ("S")
 
 
 @dataclass
@@ -364,7 +365,8 @@ def _parse_analog_channels(com: Comtrade, manufacturer: str, warnings: List[str]
                 ct_secondary=ct_secondary,
                 scale_a=scale_a,
                 scale_b=scale_b,
-                samples=samples_primary
+                samples=samples_primary,
+                pors=pors,
             )
 
             analog_channels.append(channel)

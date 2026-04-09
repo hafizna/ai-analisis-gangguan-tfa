@@ -34,6 +34,13 @@
     const measureVoltageBtn = document.getElementById('measureVoltageBtn');
     const exportPngBtn = document.getElementById('waveExportPngBtn');
     const printBtn = document.getElementById('wavePrintBtn');
+    const csvBtn = document.getElementById('waveExportCsvBtn');
+
+    function bindOnce(btn, key, handler) {
+        if (!btn || btn.dataset[key]) return;
+        btn.dataset[key] = '1';
+        btn.addEventListener('click', handler);
+    }
 
     const meta = wf.meta || {};
     const markers = wf.markers || {};
@@ -61,6 +68,7 @@
             `Digital: ${fmt(meta.digital_total, 0)}`,
             't=0 di inception'
         ];
+        if (meta.selected_line_tag) badges.push(`Bay aktif: ${meta.selected_line_tag}`);
         badgesEl.innerHTML = badges.map(b => `<span class=\"wave-badge\">${b}</span>`).join('');
     }
 
@@ -68,9 +76,14 @@
         const notes = [];
         if (meta.analog_truncated) notes.push('Sebagian kanal analog disembunyikan untuk menjaga performa.');
         if (meta.digital_truncated) notes.push('Sebagian kanal digital disembunyikan untuk menjaga performa.');
+        if (meta.selected_line_tag) notes.push(`Viewer difokuskan ke bay/penghantar ${meta.selected_line_tag}.`);
         notes.push('Tip: hover lalu klik untuk Cursor A, shift+klik untuk Cursor B. Klik kanal di sidebar untuk isolate/lock. Double-click untuk reset zoom.');
         hintEl.textContent = notes.join('  |  ');
     }
+
+    bindOnce(exportPngBtn, 'boundExport', exportCombinedImage);
+    bindOnce(printBtn, 'boundExport', printCombined);
+    bindOnce(csvBtn, 'boundExport', exportCSV);
 
     const voltageChannels = showVoltagePanel ? wf.channels.filter(ch => ch.measurement === 'voltage') : [];
     const currentChannels = wf.channels.filter(ch => ch.measurement === 'current');
@@ -548,7 +561,7 @@
     }
     if (measureCurrentBtn) measureCurrentBtn.addEventListener('click', () => setMeasure('current'));
     if (measureVoltageBtn) measureVoltageBtn.addEventListener('click', () => setMeasure('voltage'));
-    setMeasure(currentDefsWithPlots().length ? 'current' : 'voltage');
+    setMeasure(currentDefsWithPlots().length || !showVoltagePanel ? 'current' : 'voltage');
 
     function getActivePlot() {
         return activeMeasure === 'voltage' ? voltagePlot : getCurrentPlotRef(activeCurrentGroupKey);
@@ -918,12 +931,6 @@
         setTimeout(() => URL.revokeObjectURL(url), 8000);
     }
 
-    if (exportPngBtn) exportPngBtn.addEventListener('click', exportCombinedImage);
-    if (printBtn)     printBtn.addEventListener('click', printCombined);
-
-    // Wire up CSV export button
-    const csvBtn = document.getElementById('waveExportCsvBtn');
-    if (csvBtn) csvBtn.addEventListener('click', exportCSV);
 })();
 </script>
 {% endif %}
