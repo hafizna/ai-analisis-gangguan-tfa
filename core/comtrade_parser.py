@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 from pathlib import Path
 import logging
+import shutil
+import tempfile
 import numpy as np
 
 try:
@@ -109,12 +111,12 @@ def parse_comtrade(cfg_path: str, dat_path: Optional[str] = None) -> Optional[Co
         try:
             com.load(str(cfg_path_obj), str(dat_path) if dat_path else None)
         except UnicodeDecodeError:
-            # Try with different encoding
-            logger.warning(f"UTF-8 decode failed for {cfg_path}, trying latin-1")
-            warnings.append("File encoding issue - used fallback decoder")
-            # The comtrade library doesn't expose encoding parameter, so we may need to handle this differently
-            # For now, log and continue
-            com.load(str(cfg_path_obj), str(dat_path) if dat_path else None)
+            logger.warning(
+                "Unicode decode failed for %s, retrying without optional sidecar files",
+                cfg_path,
+            )
+            warnings.append("Optional COMTRADE sidecar could not be decoded - loaded CFG/DAT only")
+            _load_without_optional_sidecars(com, cfg_path_obj, dat_path)
 
         if dat_path is None or not Path(dat_path).exists():
             warnings.append("DAT file not found - metadata only")
@@ -183,6 +185,27 @@ def parse_comtrade(cfg_path: str, dat_path: Optional[str] = None) -> Optional[Co
     except Exception as e:
         logger.error(f"Failed to parse {cfg_path}: {e}", exc_info=True)
         return None
+
+
+def _load_without_optional_sidecars(com: Comtrade, cfg_path: Path, dat_path: Optional[str]) -> None:
+    """
+    Retry COMTRADE loading from a temporary folder containing only CFG/DAT.
+
+    Some field recordings ship `.INF` files encoded as UTF-16 or vendor-specific
+    text that the upstream `comtrade` library always tries to open as UTF-8.
+    Copying only the required pair lets us keep parsing the actual oscillography.
+    """
+    with tempfile.TemporaryDirectory(prefix="comtrade_no_sidecar_") as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        tmp_cfg = tmp_dir_path / cfg_path.name
+        shutil.copy2(cfg_path, tmp_cfg)
+
+        tmp_dat = None
+        if dat_path and Path(dat_path).exists():
+            tmp_dat = tmp_dir_path / Path(dat_path).name
+            shutil.copy2(dat_path, tmp_dat)
+
+        com.load(str(tmp_cfg), str(tmp_dat) if tmp_dat else None)
 
 
 def _find_dat_file(cfg_path: Path) -> Optional[str]:

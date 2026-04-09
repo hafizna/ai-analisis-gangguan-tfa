@@ -135,7 +135,12 @@ def determine_protection(record) -> ProtectionEvent:
     status_dict = {ch.name: ch.samples for ch in record.status_channels}
 
     # Search for protection operate signals
-    xfmr_diff_operated = _check_transformer_diff_operate(status_names, status_dict)
+    xfmr_diff_operated = _check_transformer_diff_operate(
+        status_names,
+        status_dict,
+        rec_dev_id=getattr(record, 'rec_dev_id', ''),
+        station_name=getattr(record, 'station_name', ''),
+    )
     diff_operated = _check_differential_operate(status_names, status_dict)
     dist_operated, dist_zones, dist_phases = _check_distance_operate(status_names, status_dict)
     ef_operated = _check_directional_ef_operate(status_names, status_dict)
@@ -240,7 +245,12 @@ def determine_protection(record) -> ProtectionEvent:
     )
 
 
-def _check_transformer_diff_operate(status_names: List[str], status_dict: dict) -> bool:
+def _check_transformer_diff_operate(
+    status_names: List[str],
+    status_dict: dict,
+    rec_dev_id: str = "",
+    station_name: str = "",
+) -> bool:
     """
     Check if transformer differential protection (87T) operated.
 
@@ -274,6 +284,14 @@ def _check_transformer_diff_operate(status_names: List[str], status_dict: dict) 
         'BUCHHOLZ', 'OLTC',                 # Transformer-specific signals
     ]
     operate_keywords = ['OPERATE', 'TRIP', 'ACT', 'OP', 'TRIG']
+    relay_text = f"{rec_dev_id} {station_name}".upper()
+    known_transformer_relay = any(
+        key in relay_text
+        for key in (
+            '7UT', 'RET', 'P64', 'P643', 'SEL-387', 'SEL387',
+            'T60', 'PCS-985', 'PCS985', 'MICOM', 'TRAFO',
+        )
+    )
 
     # First pass: explicit 87T / transformer-labeled differential operate
     for name in status_names:
@@ -297,6 +315,25 @@ def _check_transformer_diff_operate(status_names: List[str], status_dict: dict) 
             if len(samples) > 0 and samples.sum() > 0:
                 logger.debug(f"Transformer-specific operate detected: {name} ({samples.sum()} samples)")
                 return True
+
+    # Third pass: known transformer relay family + generic differential trip wording.
+    # This covers vendor outputs such as Siemens 7UT "Diff> TRIP" that do not spell out 87T.
+    if known_transformer_relay:
+        generic_diff_patterns = ['DIFF', 'DIFFERENTIAL', 'IDIFF', 'IDIF']
+        for name in status_names:
+            variants = _name_variants(name)
+            has_diff = any(p in v for v in variants for p in generic_diff_patterns)
+            has_operate = any(k in v for v in variants for k in operate_keywords)
+            if has_diff and has_operate:
+                samples = status_dict.get(name, [])
+                if len(samples) > 0 and samples.sum() > 0:
+                    logger.debug(
+                        "Transformer relay family %s routed generic differential signal as 87T: %s (%s samples)",
+                        rec_dev_id or station_name or "UNKNOWN",
+                        name,
+                        samples.sum(),
+                    )
+                    return True
 
     return False
 

@@ -1186,6 +1186,18 @@ def _infer_waveform_winding(ch) -> str | None:
     if re.search(r"\[[^\]]*-\s*3\]", raw_text):
         return "TV/W3"
     text = re.sub(r"[_:/\-\[\]\(\)]+", " ", raw_text)
+    if re.search(r"\b(?:IA|IB|IC|IN|VA|VB|VC|VN|3I0|I0)\s*1\b", text):
+        return "HV/W1"
+    if re.search(r"\b(?:IA|IB|IC|IN|VA|VB|VC|VN|3I0|I0)\s*2\b", text):
+        return "LV/W2"
+    if re.search(r"\b(?:IA|IB|IC|IN|VA|VB|VC|VN|3I0|I0)\s*3\b", text):
+        return "TV/W3"
+    if re.search(r"\bS1\b", text):
+        return "HV/W1"
+    if re.search(r"\bS2\b", text):
+        return "LV/W2"
+    if re.search(r"\bS3\b", text):
+        return "TV/W3"
     if re.search(r"\b(HV|W1|IW1|IW1[A-Z0-9]*|W1[A-Z0-9]*|PRIMARY|PRI|WIND1|WINDING1)\b", text):
         return "HV/W1"
     if re.search(r"\b(LV|W2|IW2|IW2[A-Z0-9]*|W2[A-Z0-9]*|SECONDARY|SEC|WIND2|WINDING2)\b", text):
@@ -1271,8 +1283,20 @@ def _waveform_color_and_dash(group: str, phase: str | None, winding: str | None)
     return phase_palette.get(phase, "#94a3b8"), "solid"
 
 
-def _classify_waveform_group(ch) -> str:
+def _infer_waveform_measurement(ch) -> str:
     measurement = _s(getattr(ch, "measurement", ""), "").lower()
+    if measurement in {"current", "voltage"}:
+        return measurement
+    raw_text = _waveform_raw_text(ch)
+    if re.search(r"\b(?:I[ABCN]|IN|I0|3I0|IDIFF|IDIF|DIFF|BIAS|RSTR|REST)\b", raw_text):
+        return "current"
+    if re.search(r"\b(?:V[ABCN]|VN|V0|VOLT|FREQ|VX)\b", raw_text):
+        return "voltage"
+    return measurement or "other"
+
+
+def _classify_waveform_group(ch) -> str:
+    measurement = _infer_waveform_measurement(ch)
     family = _infer_waveform_family(ch)
     winding = _infer_waveform_winding(ch)
     if measurement == "current":
@@ -1332,7 +1356,7 @@ def _build_waveform_display_name(ch, duplicate_canonicals: Counter) -> str:
     canonical = _s(getattr(ch, "canonical_name", ""), "").strip()
     raw_name = _s(getattr(ch, "name", ""), "").strip()
     base = canonical or raw_name or _s(getattr(ch, "id", ""), "").strip() or "CHANNEL"
-    measurement = _s(getattr(ch, "measurement", ""), "").lower()
+    measurement = _infer_waveform_measurement(ch)
     group = _classify_waveform_group(ch)
     winding = _infer_waveform_winding(ch)
     winding_short = _waveform_side_short(winding)
@@ -1407,6 +1431,7 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
     channels = []
     for ch in analog_chs:
         display_name = _build_waveform_display_name(ch, duplicate_canonicals)
+        measurement = _infer_waveform_measurement(ch)
         group = _classify_waveform_group(ch)
         side = _infer_waveform_side(ch)
         winding = _infer_waveform_winding(ch)
@@ -1423,7 +1448,7 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
             "name": ch.name,
             "canonical": ch.canonical_name,
             "display_name": display_name,
-            "measurement": ch.measurement,
+            "measurement": measurement,
             "group": group,
             "side": side,
             "winding": winding,
