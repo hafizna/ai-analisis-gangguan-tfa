@@ -384,6 +384,46 @@ def _nearest_supported_voltage_kv(v_kv: float) -> float:
     return min(levels, key=lambda x: abs(x - v))
 
 
+def _assumed_line_ratios(voltage_kv, peak_current_a=None) -> dict:
+    """
+    Return user-facing PLN-style CT/VT defaults for transmission line bays.
+    These are display/override defaults for operators, not raw COMTRADE scale factors.
+    """
+    v_sys = _nearest_supported_voltage_kv(_f(voltage_kv, 150.0))
+    vt_primary_by_voltage = {
+        30.0: 30000.0,
+        75.0: 70000.0,
+        150.0: 150000.0,
+        275.0: 275000.0,
+        500.0: 500000.0,
+    }
+    ct_candidates_by_voltage = {
+        30.0: [600.0, 800.0, 1200.0, 1600.0, 2000.0],
+        75.0: [600.0, 800.0, 1200.0, 1600.0, 2000.0],
+        150.0: [1600.0, 2000.0, 3000.0, 4000.0],
+        275.0: [2000.0, 3000.0, 4000.0],
+        500.0: [3000.0, 4000.0, 5000.0],
+    }
+
+    candidates = ct_candidates_by_voltage.get(v_sys, ct_candidates_by_voltage[150.0])
+    peak_i = _f(peak_current_a, 0.0)
+    if peak_i > 0:
+        # Transmission fault current often lands several times above CT nominal.
+        # Map to the closest common bay CT by using a conservative quarter-current target.
+        target = max(candidates[0], peak_i / 4.0)
+        ct_primary = next((val for val in candidates if val >= target), candidates[-1])
+    else:
+        ct_primary = candidates[min(1, len(candidates) - 1)]
+
+    return {
+        "assumed_voltage_kv": v_sys,
+        "assumed_ct_primary": float(ct_primary),
+        "assumed_ct_secondary": 5.0,
+        "assumed_vt_primary": float(vt_primary_by_voltage.get(v_sys, 150000.0)),
+        "assumed_vt_secondary": 100.0,
+    }
+
+
 def _assumed_transformer_ratios(voltage_kv, peak_current_a, parser_ct_multiplier=0.0, parser_vt_multiplier=0.0) -> dict:
     """
     Return practical default CT/VT ratio assumptions for transmission systems.
@@ -436,6 +476,41 @@ def _assumed_transformer_ratios(voltage_kv, peak_current_a, parser_ct_multiplier
     }
 
 
+def _resolve_ratio_defaults(
+    cfg_ratios: dict,
+    voltage_kv=None,
+    peak_current_a=None,
+    event_type: str = "LINE",
+) -> dict:
+    """Resolve UI ratio fields without inventing CT/VT values when metadata is absent."""
+    del voltage_kv, peak_current_a, event_type
+
+    ct_known = bool(cfg_ratios.get("cfg_ct_known"))
+    vt_known = bool(cfg_ratios.get("cfg_vt_known"))
+
+    ct_base_p = _f(cfg_ratios.get("cfg_ct_primary"), 1.0) if ct_known else 1.0
+    ct_base_s = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0) if ct_known else 1.0
+    vt_base_p = _f(cfg_ratios.get("cfg_vt_primary"), 1.0) if vt_known else 1.0
+    vt_base_s = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0) if vt_known else 1.0
+
+    return {
+        "ct_primary": ct_base_p if ct_known else None,
+        "ct_secondary": ct_base_s if ct_known else None,
+        "vt_primary": vt_base_p if vt_known else None,
+        "vt_secondary": vt_base_s if vt_known else None,
+        "ct_ratio_source": "cfg" if ct_known else (
+            "meta_primary" if cfg_ratios.get("ct_primary_native") else "meta"
+        ),
+        "vt_ratio_source": "cfg" if vt_known else (
+            "meta_primary" if cfg_ratios.get("vt_primary_native") else "meta"
+        ),
+        "ct_base_primary": ct_base_p,
+        "ct_base_secondary": ct_base_s,
+        "vt_base_primary": vt_base_p,
+        "vt_base_secondary": vt_base_s,
+    }
+
+
 def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, vt_p: float, vt_s: float) -> dict:
     """Scale electrical values using CT/VT P/S and re-run rule/ML classification."""
     updated = dict(analysis)
@@ -463,10 +538,10 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
             "v_fault_v": _f(analysis.get("v_fault_v")),
             "z_magnitude_ohms": _f(analysis.get("z_magnitude_ohms")),
             # Original file ratio (used to compute relative change)
-            "orig_ct_p": _f(analysis.get("ct_primary"), 1.0),
-            "orig_ct_s": _f(analysis.get("ct_secondary"), 1.0),
-            "orig_vt_p": _f(analysis.get("vt_primary"), 1.0),
-            "orig_vt_s": _f(analysis.get("vt_secondary"), 1.0),
+            "orig_ct_p": _f(analysis.get("ratio_base_ct_primary"), _f(analysis.get("ct_primary"), 1.0)),
+            "orig_ct_s": _f(analysis.get("ratio_base_ct_secondary"), _f(analysis.get("ct_secondary"), 1.0)),
+            "orig_vt_p": _f(analysis.get("ratio_base_vt_primary"), _f(analysis.get("vt_primary"), 1.0)),
+            "orig_vt_s": _f(analysis.get("ratio_base_vt_secondary"), _f(analysis.get("vt_secondary"), 1.0)),
         }
     base = updated["ratio_base_values"]
 
@@ -479,11 +554,38 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
     ct_mul = (_ratio(ct_p, ct_s) / orig_ct) if orig_ct > 0 else _ratio(ct_p, ct_s)
     vt_mul = (_ratio(vt_p, vt_s) / orig_vt) if orig_vt > 0 else _ratio(vt_p, vt_s)
 
-    # Persist ratio inputs for the UI
-    updated["ct_primary"] = ct_p
-    updated["ct_secondary"] = ct_s
-    updated["vt_primary"] = vt_p
-    updated["vt_secondary"] = vt_s
+    if "ct_primary_default" not in updated:
+        updated["ct_primary_default"] = analysis.get("ct_primary_default")
+    if "ct_secondary_default" not in updated:
+        updated["ct_secondary_default"] = analysis.get("ct_secondary_default")
+    if "vt_primary_default" not in updated:
+        updated["vt_primary_default"] = analysis.get("vt_primary_default")
+    if "vt_secondary_default" not in updated:
+        updated["vt_secondary_default"] = analysis.get("vt_secondary_default")
+
+    def _same_num(left: float, right: float) -> bool:
+        return abs(_f(left) - _f(right)) < 1e-9
+
+    returning_to_base = (
+        _same_num(ct_p, _f(base.get("orig_ct_p"), 1.0))
+        and _same_num(ct_s, _f(base.get("orig_ct_s"), 1.0))
+        and _same_num(vt_p, _f(base.get("orig_vt_p"), 1.0))
+        and _same_num(vt_s, _f(base.get("orig_vt_s"), 1.0))
+    )
+
+    # Persist ratio inputs for the UI.
+    if returning_to_base:
+        updated["ct_primary"] = updated.get("ct_primary_default")
+        updated["ct_secondary"] = updated.get("ct_secondary_default")
+        updated["vt_primary"] = updated.get("vt_primary_default")
+        updated["vt_secondary"] = updated.get("vt_secondary_default")
+        updated["ratio_override_active"] = False
+    else:
+        updated["ct_primary"] = ct_p
+        updated["ct_secondary"] = ct_s
+        updated["vt_primary"] = vt_p
+        updated["vt_secondary"] = vt_s
+        updated["ratio_override_active"] = True
     updated["ct_multiplier"] = ct_mul
     updated["vt_multiplier"] = vt_mul
 
@@ -1666,34 +1768,22 @@ def upload_files():
 
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(str(cfg_path))
-    assumed_ratios = _assumed_transformer_ratios(
+    ratio_defaults = _resolve_ratio_defaults(
+        cfg_ratios,
         feats.get("voltage_kv"),
         feats.get("peak_fault_current_a"),
-        cfg_ratios.get("parser_ct_multiplier"),
-        cfg_ratios.get("parser_vt_multiplier"),
+        event_type=getattr(result, "event_type", "LINE"),
     )
-    ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else (
-        "primary_native" if cfg_ratios.get("ct_primary_native") else "assumed"
-    )
-    vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else (
-        "primary_native" if cfg_ratios.get("vt_primary_native") else "assumed"
-    )
-    if cfg_ratios.get("cfg_ct_known"):
-        ct_p_default = _f(cfg_ratios.get("cfg_ct_primary"), 1.0)
-        ct_s_default = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0)
-    elif cfg_ratios.get("ct_primary_native"):
-        ct_p_default, ct_s_default = 1.0, 1.0
-    else:
-        ct_p_default = _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
-        ct_s_default = _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
-    if cfg_ratios.get("cfg_vt_known"):
-        vt_p_default = _f(cfg_ratios.get("cfg_vt_primary"), 1.0)
-        vt_s_default = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0)
-    elif cfg_ratios.get("vt_primary_native"):
-        vt_p_default, vt_s_default = 1.0, 1.0
-    else:
-        vt_p_default = _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
-        vt_s_default = _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
+    ct_ratio_src = ratio_defaults["ct_ratio_source"]
+    vt_ratio_src = ratio_defaults["vt_ratio_source"]
+    ct_p_display = ratio_defaults["ct_primary"]
+    ct_s_display = ratio_defaults["ct_secondary"]
+    vt_p_display = ratio_defaults["vt_primary"]
+    vt_s_display = ratio_defaults["vt_secondary"]
+    ct_p_base = ratio_defaults["ct_base_primary"]
+    ct_s_base = ratio_defaults["ct_base_secondary"]
+    vt_p_base = ratio_defaults["vt_base_primary"]
+    vt_s_base = ratio_defaults["vt_base_secondary"]
 
     analysis_payload = {
         "original_filename": cfg_file.filename,
@@ -1736,12 +1826,21 @@ def upload_files():
         "r_x_ratio":            _f(feats.get("r_x_ratio")),
         "reclose_successful":   _s(feats.get("reclose_successful")),
         "reclose_time_ms":      _f(feats.get("reclose_time_ms")),
-        "voltage_kv":           str(int(_nearest_supported_voltage_kv(vt_p_default / 1000.0))) if (vt_ratio_src == "cfg" and vt_p_default > 1000.0) else (_s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui"),
+        "voltage_kv":           str(int(_nearest_supported_voltage_kv(vt_p_base / 1000.0))) if (vt_ratio_src == "cfg" and vt_p_base > 1000.0) else (_s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui"),
         "scaling_ok":           _f(feats.get("peak_fault_current_a", 0)) >= 200.0,
-        "ct_primary": ct_p_default,
-        "ct_secondary": ct_s_default,
-        "vt_primary": vt_p_default,
-        "vt_secondary": vt_s_default,
+        "ct_primary": ct_p_display,
+        "ct_secondary": ct_s_display,
+        "vt_primary": vt_p_display,
+        "vt_secondary": vt_s_display,
+        "ct_primary_default": ct_p_display,
+        "ct_secondary_default": ct_s_display,
+        "vt_primary_default": vt_p_display,
+        "vt_secondary_default": vt_s_display,
+        "ratio_base_ct_primary": ct_p_base,
+        "ratio_base_ct_secondary": ct_s_base,
+        "ratio_base_vt_primary": vt_p_base,
+        "ratio_base_vt_secondary": vt_s_base,
+        "ratio_override_active": False,
         "cfg_ct_primary": _f(cfg_ratios.get("cfg_ct_primary"), 1.0),
         "cfg_ct_secondary": _f(cfg_ratios.get("cfg_ct_secondary"), 1.0),
         "cfg_vt_primary": _f(cfg_ratios.get("cfg_vt_primary"), 1.0),
@@ -1754,11 +1853,19 @@ def upload_files():
         "vt_ratio_source": vt_ratio_src,
         "ct_ratio_known":  bool(cfg_ratios.get("cfg_ct_known")),
         "vt_ratio_known":  bool(cfg_ratios.get("cfg_vt_known")),
-        "assumed_voltage_kv": _f(assumed_ratios.get("assumed_voltage_kv"), 150.0),
-        "assumed_ct_primary": _f(assumed_ratios.get("assumed_ct_primary"), 2000.0),
-        "assumed_ct_secondary": _f(assumed_ratios.get("assumed_ct_secondary"), 1.0),
-        "assumed_vt_primary": _f(assumed_ratios.get("assumed_vt_primary"), 150000.0),
-        "assumed_vt_secondary": _f(assumed_ratios.get("assumed_vt_secondary"), 100.0),
+        "ratio_base_values": {
+            "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
+            "i0_magnitude_a": _f(feats.get("i0_magnitude_a")),
+            "i1_magnitude_a": _f(feats.get("i1_magnitude_a")),
+            "i2_magnitude_a": _f(feats.get("i2_magnitude_a")),
+            "v_prefault_v": _f(feats.get("v_prefault_v")),
+            "v_fault_v": _f(feats.get("v_fault_v")),
+            "z_magnitude_ohms": _f(feats.get("z_magnitude_ohms")),
+            "orig_ct_p": ct_p_base,
+            "orig_ct_s": ct_s_base,
+            "orig_vt_p": vt_p_base,
+            "orig_vt_s": vt_s_base,
+        },
     }
     # Phase 2: add transformer-specific fields if applicable.
     # Without this, uploaded 87T records fall back to the generic line-fault results page.
@@ -1824,34 +1931,22 @@ def analyze_from_browse():
 
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(cfg_path)
-    assumed_ratios = _assumed_transformer_ratios(
+    ratio_defaults = _resolve_ratio_defaults(
+        cfg_ratios,
         feats.get("voltage_kv"),
         feats.get("peak_fault_current_a"),
-        cfg_ratios.get("parser_ct_multiplier"),
-        cfg_ratios.get("parser_vt_multiplier"),
+        event_type=getattr(result, "event_type", "LINE"),
     )
-    ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else (
-        "primary_native" if cfg_ratios.get("ct_primary_native") else "assumed"
-    )
-    vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else (
-        "primary_native" if cfg_ratios.get("vt_primary_native") else "assumed"
-    )
-    if cfg_ratios.get("cfg_ct_known"):
-        ct_p_default = _f(cfg_ratios.get("cfg_ct_primary"), 1.0)
-        ct_s_default = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0)
-    elif cfg_ratios.get("ct_primary_native"):
-        ct_p_default, ct_s_default = 1.0, 1.0
-    else:
-        ct_p_default = _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
-        ct_s_default = _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
-    if cfg_ratios.get("cfg_vt_known"):
-        vt_p_default = _f(cfg_ratios.get("cfg_vt_primary"), 1.0)
-        vt_s_default = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0)
-    elif cfg_ratios.get("vt_primary_native"):
-        vt_p_default, vt_s_default = 1.0, 1.0
-    else:
-        vt_p_default = _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
-        vt_s_default = _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
+    ct_ratio_src = ratio_defaults["ct_ratio_source"]
+    vt_ratio_src = ratio_defaults["vt_ratio_source"]
+    ct_p_display = ratio_defaults["ct_primary"]
+    ct_s_display = ratio_defaults["ct_secondary"]
+    vt_p_display = ratio_defaults["vt_primary"]
+    vt_s_display = ratio_defaults["vt_secondary"]
+    ct_p_base = ratio_defaults["ct_base_primary"]
+    ct_s_base = ratio_defaults["ct_base_secondary"]
+    vt_p_base = ratio_defaults["vt_base_primary"]
+    vt_s_base = ratio_defaults["vt_base_secondary"]
     analysis_payload = {
         "original_filename": Path(cfg_path).name,
         "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -1892,12 +1987,21 @@ def analyze_from_browse():
         "r_x_ratio":            _f(feats.get("r_x_ratio")),
         "reclose_successful":   _s(feats.get("reclose_successful")),
         "reclose_time_ms":      _f(feats.get("reclose_time_ms")),
-        "voltage_kv":           str(int(_nearest_supported_voltage_kv(vt_p_default / 1000.0))) if (vt_ratio_src == "cfg" and vt_p_default > 1000.0) else (_s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui"),
+        "voltage_kv":           str(int(_nearest_supported_voltage_kv(vt_p_base / 1000.0))) if (vt_ratio_src == "cfg" and vt_p_base > 1000.0) else (_s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui"),
         "scaling_ok":           _f(feats.get("peak_fault_current_a", 0)) >= 200.0,
-        "ct_primary": ct_p_default,
-        "ct_secondary": ct_s_default,
-        "vt_primary": vt_p_default,
-        "vt_secondary": vt_s_default,
+        "ct_primary": ct_p_display,
+        "ct_secondary": ct_s_display,
+        "vt_primary": vt_p_display,
+        "vt_secondary": vt_s_display,
+        "ct_primary_default": ct_p_display,
+        "ct_secondary_default": ct_s_display,
+        "vt_primary_default": vt_p_display,
+        "vt_secondary_default": vt_s_display,
+        "ratio_base_ct_primary": ct_p_base,
+        "ratio_base_ct_secondary": ct_s_base,
+        "ratio_base_vt_primary": vt_p_base,
+        "ratio_base_vt_secondary": vt_s_base,
+        "ratio_override_active": False,
         "cfg_ct_primary": _f(cfg_ratios.get("cfg_ct_primary"), 1.0),
         "cfg_ct_secondary": _f(cfg_ratios.get("cfg_ct_secondary"), 1.0),
         "cfg_vt_primary": _f(cfg_ratios.get("cfg_vt_primary"), 1.0),
@@ -1910,11 +2014,19 @@ def analyze_from_browse():
         "vt_ratio_source": vt_ratio_src,
         "ct_ratio_known":  bool(cfg_ratios.get("cfg_ct_known")),
         "vt_ratio_known":  bool(cfg_ratios.get("cfg_vt_known")),
-        "assumed_voltage_kv": _f(assumed_ratios.get("assumed_voltage_kv"), 150.0),
-        "assumed_ct_primary": _f(assumed_ratios.get("assumed_ct_primary"), 2000.0),
-        "assumed_ct_secondary": _f(assumed_ratios.get("assumed_ct_secondary"), 1.0),
-        "assumed_vt_primary": _f(assumed_ratios.get("assumed_vt_primary"), 150000.0),
-        "assumed_vt_secondary": _f(assumed_ratios.get("assumed_vt_secondary"), 100.0),
+        "ratio_base_values": {
+            "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
+            "i0_magnitude_a": _f(feats.get("i0_magnitude_a")),
+            "i1_magnitude_a": _f(feats.get("i1_magnitude_a")),
+            "i2_magnitude_a": _f(feats.get("i2_magnitude_a")),
+            "v_prefault_v": _f(feats.get("v_prefault_v")),
+            "v_fault_v": _f(feats.get("v_fault_v")),
+            "z_magnitude_ohms": _f(feats.get("z_magnitude_ohms")),
+            "orig_ct_p": ct_p_base,
+            "orig_ct_s": ct_s_base,
+            "orig_vt_p": vt_p_base,
+            "orig_vt_s": vt_s_base,
+        },
     }
     # Phase 2: add transformer-specific fields if applicable
     _inject_transformer_fields(result, analysis_payload)
