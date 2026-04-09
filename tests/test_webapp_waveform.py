@@ -57,16 +57,19 @@ def test_resolve_ratio_defaults_keeps_inputs_blank_when_metadata_missing():
             "cfg_vt_known": False,
             "ct_primary_native": True,
             "vt_primary_native": False,
-        }
+        },
+        voltage_kv=150.0,
+        peak_current_a=7206.81,
+        event_type="LINE",
     )
     assert resolved["ct_primary"] is None
     assert resolved["ct_secondary"] is None
     assert resolved["vt_primary"] is None
     assert resolved["vt_secondary"] is None
-    assert resolved["ct_base_primary"] == 1.0
-    assert resolved["ct_base_secondary"] == 1.0
-    assert resolved["vt_base_primary"] == 1.0
-    assert resolved["vt_base_secondary"] == 1.0
+    assert resolved["ct_base_primary"] == 2000.0
+    assert resolved["ct_base_secondary"] == 5.0
+    assert resolved["vt_base_primary"] == 150000.0
+    assert resolved["vt_base_secondary"] == 100.0
     assert resolved["ct_ratio_source"] == "meta_primary"
     assert resolved["vt_ratio_source"] == "meta"
 
@@ -92,7 +95,7 @@ def test_resolve_ratio_defaults_uses_cfg_ratios_when_available():
     assert resolved["vt_base_primary"] == 150000.0
 
 
-def test_recalculate_uses_file_meta_baseline_not_estimated_defaults(monkeypatch):
+def test_recalculate_same_hidden_baseline_keeps_values_unchanged(monkeypatch):
     analysis = {
         "ct_primary": None,
         "ct_secondary": None,
@@ -102,16 +105,16 @@ def test_recalculate_uses_file_meta_baseline_not_estimated_defaults(monkeypatch)
         "ct_secondary_default": None,
         "vt_primary_default": None,
         "vt_secondary_default": None,
-        "ratio_base_ct_primary": 1.0,
-        "ratio_base_ct_secondary": 1.0,
-        "ratio_base_vt_primary": 1.0,
-        "ratio_base_vt_secondary": 1.0,
-        "peak_fault_current_a": 18.0,
+        "ratio_base_ct_primary": 2000.0,
+        "ratio_base_ct_secondary": 5.0,
+        "ratio_base_vt_primary": 150000.0,
+        "ratio_base_vt_secondary": 100.0,
+        "peak_fault_current_a": 7206.81,
         "i0_magnitude_a": 2.5,
         "i1_magnitude_a": 5.0,
         "i2_magnitude_a": 1.0,
-        "v_prefault_v": 60.0,
-        "v_fault_v": 20.0,
+        "v_prefault_v": 86.68,
+        "v_fault_v": 28.08,
         "z_magnitude_ohms": 12.5,
         "fault_duration_ms": 75.0,
         "fault_count": 1,
@@ -133,10 +136,10 @@ def test_recalculate_uses_file_meta_baseline_not_estimated_defaults(monkeypatch)
     }
     monkeypatch.setattr(webapp_app, "apply_rules", lambda row: None)
     monkeypatch.setattr(webapp_app, "_load_model", lambda: None)
-    updated = webapp_app._recalculate_analysis_with_ratio(analysis, 2000.0, 5.0, 100.0, 10.0)
-    assert updated["peak_fault_current_a"] == 7200.0
-    assert updated["v_prefault_v"] == 600.0
-    assert updated["ratio_override_active"] is True
+    updated = webapp_app._recalculate_analysis_with_ratio(analysis, 2000.0, 5.0, 150000.0, 100.0)
+    assert updated["peak_fault_current_a"] == analysis["peak_fault_current_a"]
+    assert updated["v_prefault_v"] == analysis["v_prefault_v"]
+    assert updated["ratio_override_active"] is False
 
 
 def test_recalculate_back_to_meta_baseline_restores_blank_inputs(monkeypatch):
@@ -149,10 +152,10 @@ def test_recalculate_back_to_meta_baseline_restores_blank_inputs(monkeypatch):
         "ct_secondary_default": None,
         "vt_primary_default": None,
         "vt_secondary_default": None,
-        "ratio_base_ct_primary": 1.0,
-        "ratio_base_ct_secondary": 1.0,
-        "ratio_base_vt_primary": 1.0,
-        "ratio_base_vt_secondary": 1.0,
+        "ratio_base_ct_primary": 2000.0,
+        "ratio_base_ct_secondary": 5.0,
+        "ratio_base_vt_primary": 150000.0,
+        "ratio_base_vt_secondary": 100.0,
         "ratio_base_values": {
             "peak_fault_current_a": 18.0,
             "i0_magnitude_a": 2.5,
@@ -161,10 +164,10 @@ def test_recalculate_back_to_meta_baseline_restores_blank_inputs(monkeypatch):
             "v_prefault_v": 60.0,
             "v_fault_v": 20.0,
             "z_magnitude_ohms": 12.5,
-            "orig_ct_p": 1.0,
-            "orig_ct_s": 1.0,
-            "orig_vt_p": 1.0,
-            "orig_vt_s": 1.0,
+            "orig_ct_p": 2000.0,
+            "orig_ct_s": 5.0,
+            "orig_vt_p": 150000.0,
+            "orig_vt_s": 100.0,
         },
         "fault_duration_ms": 75.0,
         "fault_count": 1,
@@ -186,10 +189,57 @@ def test_recalculate_back_to_meta_baseline_restores_blank_inputs(monkeypatch):
     }
     monkeypatch.setattr(webapp_app, "apply_rules", lambda row: None)
     monkeypatch.setattr(webapp_app, "_load_model", lambda: None)
-    updated = webapp_app._recalculate_analysis_with_ratio(analysis, 1.0, 1.0, 1.0, 1.0)
+    updated = webapp_app._recalculate_analysis_with_ratio(analysis, 2000.0, 5.0, 150000.0, 100.0)
     assert updated["ct_primary"] is None
     assert updated["vt_primary"] is None
     assert updated["ratio_override_active"] is False
+
+
+def test_recalculate_scales_relative_to_hidden_baseline_not_absolute(monkeypatch):
+    analysis = {
+        "ct_primary": None,
+        "ct_secondary": None,
+        "vt_primary": None,
+        "vt_secondary": None,
+        "ct_primary_default": None,
+        "ct_secondary_default": None,
+        "vt_primary_default": None,
+        "vt_secondary_default": None,
+        "ratio_base_ct_primary": 2000.0,
+        "ratio_base_ct_secondary": 5.0,
+        "ratio_base_vt_primary": 150000.0,
+        "ratio_base_vt_secondary": 100.0,
+        "peak_fault_current_a": 7206.81,
+        "i0_magnitude_a": 1000.0,
+        "i1_magnitude_a": 2000.0,
+        "i2_magnitude_a": 500.0,
+        "v_prefault_v": 86.68,
+        "v_fault_v": 28.08,
+        "z_magnitude_ohms": 12.5,
+        "fault_duration_ms": 75.0,
+        "fault_count": 1,
+        "i0_i1_ratio": 0.5,
+        "voltage_sag_depth_pu": 0.596,
+        "di_dt_max": 1000.0,
+        "reclose_successful": "False",
+        "trip_type": "three_pole",
+        "faulted_phases": "A",
+        "fault_type": "SLG",
+        "label": "PETIR",
+        "confidence": 0.8,
+        "tier": 1,
+        "rule_name": "dummy",
+        "evidence": "",
+        "recommendation": "",
+        "description": "",
+        "cause_pcts": [],
+    }
+    monkeypatch.setattr(webapp_app, "apply_rules", lambda row: None)
+    monkeypatch.setattr(webapp_app, "_load_model", lambda: None)
+    updated = webapp_app._recalculate_analysis_with_ratio(analysis, 4000.0, 5.0, 150000.0, 100.0)
+    assert updated["peak_fault_current_a"] == analysis["peak_fault_current_a"] * 2.0
+    assert updated["v_prefault_v"] == analysis["v_prefault_v"]
+    assert updated["ratio_override_active"] is True
 
 
 def test_build_waveform_payload_filters_to_active_line(monkeypatch):

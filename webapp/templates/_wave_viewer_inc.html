@@ -235,11 +235,22 @@
         if (titleEl) titleEl.textContent = lvDef.title;
     }
 
+    const digitalCount = (wf.digital || []).length;
+    const digitalRowGap = digitalCount <= 4 ? 2.3 : (digitalCount <= 8 ? 2.0 : (digitalCount <= 12 ? 1.8 : 1.6));
+    const digitalAmplitude = 0.9;
+    const digitalHeight = Math.max(220, Math.min(760, 90 + digitalCount * 34));
+    const digitalLabelLimit = 30;
+    const digitalTickText = (wf.digital || []).map(ch => {
+        const name = (ch.name || ch.id || '').trim();
+        return name.length > digitalLabelLimit ? `${name.slice(0, digitalLabelLimit - 1)}…` : name;
+    });
+    const digitalMaxLabelLen = digitalTickText.reduce((maxLen, label) => Math.max(maxLen, label.length), 0);
+    const digitalLeftMargin = Math.min(260, Math.max(130, 78 + digitalMaxLabelLen * 5));
     const digitalTraces = (wf.digital || []).map((ch, idx) => {
-        const offset = (wf.digital.length - 1 - idx) * 1.6;
+        const offset = (digitalCount - 1 - idx) * digitalRowGap;
         return {
             x: ch.x,
-            y: ch.y.map(v => v * 0.8 + offset),
+            y: ch.y.map(v => v * digitalAmplitude + offset),
             name: ch.name || ch.id,
             mode: 'lines',
             line: { color: '#60a5fa', width: 1.2, shape: 'hv' },
@@ -249,14 +260,26 @@
     });
 
     if (digitalTraces.length > 0) {
-        const tickVals = digitalTraces.map((_, idx) => (digitalTraces.length - 1 - idx) * 1.6 + 0.4);
-        const tickText = (wf.digital || []).map(ch => (ch.name || ch.id || '').slice(0, 22));
+        const tickVals = digitalTraces.map((_, idx) => (digitalCount - 1 - idx) * digitalRowGap + digitalAmplitude * 0.5);
+        const digitalYMax = Math.max(1.2, (digitalCount - 1) * digitalRowGap + 1.15);
+        if (digitalPlot) {
+            digitalPlot.style.minHeight = `${digitalHeight}px`;
+            digitalPlot.style.height = `${digitalHeight}px`;
+        }
         Plotly.newPlot(digitalPlot, digitalTraces, {
-            margin: { l: 130, r: 20, t: 10, b: 36 },
+            height: digitalHeight,
+            margin: { l: digitalLeftMargin, r: 20, t: 10, b: 36 },
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor:  'rgba(0,0,0,0)',
             xaxis: { ...axisBase, title: { text: 'Waktu (ms dari trigger)', font: { size: 11, color: '#94a3b8' } } },
-            yaxis: { tickvals: tickVals, ticktext: tickText, ...axisBase, tickfont: { size: 9, color: '#94a3b8' } },
+            yaxis: {
+                tickvals: tickVals,
+                ticktext: digitalTickText,
+                range: [-0.35, digitalYMax],
+                automargin: true,
+                ...axisBase,
+                tickfont: { size: digitalCount > 12 ? 8 : 9, color: '#94a3b8' }
+            },
             showlegend: false,
             shapes: markerShapes,
             dragmode: 'pan',
@@ -264,6 +287,8 @@
         }, plotConfig);
     } else if (digitalPlot) {
         digitalPlot.style.display = 'none';
+        digitalPlot.style.height = '';
+        digitalPlot.style.minHeight = '';
         if (toggleDigital) toggleDigital.checked = false;
     }
     if (digitalWrap) {

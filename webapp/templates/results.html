@@ -604,6 +604,8 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             Koreksi Rasio CT/VT
             {% if analysis.ct_ratio_known and analysis.vt_ratio_known %}
             <span class="ratio-badge ratio-verified">DARI FILE</span>
+            {% elif analysis.ct_ratio_source == 'meta_primary' and analysis.vt_ratio_source == 'meta_primary' %}
+            <span class="ratio-badge ratio-verified">PRIMARY DARI COMTRADE</span>
             {% else %}
             <span class="ratio-badge ratio-estimated">META CFG</span>
             {% endif %}
@@ -1060,11 +1062,14 @@ function _setCtptStatus(values) {
     if (!el) return;
     const current = _currentAppliedRatios();
     const defaults = _defaultRatioInputs();
+    const baseCtText = _formatRatioText(_readStatusRatio('baseCtPrimary'), _readStatusRatio('baseCtSecondary'));
+    const baseVtText = _formatRatioText(_readStatusRatio('baseVtPrimary'), _readStatusRatio('baseVtSecondary'));
     const changed = _inputsChangedFromCurrent(values);
     const ctKnown = el.dataset.ctKnown === 'true';
     const vtKnown = el.dataset.vtKnown === 'true';
     const ctPrimaryNative = (el.dataset.ctSource || 'meta') === 'meta_primary';
     const vtPrimaryNative = (el.dataset.vtSource || 'meta') === 'meta_primary';
+    const bothPrimaryNative = ctPrimaryNative && vtPrimaryNative;
     const overrideActive = el.dataset.overrideActive === 'true';
 
     if (!changed) {
@@ -1074,11 +1079,14 @@ function _setCtptStatus(values) {
         } else if (ctKnown || vtKnown) {
             el.textContent = `Metadata file terbaca sebagai CT=${_formatRatioText(defaults.ctP, defaults.ctS)} dan VT=${_formatRatioText(defaults.vtP, defaults.vtS)}. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.`;
             el.style.color = '';
+        } else if (bothPrimaryNative) {
+            el.textContent = `Berdasarkan metadata COMTRADE, nilai analog saat ini sudah berada pada primary values. Koreksi rasio CT/VT tidak wajib untuk membaca hasil ini; gunakan hanya bila ingin membandingkan dengan setting lapangan. Untuk pembanding perhitungan, scaling saat ini diperlakukan setara dengan CT≈${baseCtText} dan VT≈${baseVtText}.`;
+            el.style.color = '';
         } else if (ctPrimaryNative || vtPrimaryNative) {
-            el.textContent = 'Rasio CT/VT tidak tersedia di metadata file. Nilai analisa ditampilkan apa adanya dari scaling meta COMTRADE/CFG, dan kanal analog terdeteksi sudah berada pada satuan primer. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.';
+            el.textContent = `Sebagian kanal analog terdeteksi sudah primary dari COMTRADE, tetapi metadata rasio belum lengkap untuk semua pengukuran. Nilai analisa tetap ditampilkan apa adanya dari scaling meta COMTRADE/CFG. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.`;
             el.style.color = 'var(--amber)';
         } else {
-            el.textContent = 'Rasio CT/VT tidak tersedia di metadata file. Nilai analisa ditampilkan apa adanya dari scaling meta COMTRADE/CFG. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.';
+            el.textContent = `Rasio CT/VT tidak tersedia di metadata file dan rekaman belum terverifikasi sebagai primary values. Nilai analisa tetap ditampilkan apa adanya dari scaling meta COMTRADE/CFG, tetapi koreksi ratio lebih relevan untuk kasus seperti ini. Untuk pembanding perhitungan, scaling saat ini diperlakukan setara dengan CT≈${baseCtText} dan VT≈${baseVtText}.`;
             el.style.color = 'var(--amber)';
         }
     } else if (_allRatioFieldsEmpty(values)) {
@@ -1090,9 +1098,17 @@ function _setCtptStatus(values) {
     } else {
         const baseCt = _ratio(_readStatusRatio('baseCtPrimary'), _readStatusRatio('baseCtSecondary'));
         const nextCt = _ratio(values.ctP, values.ctS);
-        const factorNote = (baseCt && nextCt)
-            ? ` Faktor relatif arus: ×${(nextCt / baseCt).toFixed(3)} terhadap baseline file/meta.`
-            : '';
+        const baseVt = _ratio(_readStatusRatio('baseVtPrimary'), _readStatusRatio('baseVtSecondary'));
+        const nextVt = _ratio(values.vtP, values.vtS);
+        const ctRelative = (baseCt && nextCt) ? (nextCt / baseCt) : null;
+        const vtRelative = (baseVt && nextVt) ? (nextVt / baseVt) : null;
+        let factorNote = '';
+        if (ctRelative !== null && vtRelative !== null) {
+            factorNote = ` Faktor relatif: arus ×${ctRelative.toFixed(3)}, tegangan ×${vtRelative.toFixed(3)} terhadap baseline file/meta.`;
+            if (Math.abs(ctRelative - 1) < 1e-9 && Math.abs(vtRelative - 1) < 1e-9) {
+                factorNote = ' Input ini ekuivalen dengan pembanding scaling COMTRADE saat ini, jadi hasil analisa akan tetap sama.';
+            }
+        }
         el.textContent = `Override siap diterapkan: CT=${_formatRatioText(values.ctP, values.ctS)}, VT=${_formatRatioText(values.vtP, values.vtS)}. Perhitungan ulang akan memakai baseline asli file, bukan hasil override sebelumnya.${factorNote}`;
         el.style.color = 'var(--accent)';
     }

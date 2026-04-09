@@ -482,16 +482,26 @@ def _resolve_ratio_defaults(
     peak_current_a=None,
     event_type: str = "LINE",
 ) -> dict:
-    """Resolve UI ratio fields without inventing CT/VT values when metadata is absent."""
-    del voltage_kv, peak_current_a, event_type
+    """Resolve UI ratio fields while keeping a hidden comparison baseline for manual overrides."""
+    event_kind = _s(event_type, "LINE").upper()
 
     ct_known = bool(cfg_ratios.get("cfg_ct_known"))
     vt_known = bool(cfg_ratios.get("cfg_vt_known"))
 
-    ct_base_p = _f(cfg_ratios.get("cfg_ct_primary"), 1.0) if ct_known else 1.0
-    ct_base_s = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0) if ct_known else 1.0
-    vt_base_p = _f(cfg_ratios.get("cfg_vt_primary"), 1.0) if vt_known else 1.0
-    vt_base_s = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0) if vt_known else 1.0
+    if event_kind == "TRANSFORMER":
+        assumed = _assumed_transformer_ratios(
+            voltage_kv,
+            peak_current_a,
+            cfg_ratios.get("parser_ct_multiplier"),
+            cfg_ratios.get("parser_vt_multiplier"),
+        )
+    else:
+        assumed = _assumed_line_ratios(voltage_kv, peak_current_a)
+
+    ct_base_p = _f(cfg_ratios.get("cfg_ct_primary"), 1.0) if ct_known else _f(assumed.get("assumed_ct_primary"), 1.0)
+    ct_base_s = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0) if ct_known else _f(assumed.get("assumed_ct_secondary"), 1.0)
+    vt_base_p = _f(cfg_ratios.get("cfg_vt_primary"), 1.0) if vt_known else _f(assumed.get("assumed_vt_primary"), 1.0)
+    vt_base_s = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0) if vt_known else _f(assumed.get("assumed_vt_secondary"), 1.0)
 
     return {
         "ct_primary": ct_base_p if ct_known else None,
@@ -508,6 +518,8 @@ def _resolve_ratio_defaults(
         "ct_base_secondary": ct_base_s,
         "vt_base_primary": vt_base_p,
         "vt_base_secondary": vt_base_s,
+        "ct_base_assumed": not ct_known,
+        "vt_base_assumed": not vt_known,
     }
 
 
