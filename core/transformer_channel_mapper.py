@@ -126,10 +126,16 @@ _SIEMENS_PATTERNS: List[tuple] = [
     (r'\bILA1\b|\bIL_A1\b|\bI_A_W1\b|\bIHV_A\b|\bIA:W1\b|\bIW1:A\b',            'IW1A'),
     (r'\bILB1\b|\bIL_B1\b|\bI_B_W1\b|\bIHV_B\b|\bIB:W1\b|\bIW1:B\b',            'IW1B'),
     (r'\bILC1\b|\bIL_C1\b|\bI_C_W1\b|\bIHV_C\b|\bIC:W1\b|\bIW1:C\b',            'IW1C'),
+    (r'\bIL1[-_\s]?S1\b|\bIL1[-_\s]?W1\b|\bIL1[-_\s]?SIDE1\b|\bIL1[-_\s]?SEC1\b', 'IW1A'),
+    (r'\bIL2[-_\s]?S1\b|\bIL2[-_\s]?W1\b|\bIL2[-_\s]?SIDE1\b|\bIL2[-_\s]?SEC1\b', 'IW1B'),
+    (r'\bIL3[-_\s]?S1\b|\bIL3[-_\s]?W1\b|\bIL3[-_\s]?SIDE1\b|\bIL3[-_\s]?SEC1\b', 'IW1C'),
     # Winding 2
     (r'\bILA2\b|\bIL_A2\b|\bI_A_W2\b|\bILV_A\b|\bIA:W2\b|\bIW2:A\b',            'IW2A'),
     (r'\bILB2\b|\bIL_B2\b|\bI_B_W2\b|\bILV_B\b|\bIB:W2\b|\bIW2:B\b',            'IW2B'),
     (r'\bILC2\b|\bIL_C2\b|\bI_C_W2\b|\bILV_C\b|\bIC:W2\b|\bIW2:C\b',            'IW2C'),
+    (r'\bIL1[-_\s]?S2\b|\bIL1[-_\s]?W2\b|\bIL1[-_\s]?SIDE2\b|\bIL1[-_\s]?SEC2\b', 'IW2A'),
+    (r'\bIL2[-_\s]?S2\b|\bIL2[-_\s]?W2\b|\bIL2[-_\s]?SIDE2\b|\bIL2[-_\s]?SEC2\b', 'IW2B'),
+    (r'\bIL3[-_\s]?S2\b|\bIL3[-_\s]?W2\b|\bIL3[-_\s]?SIDE2\b|\bIL3[-_\s]?SEC2\b', 'IW2C'),
     # Differential (Siemens uses 'IDIFF' + phase suffix)
     (r'\bIDIFF\s*A\b|\bIDIFF_A\b|\bI_DIFF_A\b|\bDIFF.*:.*A\b',                   'IDIFA'),
     (r'\bIDIFF\s*B\b|\bIDIFF_B\b|\bI_DIFF_B\b|\bDIFF.*:.*B\b',                   'IDIFB'),
@@ -141,6 +147,8 @@ _SIEMENS_PATTERNS: List[tuple] = [
     # Siemens 7UT neutral
     (r'\bIN1\b|\bIE1\b|\bIG1\b',                                                   'INW1'),
     (r'\bIN2\b|\bIE2\b|\bIG2\b',                                                   'INW2'),
+    (r'\b3I0[-_\s]?S1\b|\bIN[-_\s]?S1\b|\bIE[-_\s]?S1\b',                         'INW1'),
+    (r'\b3I0[-_\s]?S2\b|\bIN[-_\s]?S2\b|\bIE[-_\s]?S2\b',                         'INW2'),
 ]
 
 # --- SEL-387 / SEL-387A / SEL-387E -----------------------------------------

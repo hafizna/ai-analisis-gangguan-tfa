@@ -92,9 +92,17 @@ def normalize_channel_name(raw_name: str, unit: str, manufacturer: str = "UNKNOW
     unit_upper = unit.strip().upper()
 
     # Determine measurement type from unit
-    if any(v in unit_upper for v in ["KV", "V"]):
+    if (
+        unit_upper.startswith("U/")
+        or unit_upper in {"KV", "V", "MV"}
+        or re.search(r"\b(?:KV|V|MV)\b", unit_upper)
+    ):
         measurement = "voltage"
-    elif any(i in unit_upper for i in ["KA", "A"]):
+    elif (
+        unit_upper.startswith("I/")
+        or unit_upper in {"KA", "A"}
+        or re.search(r"\b(?:KA|A)\b", unit_upper)
+    ):
         measurement = "current"
     else:
         measurement = "unknown"

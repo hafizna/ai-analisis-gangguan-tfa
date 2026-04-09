@@ -98,6 +98,14 @@ class TestTransformerDiffRouting:
         prot = determine_protection(record)
         assert prot.primary_protection == ProtectionType.TRANSFORMER_DIFF
 
+    def test_known_transformer_relay_generic_diff_trip_routes_transformer(self):
+        record = MockRecord(
+            rec_dev_id="7UT612",
+            status_channels=_make_status(["Diff> TRIP"], triggered=True),
+        )
+        prot = determine_protection(record)
+        assert prot.primary_protection == ProtectionType.TRANSFORMER_DIFF
+
     def test_transformer_diff_is_classifiable(self):
         """87T events must be flagged classifiable=True for Phase 2 routing."""
         record = MockRecord(
@@ -249,6 +257,22 @@ class TestTransformerChannelMapping:
         record = MockRecord(rec_dev_id="7UT613", analog_channels=analog)
         ch_map = map_transformer_channels(record)
         assert ch_map.has_differential
+
+    def test_siemens_side_suffix_currents_mapped(self):
+        analog = [
+            MockAnalogChannel(name="iL1-S1", measurement="current"),
+            MockAnalogChannel(name="iL2-S1", measurement="current"),
+            MockAnalogChannel(name="iL3-S1", measurement="current"),
+            MockAnalogChannel(name="iL1-S2", measurement="current"),
+            MockAnalogChannel(name="iL2-S2", measurement="current"),
+            MockAnalogChannel(name="iL3-S2", measurement="current"),
+            MockAnalogChannel(name="3i0-S1", measurement="current"),
+            MockAnalogChannel(name="3i0-S2", measurement="current"),
+        ]
+        record = MockRecord(rec_dev_id="7UT612", analog_channels=analog)
+        ch_map = map_transformer_channels(record)
+        assert ch_map.has_hv_currents
+        assert ch_map.has_lv_currents
 
     def test_sel_idiff_channels_mapped(self):
         """SEL-387 IAW1/IAW2 channels (winding currents) → HV/LV."""
