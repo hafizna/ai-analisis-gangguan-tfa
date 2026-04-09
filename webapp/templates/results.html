@@ -602,7 +602,9 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     <div class="ctpt-bar">
         <span class="ctpt-title">
             Koreksi Rasio CT/VT
-            {% if analysis.ct_ratio_known and analysis.vt_ratio_known %}
+            {% if analysis.ct_ratio_source == 'primary_native' and analysis.vt_ratio_source == 'primary_native' %}
+            <span class="ratio-badge ratio-verified">SUDAH PRIMER</span>
+            {% elif analysis.ct_ratio_known and analysis.vt_ratio_known %}
             <span class="ratio-badge ratio-verified">DARI FILE</span>
             {% else %}
             <span class="ratio-badge ratio-estimated">ESTIMASI</span>

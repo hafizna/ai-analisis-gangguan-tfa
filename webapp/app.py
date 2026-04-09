@@ -275,6 +275,17 @@ def _pick_representative_scale_multiplier(channels, measurement: str) -> float:
     return Counter(round(v, 6) for v in vals).most_common(1)[0][0]
 
 
+def _measurement_is_primary_native(channels, measurement: str) -> bool:
+    """True when the COMTRADE channels for this measurement are already marked as primary-side values."""
+    flags = [
+        _s(getattr(ch, "pors", ""), "").upper()
+        for ch in channels
+        if getattr(ch, "measurement", "") == measurement
+    ]
+    flags = [flag for flag in flags if flag in {"P", "S"}]
+    return bool(flags) and all(flag == "P" for flag in flags)
+
+
 def _infer_ratio_from_parser_multiplier(
     measurement: str,
     mult: float,
@@ -341,16 +352,20 @@ def _extract_cfg_ratios(cfg_path: str) -> dict:
                 "cfg_ct_primary": 1.0, "cfg_ct_secondary": 1.0,
                 "cfg_vt_primary": 1.0, "cfg_vt_secondary": 1.0,
                 "cfg_ct_known": False, "cfg_vt_known": False,
+                "ct_primary_native": False, "vt_primary_native": False,
                 "parser_ct_multiplier": 0.0, "parser_vt_multiplier": 0.0,
             }
         ctp, cts, ct_known = _pick_representative_ratio(rec.analog_channels, "current")
         vtp, vts, vt_known = _pick_representative_ratio(rec.analog_channels, "voltage")
+        ct_primary_native = _measurement_is_primary_native(rec.analog_channels, "current")
+        vt_primary_native = _measurement_is_primary_native(rec.analog_channels, "voltage")
         ct_mult = _pick_representative_scale_multiplier(rec.analog_channels, "current")
         vt_mult = _pick_representative_scale_multiplier(rec.analog_channels, "voltage")
         return {
             "cfg_ct_primary": ctp, "cfg_ct_secondary": cts,
             "cfg_vt_primary": vtp, "cfg_vt_secondary": vts,
             "cfg_ct_known": ct_known, "cfg_vt_known": vt_known,
+            "ct_primary_native": ct_primary_native, "vt_primary_native": vt_primary_native,
             "parser_ct_multiplier": ct_mult, "parser_vt_multiplier": vt_mult,
         }
     except Exception:
@@ -358,6 +373,7 @@ def _extract_cfg_ratios(cfg_path: str) -> dict:
             "cfg_ct_primary": 1.0, "cfg_ct_secondary": 1.0,
             "cfg_vt_primary": 1.0, "cfg_vt_secondary": 1.0,
             "cfg_ct_known": False, "cfg_vt_known": False,
+            "ct_primary_native": False, "vt_primary_native": False,
             "parser_ct_multiplier": 0.0, "parser_vt_multiplier": 0.0,
         }
 
@@ -1288,9 +1304,11 @@ def _infer_waveform_measurement(ch) -> str:
     if measurement in {"current", "voltage"}:
         return measurement
     raw_text = _waveform_raw_text(ch)
+    if re.search(r"\b(?:FREQ|FREQUENCY)\b", raw_text):
+        return "other"
     if re.search(r"\b(?:I[ABCN]|IN|I0|3I0|IDIFF|IDIF|DIFF|BIAS|RSTR|REST)\b", raw_text):
         return "current"
-    if re.search(r"\b(?:V[ABCN]|VN|V0|VOLT|FREQ|VX)\b", raw_text):
+    if re.search(r"\b(?:V[ABCN]|VN|V0|VOLT|VX)\b", raw_text):
         return "voltage"
     return measurement or "other"
 
@@ -1389,6 +1407,103 @@ def _build_waveform_display_name(ch, duplicate_canonicals: Counter) -> str:
     return base
 
 
+def _waveform_should_skip_channel(ch) -> bool:
+    raw_text = _waveform_raw_text(ch)
+    if re.search(r"\b(?:FREQ|FREQUENCY|SPARE)\b", raw_text):
+        return True
+    return False
+
+
+def _extract_waveform_line_tag(name: str) -> str | None:
+    text = re.sub(r"[_:/\\\-\[\]\(\)]+", " ", _s(name, "")).upper()
+    if not text:
+        return None
+    match = re.search(r"(?:LINE|BAY|JEPARA|SIRKIT|CCT|CIRCUIT)\s*#?\s*([0-9A-Z]+)\b", text)
+    if match:
+        return match.group(1)
+    match = re.search(r"\b[A-Z]{3,}\s+([0-9])\b", text)
+    if match:
+        return match.group(1)
+    match = re.search(r"\b([0-9])\b", text)
+    if match and not re.search(r"\b(?:HV|LV|TV|W[123]|S[123])\b", text):
+        return match.group(1)
+    return None
+
+
+def _select_waveform_line_tag(analog_channels, status_channels, raw_t_ms, inception_ms) -> str | None:
+    import numpy as np
+
+    structured_groups = {
+        "current_hv", "current_lv", "current_tv",
+        "current_diff", "current_restraint",
+        "voltage_hv", "voltage_lv", "voltage_tv",
+    }
+    if any(_classify_waveform_group(ch) in structured_groups for ch in analog_channels):
+        return None
+
+    phase_currents = [
+        ch for ch in analog_channels
+        if _infer_waveform_measurement(ch) == "current"
+        and _s(getattr(ch, "canonical_name", ""), "").upper() in {"IA", "IB", "IC"}
+    ]
+    distinct_tags = sorted({
+        tag for ch in phase_currents
+        if (tag := _extract_waveform_line_tag(getattr(ch, "name", "")))
+    })
+    if len(distinct_tags) < 2:
+        return None
+
+    inception_idx = None
+    if len(raw_t_ms):
+        try:
+            inception_idx = int(abs(raw_t_ms - float(inception_ms or 0.0)).argmin())
+        except Exception:
+            inception_idx = None
+
+    if inception_idx is not None:
+        status_scores = {}
+        status_kw = ("TRIP", "OPRT", "OPERATE", "PICKUP", "DIST", "DIS.", "START")
+        for ch in status_channels:
+            name = _s(getattr(ch, "name", ""), "").upper()
+            if not any(keyword in name for keyword in status_kw):
+                continue
+            tag = _extract_waveform_line_tag(name)
+            if tag not in distinct_tags:
+                continue
+            samples = getattr(ch, "samples", [])
+            if len(samples) < 2:
+                continue
+            t0 = max(0, inception_idx - 100)
+            t1 = min(len(samples), inception_idx + 1000)
+            if t1 <= t0 + 1:
+                continue
+            rises = (np.diff(np.asarray(samples[t0:t1], dtype=int)) > 0).sum()
+            if rises:
+                status_scores[tag] = status_scores.get(tag, 0.0) + float(rises)
+        if status_scores:
+            return max(status_scores.items(), key=lambda item: item[1])[0]
+
+    activity_scores = {}
+    for ch in phase_currents:
+        tag = _extract_waveform_line_tag(getattr(ch, "name", ""))
+        if tag not in distinct_tags:
+            continue
+        samples = np.asarray(getattr(ch, "samples", []), dtype=float)
+        if not samples.size:
+            continue
+        if inception_idx is None:
+            segment = samples
+        else:
+            ws = max(0, inception_idx - 50)
+            we = min(samples.size, inception_idx + 400)
+            segment = samples[ws:we] if we > ws else samples
+        if segment.size:
+            activity_scores[tag] = activity_scores.get(tag, 0.0) + float(np.max(np.abs(segment)))
+    if activity_scores:
+        return max(activity_scores.items(), key=lambda item: item[1])[0]
+    return None
+
+
 def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: float) -> dict:
     """
     Prepare a lightweight, JSON-safe payload for interactive waveform viewing.
@@ -1403,15 +1518,29 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
     if record is None or len(record.time) == 0:
         return {}
 
-    t_ms = np.array(record.time, dtype=float) * 1000.0
-    total_samples = len(t_ms)
+    raw_t_ms = np.array(record.time, dtype=float) * 1000.0
+    total_samples = len(raw_t_ms)
     # Shift time so fault inception sits at t=0 (more intuitive for analysis)
     t0 = float(inception_ms or 0.0)
     if t0 == 0.0 and total_samples:
-        t0 = float(t_ms[0])
-    t_ms = t_ms - t0
+        t0 = float(raw_t_ms[0])
+    t_ms = raw_t_ms - t0
 
-    analog_all = [ch for ch in record.analog_channels if len(ch.samples) == total_samples]
+    analog_all = [
+        ch for ch in record.analog_channels
+        if len(ch.samples) == total_samples and not _waveform_should_skip_channel(ch)
+    ]
+    selected_line_tag = _select_waveform_line_tag(
+        analog_all,
+        getattr(record, "status_channels", []),
+        raw_t_ms,
+        float(inception_ms or 0.0),
+    )
+    if selected_line_tag:
+        analog_all = [
+            ch for ch in analog_all
+            if (tag := _extract_waveform_line_tag(getattr(ch, "name", ""))) in {None, selected_line_tag}
+        ]
     duplicate_canonicals = Counter(
         (_s(ch.measurement, "").lower(), _s(ch.canonical_name, "").upper())
         for ch in analog_all
@@ -1423,6 +1552,11 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
     analog_truncated = len(analog_sorted) > max_analog
 
     digital_all = [ch for ch in record.status_channels if len(ch.samples) == total_samples]
+    if selected_line_tag:
+        digital_all = [
+            ch for ch in digital_all
+            if (tag := _extract_waveform_line_tag(getattr(ch, "name", ""))) in {None, selected_line_tag}
+        ]
     digital_active = [ch for ch in digital_all if len(np.unique(ch.samples)) > 1]
     max_digital = 16
     digital_chs = digital_active[:max_digital]
@@ -1491,6 +1625,7 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
             "digital_total": len(digital_all),
             "analog_truncated": analog_truncated,
             "digital_truncated": digital_truncated,
+            "selected_line_tag": selected_line_tag,
         },
         "markers": {
             "inception_ms": 0.0,
@@ -1537,17 +1672,25 @@ def upload_files():
         cfg_ratios.get("parser_ct_multiplier"),
         cfg_ratios.get("parser_vt_multiplier"),
     )
-    ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else "assumed"
-    vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else "assumed"
+    ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else (
+        "primary_native" if cfg_ratios.get("ct_primary_native") else "assumed"
+    )
+    vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else (
+        "primary_native" if cfg_ratios.get("vt_primary_native") else "assumed"
+    )
     if cfg_ratios.get("cfg_ct_known"):
         ct_p_default = _f(cfg_ratios.get("cfg_ct_primary"), 1.0)
         ct_s_default = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0)
+    elif cfg_ratios.get("ct_primary_native"):
+        ct_p_default, ct_s_default = 1.0, 1.0
     else:
         ct_p_default = _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
         ct_s_default = _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
     if cfg_ratios.get("cfg_vt_known"):
         vt_p_default = _f(cfg_ratios.get("cfg_vt_primary"), 1.0)
         vt_s_default = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0)
+    elif cfg_ratios.get("vt_primary_native"):
+        vt_p_default, vt_s_default = 1.0, 1.0
     else:
         vt_p_default = _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
         vt_s_default = _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
@@ -1687,17 +1830,25 @@ def analyze_from_browse():
         cfg_ratios.get("parser_ct_multiplier"),
         cfg_ratios.get("parser_vt_multiplier"),
     )
-    ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else "assumed"
-    vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else "assumed"
+    ct_ratio_src = "cfg" if cfg_ratios.get("cfg_ct_known") else (
+        "primary_native" if cfg_ratios.get("ct_primary_native") else "assumed"
+    )
+    vt_ratio_src = "cfg" if cfg_ratios.get("cfg_vt_known") else (
+        "primary_native" if cfg_ratios.get("vt_primary_native") else "assumed"
+    )
     if cfg_ratios.get("cfg_ct_known"):
         ct_p_default = _f(cfg_ratios.get("cfg_ct_primary"), 1.0)
         ct_s_default = _f(cfg_ratios.get("cfg_ct_secondary"), 1.0)
+    elif cfg_ratios.get("ct_primary_native"):
+        ct_p_default, ct_s_default = 1.0, 1.0
     else:
         ct_p_default = _f(assumed_ratios.get("assumed_ct_primary"), 1.0)
         ct_s_default = _f(assumed_ratios.get("assumed_ct_secondary"), 1.0)
     if cfg_ratios.get("cfg_vt_known"):
         vt_p_default = _f(cfg_ratios.get("cfg_vt_primary"), 1.0)
         vt_s_default = _f(cfg_ratios.get("cfg_vt_secondary"), 1.0)
+    elif cfg_ratios.get("vt_primary_native"):
+        vt_p_default, vt_s_default = 1.0, 1.0
     else:
         vt_p_default = _f(assumed_ratios.get("assumed_vt_primary"), 1.0)
         vt_s_default = _f(assumed_ratios.get("assumed_vt_secondary"), 1.0)
