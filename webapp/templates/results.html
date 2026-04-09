@@ -602,35 +602,40 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     <div class="ctpt-bar">
         <span class="ctpt-title">
             Koreksi Rasio CT/VT
-            {% if analysis.ct_ratio_source == 'primary_native' and analysis.vt_ratio_source == 'primary_native' %}
-            <span class="ratio-badge ratio-verified">SUDAH PRIMER</span>
-            {% elif analysis.ct_ratio_known and analysis.vt_ratio_known %}
+            {% if analysis.ct_ratio_known and analysis.vt_ratio_known %}
             <span class="ratio-badge ratio-verified">DARI FILE</span>
             {% else %}
-            <span class="ratio-badge ratio-estimated">ESTIMASI</span>
+            <span class="ratio-badge ratio-estimated">META CFG</span>
             {% endif %}
         </span>
         <div class="ctpt-group">
             <label for="ctPrimary">CT</label>
             <div class="ctpt-split">
-                <input type="number" id="ctPrimary" class="ctpt-input" value="{{ analysis.ct_primary or 1 }}" data-default="{{ analysis.ct_primary or 1 }}" min="0.001" step="any" placeholder="P">
+                <input type="number" id="ctPrimary" class="ctpt-input" value="{{ '' if analysis.ct_primary is none else analysis.ct_primary }}" data-current="{{ '' if analysis.ct_primary is none else analysis.ct_primary }}" data-default="{{ '' if analysis.ct_primary_default is none else analysis.ct_primary_default }}" min="0.001" step="any" placeholder="P">
                 <span>/</span>
-                <input type="number" id="ctSecondary" class="ctpt-input" value="{{ analysis.ct_secondary or 1 }}" data-default="{{ analysis.ct_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_ct_primary or 2000 }}" data-assumed-s="{{ analysis.assumed_ct_secondary or 1 }}" min="0.001" step="any" placeholder="S">
+                <input type="number" id="ctSecondary" class="ctpt-input" value="{{ '' if analysis.ct_secondary is none else analysis.ct_secondary }}" data-current="{{ '' if analysis.ct_secondary is none else analysis.ct_secondary }}" data-default="{{ '' if analysis.ct_secondary_default is none else analysis.ct_secondary_default }}" min="0.001" step="any" placeholder="S">
             </div>
         </div>
         <div class="ctpt-group">
             <label for="vtPrimary">VT</label>
             <div class="ctpt-split">
-                <input type="number" id="vtPrimary" class="ctpt-input" value="{{ analysis.vt_primary or 1 }}" data-default="{{ analysis.vt_primary or 1 }}" min="0.001" step="any" placeholder="P">
+                <input type="number" id="vtPrimary" class="ctpt-input" value="{{ '' if analysis.vt_primary is none else analysis.vt_primary }}" data-current="{{ '' if analysis.vt_primary is none else analysis.vt_primary }}" data-default="{{ '' if analysis.vt_primary_default is none else analysis.vt_primary_default }}" min="0.001" step="any" placeholder="P">
                 <span>/</span>
-                <input type="number" id="vtSecondary" class="ctpt-input" value="{{ analysis.vt_secondary or 1 }}" data-default="{{ analysis.vt_secondary or 1 }}" data-assumed-p="{{ analysis.assumed_vt_primary or 150000 }}" data-assumed-s="{{ analysis.assumed_vt_secondary or 100 }}" min="0.001" step="any" placeholder="S">
+                <input type="number" id="vtSecondary" class="ctpt-input" value="{{ '' if analysis.vt_secondary is none else analysis.vt_secondary }}" data-current="{{ '' if analysis.vt_secondary is none else analysis.vt_secondary }}" data-default="{{ '' if analysis.vt_secondary_default is none else analysis.vt_secondary_default }}" min="0.001" step="any" placeholder="S">
             </div>
         </div>
         <button id="reanalyzeBtn" class="btn btn-primary" style="padding:5px 14px; font-size:12px;" onclick="confirmRatiosAndReanalyze()" disabled>Terapkan Koreksi</button>
         <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="resetRatios()">Reset</button>
         <span class="ctpt-status" id="ctptStatus"
-              data-ratio-known="{{ 'true' if (analysis.ct_ratio_known and analysis.vt_ratio_known) else 'false' }}"
-              data-voltage-kv="{{ analysis.voltage_kv }}"></span>
+              data-ct-known="{{ 'true' if analysis.ct_ratio_known else 'false' }}"
+              data-vt-known="{{ 'true' if analysis.vt_ratio_known else 'false' }}"
+              data-ct-source="{{ analysis.ct_ratio_source or 'meta' }}"
+              data-vt-source="{{ analysis.vt_ratio_source or 'meta' }}"
+              data-override-active="{{ 'true' if analysis.ratio_override_active else 'false' }}"
+              data-base-ct-primary="{{ analysis.ratio_base_ct_primary or 1 }}"
+              data-base-ct-secondary="{{ analysis.ratio_base_ct_secondary or 1 }}"
+              data-base-vt-primary="{{ analysis.ratio_base_vt_primary or 1 }}"
+              data-base-vt-secondary="{{ analysis.ratio_base_vt_secondary or 1 }}"></span>
     </div>
 
     <!-- Electrical parameters top row -->
@@ -907,14 +912,103 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 
 {% block extra_js %}
 <script>
-// CT/PT ratio scaling — client-side only, does NOT re-run classification
-const _origValues = {};
+function _readRatioNumber(raw) {
+    const text = `${raw ?? ''}`.trim();
+    if (!text) return null;
+    const value = Number.parseFloat(text);
+    return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function _readRatioInput(id) {
+    const el = document.getElementById(id);
+    return el ? _readRatioNumber(el.value) : null;
+}
+
+function _readRatioData(id, key) {
+    const el = document.getElementById(id);
+    return el ? _readRatioNumber(el.dataset[key]) : null;
+}
+
+function _readStatusRatio(key) {
+    const el = document.getElementById('ctptStatus');
+    return el ? _readRatioNumber(el.dataset[key]) : null;
+}
+
+function _sameRatioValue(left, right) {
+    if (left === null || right === null) {
+        return left === right;
+    }
+    return Math.abs(left - right) < 1e-9;
+}
+
+function _formatRatioValue(value) {
+    if (value === null) return '—';
+    return Number(value).toLocaleString('id-ID', { maximumFractionDigits: 6 });
+}
+
+function _formatRatioText(primary, secondary) {
+    if (primary === null || secondary === null) {
+        return 'tidak tersedia';
+    }
+    return `${_formatRatioValue(primary)}/${_formatRatioValue(secondary)}`;
+}
+
+function _currentRatioInputs() {
+    return {
+        ctP: _readRatioInput('ctPrimary'),
+        ctS: _readRatioInput('ctSecondary'),
+        vtP: _readRatioInput('vtPrimary'),
+        vtS: _readRatioInput('vtSecondary'),
+    };
+}
+
+function _currentAppliedRatios() {
+    return {
+        ctP: _readRatioData('ctPrimary', 'current'),
+        ctS: _readRatioData('ctSecondary', 'current'),
+        vtP: _readRatioData('vtPrimary', 'current'),
+        vtS: _readRatioData('vtSecondary', 'current'),
+    };
+}
+
+function _defaultRatioInputs() {
+    return {
+        ctP: _readRatioData('ctPrimary', 'default'),
+        ctS: _readRatioData('ctSecondary', 'default'),
+        vtP: _readRatioData('vtPrimary', 'default'),
+        vtS: _readRatioData('vtSecondary', 'default'),
+    };
+}
+
+function _allRatioFieldsEmpty(values) {
+    return [values.ctP, values.ctS, values.vtP, values.vtS].every(value => value === null);
+}
+
+function _allRatioFieldsComplete(values) {
+    return [values.ctP, values.ctS, values.vtP, values.vtS].every(value => value !== null);
+}
+
+function _inputsChangedFromCurrent(values) {
+    const current = _currentAppliedRatios();
+    return !_sameRatioValue(values.ctP, current.ctP)
+        || !_sameRatioValue(values.ctS, current.ctS)
+        || !_sameRatioValue(values.vtP, current.vtP)
+        || !_sameRatioValue(values.vtS, current.vtS);
+}
 
 function confirmRatiosAndReanalyze() {
-    const ctP = parseFloat(document.getElementById('ctPrimary').value) || 1;
-    const ctS = parseFloat(document.getElementById('ctSecondary').value) || 1;
-    const vtP = parseFloat(document.getElementById('vtPrimary').value) || 1;
-    const vtS = parseFloat(document.getElementById('vtSecondary').value) || 1;
+    const values = _currentRatioInputs();
+    let { ctP, ctS, vtP, vtS } = values;
+
+    if (_allRatioFieldsEmpty(values)) {
+        ctP = _readStatusRatio('baseCtPrimary') ?? 1;
+        ctS = _readStatusRatio('baseCtSecondary') ?? 1;
+        vtP = _readStatusRatio('baseVtPrimary') ?? 1;
+        vtS = _readStatusRatio('baseVtSecondary') ?? 1;
+    } else if (!_allRatioFieldsComplete(values)) {
+        window.alert('Isi lengkap rasio CT dan VT aktual, atau kosongkan semuanya untuk kembali ke bacaan asli file/meta.');
+        return;
+    }
 
     const form = document.createElement('form');
     form.method = 'POST';
@@ -939,82 +1033,82 @@ function confirmRatiosAndReanalyze() {
     form.submit();
 }
 
-function useAssumedRatios() {
-    document.getElementById('ctPrimary').value = {{ "%.6f"|format(analysis.assumed_ct_primary or 2000) }};
-    document.getElementById('ctSecondary').value = {{ "%.6f"|format(analysis.assumed_ct_secondary or 1) }};
-    document.getElementById('vtPrimary').value = {{ "%.6f"|format(analysis.assumed_vt_primary or 150000) }};
-    document.getElementById('vtSecondary').value = {{ "%.6f"|format(analysis.assumed_vt_secondary or 100) }};
-    _refreshCtptStatusOnly();
-}
-
 function resetRatios() {
     const ctP = document.getElementById('ctPrimary');
     const ctS = document.getElementById('ctSecondary');
     const vtP = document.getElementById('vtPrimary');
     const vtS = document.getElementById('vtSecondary');
 
-    ctP.value = ctP.dataset.default || 1;
-    ctS.value = ctS.dataset.default || 1;
-    vtP.value = vtP.dataset.default || 1;
-    vtS.value = vtS.dataset.default || 1;
+    ctP.value = ctP.dataset.default || '';
+    ctS.value = ctS.dataset.default || '';
+    vtP.value = vtP.dataset.default || '';
+    vtS.value = vtS.dataset.default || '';
 
     document.querySelectorAll('[data-val]').forEach(el => {
         el.textContent = parseFloat(el.dataset.val).toLocaleString('id-ID', {maximumFractionDigits: 3});
     });
-    const ctMul = _ratio(parseFloat(ctP.value) || 1, parseFloat(ctS.value) || 1);
-    const vtMul = _ratio(parseFloat(vtP.value) || 1, parseFloat(vtS.value) || 1);
-    _setCtptStatus(parseFloat(ctP.value) || 1, parseFloat(ctS.value) || 1, parseFloat(vtP.value) || 1, parseFloat(vtS.value) || 1, ctMul, vtMul);
+    _refreshCtptStatusOnly();
 }
 
 function _ratio(primary, secondary) {
-    if (!secondary || secondary <= 0) return 1;
+    if (primary === null || secondary === null || secondary <= 0) return null;
     return primary / secondary;
 }
 
-function _setCtptStatus(ctP, ctS, vtP, vtS, ctMul, vtMul) {
+function _setCtptStatus(values) {
     const el = document.getElementById('ctptStatus');
     if (!el) return;
-    const dCtP = parseFloat(document.getElementById('ctPrimary').dataset.default || '1') || 1;
-    const dCtS = parseFloat(document.getElementById('ctSecondary').dataset.default || '1') || 1;
-    const dVtP = parseFloat(document.getElementById('vtPrimary').dataset.default || '1') || 1;
-    const dVtS = parseFloat(document.getElementById('vtSecondary').dataset.default || '1') || 1;
-    const changed = (ctP !== dCtP) || (ctS !== dCtS) || (vtP !== dVtP) || (vtS !== dVtS);
-    const ratioKnown = el.dataset.ratioKnown === 'true';
-    const voltageKv  = el.dataset.voltageKv || '?';
+    const current = _currentAppliedRatios();
+    const defaults = _defaultRatioInputs();
+    const changed = _inputsChangedFromCurrent(values);
+    const ctKnown = el.dataset.ctKnown === 'true';
+    const vtKnown = el.dataset.vtKnown === 'true';
+    const ctPrimaryNative = (el.dataset.ctSource || 'meta') === 'meta_primary';
+    const vtPrimaryNative = (el.dataset.vtSource || 'meta') === 'meta_primary';
+    const overrideActive = el.dataset.overrideActive === 'true';
 
     if (!changed) {
-        if (ratioKnown) {
-            el.textContent = `Rasio terbaca dari metadata COMTRADE: CT=${dCtP}/${dCtS}, VT=${dVtP}/${dVtS}. Override hanya jika setting lapangan berbeda.`;
+        if (overrideActive) {
+            el.textContent = `Override manual aktif: CT=${_formatRatioText(current.ctP, current.ctS)}, VT=${_formatRatioText(current.vtP, current.vtS)}. Nilai saat ini dihitung ulang dari baseline asli file/meta, bukan dari hasil override sebelumnya.`;
+            el.style.color = 'var(--accent)';
+        } else if (ctKnown || vtKnown) {
+            el.textContent = `Metadata file terbaca sebagai CT=${_formatRatioText(defaults.ctP, defaults.ctS)} dan VT=${_formatRatioText(defaults.vtP, defaults.vtS)}. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.`;
             el.style.color = '';
+        } else if (ctPrimaryNative || vtPrimaryNative) {
+            el.textContent = 'Rasio CT/VT tidak tersedia di metadata file. Nilai analisa ditampilkan apa adanya dari scaling meta COMTRADE/CFG, dan kanal analog terdeteksi sudah berada pada satuan primer. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.';
+            el.style.color = 'var(--amber)';
         } else {
-            el.textContent = `Rasio tidak tersedia di file — nilai berikut adalah estimasi untuk sistem ${voltageKv} kV (CT sekunder umum 1A/5A, VT sekunder umum 100/110/115/120/125V). Verifikasi dengan setting CT/VT lapangan sebelum menggunakan atau melakukan override.`;
+            el.textContent = 'Rasio CT/VT tidak tersedia di metadata file. Nilai analisa ditampilkan apa adanya dari scaling meta COMTRADE/CFG. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.';
             el.style.color = 'var(--amber)';
         }
+    } else if (_allRatioFieldsEmpty(values)) {
+        el.textContent = 'Input rasio dikosongkan. Klik Terapkan untuk kembali ke bacaan asli file/meta tanpa override manual.';
+        el.style.color = 'var(--accent)';
+    } else if (!_allRatioFieldsComplete(values)) {
+        el.textContent = 'Isi lengkap rasio CT dan VT aktual terlebih dahulu, atau kosongkan semuanya untuk kembali ke bacaan asli file/meta.';
+        el.style.color = 'var(--amber)';
     } else {
-        const origCt = dCtP / dCtS;
-        const ctFactor = origCt > 0 ? (ctMul / origCt).toFixed(3) : ctMul.toFixed(3);
-        el.textContent = `Rasio diubah — CT=${ctP}/${ctS}, VT=${vtP}/${vtS} (faktor koreksi arus: ×${ctFactor}). Klik Terapkan untuk analisa ulang.`;
+        const baseCt = _ratio(_readStatusRatio('baseCtPrimary'), _readStatusRatio('baseCtSecondary'));
+        const nextCt = _ratio(values.ctP, values.ctS);
+        const factorNote = (baseCt && nextCt)
+            ? ` Faktor relatif arus: ×${(nextCt / baseCt).toFixed(3)} terhadap baseline file/meta.`
+            : '';
+        el.textContent = `Override siap diterapkan: CT=${_formatRatioText(values.ctP, values.ctS)}, VT=${_formatRatioText(values.vtP, values.vtS)}. Perhitungan ulang akan memakai baseline asli file, bukan hasil override sebelumnya.${factorNote}`;
         el.style.color = 'var(--accent)';
     }
 }
 function _refreshCtptStatusOnly() {
-    const ctP = parseFloat(document.getElementById('ctPrimary').value) || 1;
-    const ctS = parseFloat(document.getElementById('ctSecondary').value) || 1;
-    const vtP = parseFloat(document.getElementById('vtPrimary').value) || 1;
-    const vtS = parseFloat(document.getElementById('vtSecondary').value) || 1;
-    _setCtptStatus(ctP, ctS, vtP, vtS, _ratio(ctP, ctS), _ratio(vtP, vtS));
+    const values = _currentRatioInputs();
+    _setCtptStatus(values);
 
-    const dCtP = parseFloat(document.getElementById('ctPrimary').dataset.default || '1') || 1;
-    const dCtS = parseFloat(document.getElementById('ctSecondary').dataset.default || '1') || 1;
-    const dVtP = parseFloat(document.getElementById('vtPrimary').dataset.default || '1') || 1;
-    const dVtS = parseFloat(document.getElementById('vtSecondary').dataset.default || '1') || 1;
-    const changed = (ctP !== dCtP) || (ctS !== dCtS) || (vtP !== dVtP) || (vtS !== dVtS);
+    const changed = _inputsChangedFromCurrent(values);
+    const canSubmit = changed && (_allRatioFieldsComplete(values) || _allRatioFieldsEmpty(values));
 
     const btn = document.getElementById('reanalyzeBtn');
     if (btn) {
-        btn.disabled = !changed;
-        btn.style.opacity = changed ? '1' : '0.6';
-        btn.style.cursor = changed ? 'pointer' : 'not-allowed';
+        btn.disabled = !canSubmit;
+        btn.style.opacity = canSubmit ? '1' : '0.6';
+        btn.style.cursor = canSubmit ? 'pointer' : 'not-allowed';
     }
 }
 document.getElementById('ctPrimary').addEventListener('input', _refreshCtptStatusOnly);
