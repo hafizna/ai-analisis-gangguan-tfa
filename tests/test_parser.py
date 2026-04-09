@@ -11,6 +11,7 @@ import tempfile
 
 from core.comtrade_parser import parse_comtrade, ComtradeRecord
 from core.channel_normalizer import normalize_channel_name, detect_manufacturer
+from core.protection_router import determine_protection, ProtectionType
 
 
 class TestChannelNormalization:
@@ -152,6 +153,23 @@ def test_parser_on_real_file():
     # assert record is not None
     # assert len(record.analog_channels) > 0
     pass
+
+
+def test_transformer_diff_real_file_routes_to_87t():
+    root = Path(__file__).resolve().parents[2]
+    cfg_path = root / "raw_data" / "UPT PURWOKERTO" / "2024" / "09. SEPTEMBER" / "28092024_06.24_TRIP TRF #1 GI COMAL" / "Trafo 1_Diff" / "Trafo 1_Diff.CFG"
+
+    record = parse_comtrade(str(cfg_path))
+    assert record is not None
+    assert len(record.analog_channels) == 16
+    assert len(record.status_channels) == 111
+    assert any(ch.name == "87T.Op_Inst" for ch in record.status_channels)
+    assert any(ch.name == "HVS.Ia" for ch in record.analog_channels)
+    assert any(ch.name == "LVS.Ia" for ch in record.analog_channels)
+
+    prot = determine_protection(record)
+    assert prot.primary_protection == ProtectionType.TRANSFORMER_DIFF
+    assert prot.classifiable is True
 
 
 if __name__ == "__main__":

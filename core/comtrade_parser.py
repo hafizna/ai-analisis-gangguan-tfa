@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 from pathlib import Path
 import logging
+import re
 import shutil
 import tempfile
 import numpy as np
@@ -118,6 +119,14 @@ def parse_comtrade(cfg_path: str, dat_path: Optional[str] = None) -> Optional[Co
             )
             warnings.append("Optional COMTRADE sidecar could not be decoded - loaded CFG/DAT only")
             _load_without_optional_sidecars(com, cfg_path_obj, dat_path)
+        except Exception as exc:
+            logger.warning(
+                "Primary COMTRADE load failed for %s (%s), retrying with sanitized CFG copy",
+                cfg_path,
+                exc,
+            )
+            warnings.append("Primary COMTRADE parse failed - retrying with sanitized CFG")
+            _load_with_sanitized_cfg(com, cfg_path_obj, dat_path)
 
         if dat_path is None or not Path(dat_path).exists():
             warnings.append("DAT file not found - metadata only")
@@ -202,6 +211,55 @@ def _load_without_optional_sidecars(com: Comtrade, cfg_path: Path, dat_path: Opt
         shutil.copy2(cfg_path, tmp_cfg)
 
         tmp_dat = None
+        if dat_path and Path(dat_path).exists():
+            tmp_dat = tmp_dir_path / Path(dat_path).name
+            shutil.copy2(dat_path, tmp_dat)
+
+        com.load(str(tmp_cfg), str(tmp_dat) if tmp_dat else None)
+
+
+def _load_with_sanitized_cfg(com: Comtrade, cfg_path: Path, dat_path: Optional[str]) -> None:
+    """
+    Retry loading a COMTRADE pair after normalizing a few vendor-specific CFG quirks.
+
+    Some field recordings use:
+      - a first header line with extra trailing fields after the recorder/device ID
+      - DD/MM/YYYY timestamps, while the bundled `comtrade` parser expects MM/DD/YYYY
+
+    The fallback keeps the original CFG/DAT content but rewrites only the parts that
+    confuse the third-party parser.
+    """
+    date_re = re.compile(r"^(?P<day>\d{1,2})/(?P<month>\d{1,2})/(?P<year>\d{4})(?P<rest>,.*)$")
+
+    with tempfile.TemporaryDirectory(prefix="comtrade_sanitized_") as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        tmp_cfg = tmp_dir_path / cfg_path.name
+        tmp_dat = None
+
+        try:
+            cfg_lines = cfg_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:
+            cfg_lines = []
+
+        if cfg_lines:
+            first_line_parts = [part.strip() for part in cfg_lines[0].split(",")]
+            # The bundled parser expects a simple "station,rec_dev_id" header.
+            if len(first_line_parts) > 2:
+                cfg_lines[0] = ",".join(first_line_parts[:2])
+
+            for idx, line in enumerate(cfg_lines):
+                match = date_re.match(line)
+                if not match:
+                    continue
+                day = int(match.group("day"))
+                month = int(match.group("month"))
+                if day > 12 and month <= 12:
+                    cfg_lines[idx] = (
+                        f"{month:02d}/{day:02d}/{match.group('year')}{match.group('rest')}"
+                    )
+
+        tmp_cfg.write_text("\n".join(cfg_lines), encoding="utf-8")
+
         if dat_path and Path(dat_path).exists():
             tmp_dat = tmp_dir_path / Path(dat_path).name
             shutil.copy2(dat_path, tmp_dat)

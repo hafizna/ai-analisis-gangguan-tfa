@@ -184,6 +184,10 @@ class TestRelayFamilyDetection:
         family = detect_transformer_relay_family("T60", "")
         assert family == "GE"
 
+    def test_generic_transformer_relay_detected_as_nr(self):
+        family = detect_transformer_relay_family("TRANSFORMER_RELAY", "NR")
+        assert family == "NR"
+
     def test_unknown_relay_returns_generic(self):
         family = detect_transformer_relay_family("UNKNOWN_XYZ", "")
         assert family in {"GENERIC", "UNKNOWN", None, ""}
@@ -288,6 +292,28 @@ class TestTransformerChannelMapping:
         ch_map = map_transformer_channels(record)
         assert ch_map.has_hv_currents
         assert ch_map.has_lv_currents
+    
+    def test_generic_transformer_relay_87t_channels_mapped(self):
+        analog = [
+            MockAnalogChannel(name="HVS.Ia", measurement="current"),
+            MockAnalogChannel(name="HVS.Ib", measurement="current"),
+            MockAnalogChannel(name="HVS.Ic", measurement="current"),
+            MockAnalogChannel(name="LVS.Ia", measurement="current"),
+            MockAnalogChannel(name="LVS.Ib", measurement="current"),
+            MockAnalogChannel(name="LVS.Ic", measurement="current"),
+            MockAnalogChannel(name="87T.ida", measurement="current"),
+            MockAnalogChannel(name="87T.idb", measurement="current"),
+            MockAnalogChannel(name="87T.idc", measurement="current"),
+        ]
+        record = MockRecord(rec_dev_id="TRANSFORMER_RELAY", station_name="NR", analog_channels=analog)
+        ch_map = map_transformer_channels(record)
+        assert ch_map.relay_family == "NR"
+        assert ch_map.has_hv_currents
+        assert ch_map.has_lv_currents
+        assert ch_map.has_differential
+        assert ch_map.i_diff_a == "87T.ida"
+        assert ch_map.i_diff_b == "87T.idb"
+        assert ch_map.i_diff_c == "87T.idc"
 
 
 if __name__ == "__main__":

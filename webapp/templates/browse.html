@@ -5,6 +5,24 @@
 {% block nav_browse %}active{% endblock %}
 
 {% block extra_css %}
+.rekap-row {
+    display: flex; gap: 12px; margin-bottom: 18px; flex-wrap: wrap;
+}
+.rekap-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    min-width: 140px;
+    flex: 1;
+}
+.rekap-value {
+    font-size: 28px; font-weight: 800; color: var(--accent);
+}
+.rekap-label {
+    font-size: 11px; color: var(--text-muted); margin-top: 4px;
+    font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
 .filter-bar {
     display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;
 }
@@ -47,6 +65,31 @@
 .label-pohon     { background: rgba(16,185,129,0.15); color: #10b981; }
 .label-hewan     { background: rgba(236,72,153,0.15); color: #ec4899; }
 .label-benda     { background: rgba(100,116,139,0.15);color: #94a3b8; }
+.label-trafo     { background: rgba(14,165,233,0.15); color: #38bdf8; }
+.label-87t       { background: rgba(16,185,129,0.15); color: #10b981; }
+.label-ocr       { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.label-candidate { background: rgba(148,163,184,0.15); color: #cbd5e1; }
+.label-unknown   { background: rgba(148,163,184,0.12); color: #94a3b8; }
+
+.status-badge {
+    display: inline-block; padding: 2px 9px; border-radius: 20px;
+    font-size: 11px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.status-transient   { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.status-transformer { background: rgba(16,185,129,0.15); color: #10b981; }
+.status-unknown     { background: rgba(148,163,184,0.15); color: #94a3b8; }
+.label-dugaan {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text);
+}
+.label-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    line-height: 1.2;
+}
 
 .btn-analyze {
     padding: 5px 14px; background: var(--accent); color: white;
@@ -91,6 +134,25 @@
 </div>
 
 {% else %}
+<div class="rekap-row">
+    <div class="rekap-card">
+        <div class="rekap-value">{{ events|length }}</div>
+        <div class="rekap-label">Total Rekaman</div>
+    </div>
+    <div class="rekap-card">
+        <div class="rekap-value">{{ status_counts.get('TRANSIENT', 0) }}</div>
+        <div class="rekap-label">Status Transient</div>
+    </div>
+    <div class="rekap-card">
+        <div class="rekap-value">{{ status_counts.get('TRANSFORMER', 0) }}</div>
+        <div class="rekap-label">Status Trafo</div>
+    </div>
+    <div class="rekap-card">
+        <div class="rekap-value">{{ status_counts.get('UNKNOWN', 0) }}</div>
+        <div class="rekap-label">Status Unknown</div>
+    </div>
+</div>
+
 <div class="filter-bar">
     <select id="filterUpt" class="filter-control" onchange="filterTable()">
         <option value="">Semua UPT</option>
@@ -98,16 +160,19 @@
         <option value="{{ upt }}">{{ upt }}</option>
         {% endfor %}
     </select>
-    <select id="filterLabel" class="filter-control" onchange="filterTable()">
-        <option value="">Semua Label</option>
-        {% for lbl in labels %}
-        <option value="{{ lbl }}">{{ lbl }}</option>
+    <select id="filterStatus" class="filter-control" onchange="filterTable()">
+        <option value="">Semua Status Data</option>
+        {% for status in status_groups %}
+        <option value="{{ status }}">{{ status }}</option>
         {% endfor %}
     </select>
     <input type="text" id="filterText" class="filter-control"
-           placeholder="Cari nama GI / file..." oninput="filterTable()"
+           placeholder="Cari nama GI / file / folder..." oninput="filterTable()"
            style="flex:1; min-width:200px;">
     <span id="countDisplay" class="filter-count"></span>
+</div>
+<div style="font-size:12px; color:var(--text-muted); margin:-10px 0 14px;">
+    Status Data dan Label Dugaan diambil dari heuristik path/folder, jadi ini bersifat <strong>dugaan</strong> dan bisa berubah setelah verifikasi isi COMTRADE.
 </div>
 
 {% if events %}
@@ -118,7 +183,8 @@
                 <th>UPT</th>
                 <th>Tahun</th>
                 <th>Bulan</th>
-                <th>Label</th>
+                <th>Status Data</th>
+                <th>Label Dugaan</th>
                 <th>Nama Kejadian</th>
                 <th>File</th>
                 <th></th>
@@ -126,20 +192,36 @@
         </thead>
         <tbody>
         {% for ev in events %}
-        {% set lbl_lower = ev.label | lower %}
-        {% if 'petir' in lbl_lower %}{% set bc = 'label-petir' %}
-        {% elif 'layang' in lbl_lower %}{% set bc = 'label-layang' %}
-        {% elif 'konduktor' in lbl_lower %}{% set bc = 'label-konduktor' %}
-        {% elif 'pohon' in lbl_lower %}{% set bc = 'label-pohon' %}
-        {% elif 'hewan' in lbl_lower %}{% set bc = 'label-hewan' %}
-        {% else %}{% set bc = 'label-benda' %}{% endif %}
+        {% set status_lower = ev.status_data | lower %}
+        {% set label_lower = ev.suspected_label | lower %}
+        {% if status_lower == 'transient' %}{% set sbc = 'status-transient' %}
+        {% elif status_lower == 'transformer' %}{% set sbc = 'status-transformer' %}
+        {% else %}{% set sbc = 'status-unknown' %}{% endif %}
+        {% if 'petir' in label_lower %}{% set lbc = 'label-petir' %}
+        {% elif 'layang' in label_lower %}{% set lbc = 'label-layang' %}
+        {% elif 'konduktor' in label_lower %}{% set lbc = 'label-konduktor' %}
+        {% elif 'pohon' in label_lower %}{% set lbc = 'label-pohon' %}
+        {% elif 'hewan' in label_lower %}{% set lbc = 'label-hewan' %}
+        {% elif '87t' in label_lower %}{% set lbc = 'label-87t' %}
+        {% elif 'ocr only' in label_lower %}{% set lbc = 'label-ocr' %}
+        {% elif 'trafo candidate' in label_lower %}{% set lbc = 'label-candidate' %}
+        {% elif 'trafo' in label_lower or 'trf' in label_lower %}{% set lbc = 'label-trafo' %}
+        {% elif 'unknown' in label_lower %}{% set lbc = 'label-unknown' %}
+        {% else %}{% set lbc = 'label-benda' %}{% endif %}
         <tr data-upt="{{ ev.upt }}"
-            data-label="{{ ev.label }}"
-            data-text="{{ ev.gi | lower }} {{ ev.filename | lower }} {{ ev.month | lower }}">
+            data-status="{{ ev.status_data }}"
+            data-label="{{ ev.suspected_label }}"
+            data-text="{{ ev.search_text | lower }}">
             <td style="color:var(--text-muted); font-size:12px;">{{ ev.upt }}</td>
             <td style="color:var(--text-muted); font-size:12px;">{{ ev.year }}</td>
             <td style="color:var(--text-muted); font-size:12px; white-space:nowrap;">{{ ev.month }}</td>
-            <td><span class="label-badge {{ bc }}">{{ ev.label }}</span></td>
+            <td><span class="status-badge {{ sbc }}">{{ ev.status_data }}</span></td>
+            <td>
+                <div class="label-dugaan">{{ ev.suspected_label }}</div>
+                {% if ev.path_tag %}
+                <div class="label-hint">{{ ev.path_tag }}</div>
+                {% endif %}
+            </td>
             <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
                 title="{{ ev.gi }}">{{ ev.gi }}</td>
             <td style="font-family:monospace; font-size:11px; color:var(--text-muted);">{{ ev.filename }}</td>
@@ -169,12 +251,12 @@
 const rows = Array.from(document.querySelectorAll('#eventsTable tbody tr') || []);
 function filterTable() {
     const upt   = document.getElementById('filterUpt').value.toLowerCase();
-    const label = document.getElementById('filterLabel').value.toLowerCase();
+    const status = document.getElementById('filterStatus').value.toLowerCase();
     const text  = document.getElementById('filterText').value.toLowerCase();
     let visible = 0;
     rows.forEach(row => {
         const match = (!upt   || row.dataset.upt.toLowerCase().includes(upt))
-                   && (!label || row.dataset.label.toLowerCase().includes(label))
+                   && (!status || row.dataset.status.toLowerCase().includes(status))
                    && (!text  || row.dataset.text.includes(text));
         row.style.display = match ? '' : 'none';
         if (match) visible++;

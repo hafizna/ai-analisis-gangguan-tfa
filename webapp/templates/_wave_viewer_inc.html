@@ -27,6 +27,9 @@
     const cursorBEl = document.getElementById('cursorBVal');
     const deltaTEl = document.getElementById('cursorDeltaT');
     const deltaYEl = document.getElementById('cursorDeltaY');
+    const deltaYLabelEl = document.getElementById('cursorDeltaYLabel');
+    const cursor1Btn = document.getElementById('cursor1Btn');
+    const cursor2Btn = document.getElementById('cursor2Btn');
     const cursorResetBtn = document.getElementById('cursorResetBtn');
     const peakBtn = document.getElementById('peakFindBtn');
     const peakResultEl = document.getElementById('peakResult');
@@ -77,7 +80,7 @@
         if (meta.analog_truncated) notes.push('Sebagian kanal analog disembunyikan untuk menjaga performa.');
         if (meta.digital_truncated) notes.push('Sebagian kanal digital disembunyikan untuk menjaga performa.');
         if (meta.selected_line_tag) notes.push(`Viewer difokuskan ke bay/penghantar ${meta.selected_line_tag}.`);
-        notes.push('Tip: hover lalu klik untuk Cursor A, shift+klik untuk Cursor B. Klik kanal di sidebar untuk isolate/lock. Double-click untuk reset zoom.');
+        notes.push('Tip: gunakan toggle Cursor aktif untuk memilih Cursor 1 atau Cursor 2, lalu klik plot untuk menaruh cursor aktif. Δt dan ΔI/ΔV dihitung otomatis. Klik kanal di sidebar untuk isolate/lock. Double-click untuk reset zoom.');
         hintEl.textContent = notes.join('  |  ');
     }
 
@@ -586,7 +589,6 @@
     }
     if (measureCurrentBtn) measureCurrentBtn.addEventListener('click', () => setMeasure('current'));
     if (measureVoltageBtn) measureVoltageBtn.addEventListener('click', () => setMeasure('voltage'));
-    setMeasure(currentDefsWithPlots().length || !showVoltagePanel ? 'current' : 'voltage');
 
     function getActivePlot() {
         return activeMeasure === 'voltage' ? voltagePlot : getCurrentPlotRef(activeCurrentGroupKey);
@@ -603,7 +605,20 @@
         return visible.length ? visible[0].i : 0;
     }
 
-    const cursor = { a: null, b: null };
+    const cursor = { c1: null, c2: null, active: 1 };
+
+    function setActiveCursor(slot) {
+        cursor.active = slot === 2 ? 2 : 1;
+        if (cursor1Btn) {
+            cursor1Btn.classList.toggle('active', cursor.active === 1);
+            cursor1Btn.setAttribute('aria-pressed', cursor.active === 1 ? 'true' : 'false');
+        }
+        if (cursor2Btn) {
+            cursor2Btn.classList.toggle('active', cursor.active === 2);
+            cursor2Btn.setAttribute('aria-pressed', cursor.active === 2 ? 'true' : 'false');
+        }
+    }
+
     function updateCursorReadout() {
         if (!cursorAEl || !cursorBEl || !deltaTEl || !deltaYEl) return;
         const plotRef = getActivePlot();
@@ -620,10 +635,13 @@
             return { x: xArr[i], y: yArr[i] };
         }
 
-        const a = valAt(cursor.a);
-        const b = valAt(cursor.b);
+        const a = valAt(cursor.c1);
+        const b = valAt(cursor.c2);
         cursorAEl.textContent = a ? `${fmt(a.x, 2)} ms | ${fmt(a.y, 3)}` : '-';
         cursorBEl.textContent = b ? `${fmt(b.x, 2)} ms | ${fmt(b.y, 3)}` : '-';
+        if (deltaYLabelEl) {
+            deltaYLabelEl.textContent = activeMeasure === 'voltage' ? 'ΔV:' : 'ΔI:';
+        }
         if (a && b) {
             deltaTEl.textContent = `${fmt(Math.abs(b.x - a.x), 3)} ms`;
             deltaYEl.textContent = `${fmt(Math.abs(b.y - a.y), 3)}`;
@@ -635,17 +653,18 @@
 
     function drawCursors() {
         const shapes = markerShapes.slice();
-        if (cursor.a !== null) {
-            shapes.push({ type: 'line', x0: cursor.a, x1: cursor.a, y0: 0, y1: 1, xref: 'x', yref: 'paper', line: { color: '#22c55e', width: 1 } });
+        if (cursor.c1 !== null) {
+            shapes.push({ type: 'line', x0: cursor.c1, x1: cursor.c1, y0: 0, y1: 1, xref: 'x', yref: 'paper', line: { color: '#22c55e', width: 1 } });
         }
-        if (cursor.b !== null) {
-            shapes.push({ type: 'line', x0: cursor.b, x1: cursor.b, y0: 0, y1: 1, xref: 'x', yref: 'paper', line: { color: '#e11d48', width: 1 } });
+        if (cursor.c2 !== null) {
+            shapes.push({ type: 'line', x0: cursor.c2, x1: cursor.c2, y0: 0, y1: 1, xref: 'x', yref: 'paper', line: { color: '#e11d48', width: 1 } });
         }
         if (voltagePlot) Plotly.relayout(voltagePlot, { shapes });
         currentDefsWithPlots().forEach(def => {
             if (def.plot) Plotly.relayout(def.plot, { shapes });
         });
         if (digitalPlot) Plotly.relayout(digitalPlot, { shapes });
+        setActiveCursor(cursor.active);
         updateCursorReadout();
     }
 
@@ -653,19 +672,28 @@
     // This works anywhere on the plot area (not just exactly on a data point).
     const lastHoveredX = { voltage: null, current_hv: null, current_lv: null, current_diff: null };
 
-    function _placeCursor(plotName, shiftKey) {
+    function _placeCursor(plotName, cursorSlot) {
         const x = lastHoveredX[plotName];
         if (x === null || x === undefined) return;
-        if (shiftKey) cursor.b = x; else cursor.a = x;
+        if (cursorSlot === 2) cursor.c2 = x; else cursor.c1 = x;
         setMeasure(plotName === 'voltage' ? 'voltage' : 'current', plotName);
         drawCursors();
     }
+
+    if (cursor1Btn) cursor1Btn.addEventListener('click', () => {
+        setActiveCursor(1);
+        updateCursorReadout();
+    });
+    if (cursor2Btn) cursor2Btn.addEventListener('click', () => {
+        setActiveCursor(2);
+        updateCursorReadout();
+    });
 
     if (voltagePlot) {
         bindPlotlyEvent(voltagePlot, 'plotly_hover', ev => {
             if (ev.points && ev.points.length) lastHoveredX.voltage = ev.points[0].x;
         });
-        voltagePlot.addEventListener('click', e => _placeCursor('voltage', e.shiftKey));
+        voltagePlot.addEventListener('click', e => _placeCursor('voltage', e.shiftKey ? 2 : cursor.active));
     }
     currentGroupDefs.forEach(def => {
         if (!def.plot || !def.hasPlot) return;
@@ -675,13 +703,13 @@
                 activeCurrentGroupKey = def.key;
             }
         });
-        def.plot.addEventListener('click', e => _placeCursor(def.key, e.shiftKey));
+        def.plot.addEventListener('click', e => _placeCursor(def.key, e.shiftKey ? 2 : cursor.active));
     });
 
     if (cursorResetBtn) {
         cursorResetBtn.addEventListener('click', () => {
-            cursor.a = null;
-            cursor.b = null;
+            cursor.c1 = null;
+            cursor.c2 = null;
             drawCursors();
         });
     }
@@ -711,10 +739,14 @@
             if (peakResultEl) {
                 peakResultEl.textContent = `Peak: ${fmt(peakY, 3)} @ ${fmt(peakX, 2)} ms`;
             }
-            cursor.a = peakX;
+            if (cursor.active === 2) cursor.c2 = peakX;
+            else cursor.c1 = peakX;
             drawCursors();
         });
     }
+
+    setActiveCursor(cursor.active);
+    setMeasure(currentDefsWithPlots().length || !showVoltagePanel ? 'current' : 'voltage');
 
     function _getPlotSize(plotRef) {
         if (!plotRef) return { width: 1200, height: 380 };

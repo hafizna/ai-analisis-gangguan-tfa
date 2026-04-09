@@ -9,6 +9,8 @@ berlabel maupun tidak, dan menghasilkan dua CSV:
 
 Gunakan all_predictions.csv untuk crosscheck dengan stakeholder.
 Kolom 'folder_label' adalah label dari nama folder (bisa kosong jika tidak berlabel).
+Kolom 'status_data' adalah grouping dugaan berbasis path.
+Kolom 'suspected_label' adalah label dugaan yang tidak bersifat fixed.
 Kolom 'predicted_label' adalah hasil model.
 Kolom 'correct' diisi kosong — untuk diisi stakeholder.
 
@@ -28,6 +30,7 @@ warnings.filterwarnings("ignore")
 
 sys.path.insert(0, str(Path(__file__).parent))
 from models.predict import classify_file
+from core.path_heuristics import infer_path_tag, infer_status_data, infer_suspected_label
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 RAW_DATA  = Path(__file__).parent.parent / "raw_data"
@@ -118,6 +121,10 @@ def run():
     for i, cfg in enumerate(cfgs, 1):
         meta         = _path_meta(cfg)
         folder_label = _infer_folder_label(str(cfg))
+        path_str = str(cfg)
+        status_data = infer_status_data(path_str)
+        suspected_label = infer_suspected_label(path_str)
+        path_tag = infer_path_tag(path_str)
 
         print(f"[{i:>3}/{len(cfgs)}] {cfg.name[:60]:<60}", end=" ", flush=True)
 
@@ -151,12 +158,15 @@ def run():
                 "correct":         "",   # leave blank — to be filled by stakeholder
                 "notes":           "",
                 "cfg_path":        str(cfg),
+                "status_data":     status_data,
+                "suspected_label": suspected_label,
+                "path_tag":        path_tag,
             }
             results.append(row)
             match = ("OK" if folder_label and folder_label in r.label.upper()
                      else "??" if not folder_label
                      else "XX")
-            print(f"-> {r.label:<40} [{match}]  conf={r.confidence:.0%}")
+            print(f"-> {r.label:<40} [{match}]  status={status_data:<10} conf={r.confidence:.0%}")
 
         except ValueError as e:
             err_msg = str(e)
@@ -170,10 +180,13 @@ def run():
                 "folder_label": folder_label,
                 "error":        err_msg,
                 "cfg_path":     str(cfg),
+                "status_data":  status_data,
+                "suspected_label": suspected_label,
+                "path_tag":     path_tag,
             })
             # Shorten for console
             short = err_msg[:60] if len(err_msg) > 60 else err_msg
-            print(f"-> SKIP: {short}")
+            print(f"-> SKIP: {short}  status={status_data}")
 
         except Exception as e:
             errors.append({
@@ -186,8 +199,11 @@ def run():
                 "folder_label": folder_label,
                 "error":        f"ERROR: {e}",
                 "cfg_path":     str(cfg),
+                "status_data":  status_data,
+                "suspected_label": suspected_label,
+                "path_tag":     path_tag,
             })
-            print(f"-> ERROR: {str(e)[:60]}")
+            print(f"-> ERROR: {str(e)[:60]}  status={status_data}")
 
     elapsed = (datetime.now() - t0).total_seconds()
 
@@ -211,6 +227,16 @@ def run():
         print(f"\nDistribusi prediksi:")
         vc = df_results["predicted_label"].value_counts()
         for label, count in vc.items():
+            print(f"  {label:<45} {count:>4}")
+
+        print(f"\nDistribusi status data:")
+        status_vc = df_results["status_data"].value_counts(dropna=False)
+        for status, count in status_vc.items():
+            print(f"  {status:<20} {count:>4}")
+
+        print(f"\nLabel dugaan teratas:")
+        suspected_vc = df_results["suspected_label"].value_counts(dropna=False).head(10)
+        for label, count in suspected_vc.items():
             print(f"  {label:<45} {count:>4}")
 
         # Accuracy on labeled files only

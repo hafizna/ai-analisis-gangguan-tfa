@@ -236,6 +236,10 @@ _GENERIC_PATTERNS: List[tuple] = [
     (r'^[AR][_\s\-]?(?:W2|LV|WIND2)',               'IW2A'),
     (r'^[BS][_\s\-]?(?:W2|LV|WIND2)',               'IW2B'),
     (r'^[CT][_\s\-]?(?:W2|LV|WIND2)',               'IW2C'),
+    # Transformer differential outputs commonly labeled as 87T.ida/b/c.
+    (r'\b87T[._\s\-]*(?:IDA|IA|A)\b',               'IDIFA'),
+    (r'\b87T[._\s\-]*(?:IDB|IB|B)\b',               'IDIFB'),
+    (r'\b87T[._\s\-]*(?:IDC|IC|C)\b',               'IDIFC'),
     # Differential by keyword
     (r'(?:DIFF|DIF)[_\s\-]?[AR]$',                  'IDIFA'),
     (r'(?:DIFF|DIF)[_\s\-]?[BS]$',                  'IDIFB'),
@@ -280,7 +284,7 @@ _FAMILY_KEYWORDS: Dict[str, List[str]] = {
     'GE':      ['T60', 'GE ', 'GE-', 'MULTILIN', 'RPV', 'GE GRID',
                 'D60', 'T35'],
     'MICOM':   ['P640', 'P643', 'P64', 'MICOM', 'ALSTOM', 'SCHNEIDER'],
-    'NR':      ['PCS-985', 'PCS985', 'PCS 985', 'NARI', 'NR ELECTRIC'],
+    'NR':      ['PCS-985', 'PCS985', 'PCS 985', 'NARI', 'NR ELECTRIC', 'TRANSFORMER_RELAY'],
 }
 
 
@@ -295,6 +299,22 @@ def detect_transformer_relay_family(rec_dev_id: str, station_name: str = "") -> 
         if any(kw.upper() in text for kw in keywords):
             return family
     return 'UNKNOWN'
+
+
+def _is_transformer_current_channel(ch) -> bool:
+    """
+    Treat standard phase currents as current channels, plus transformer-specific
+    differential / restraint channels that some relays record with non-A units.
+    """
+    if getattr(ch, 'measurement', '') == 'current':
+        return True
+
+    raw = f"{getattr(ch, 'name', '')} {getattr(ch, 'canonical_name', '')}".upper()
+    if re.search(r'\b87T[._\s\-]*(?:IDA|IDB|IDC|IA|IB|IC)\b', raw):
+        return True
+    if re.search(r'\b(?:IDIFF|IDIF|DIFF|RSTR|REST|BIAS|STAB|64REF)\b', raw):
+        return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -325,7 +345,7 @@ def map_transformer_channels(record) -> TransformerChannelMap:
     # Gather current channel names (exclude voltage for role matching)
     current_channels = [
         ch for ch in getattr(record, 'analog_channels', [])
-        if getattr(ch, 'measurement', '') == 'current'
+        if _is_transformer_current_channel(ch)
     ]
     voltage_channels = [
         ch for ch in getattr(record, 'analog_channels', [])
