@@ -49,6 +49,12 @@ from models.predict import (
 )
 from models.rules import apply_rules
 from core.comtrade_parser import parse_comtrade
+from core.path_heuristics import (
+    infer_path_kind,
+    infer_path_tag,
+    infer_status_data,
+    infer_suspected_label,
+)
 
 
 def _f(val, default=0):
@@ -1004,24 +1010,10 @@ def _handle_unexpected_error(e):
 # ── routes ────────────────────────────────────────────────────────────────────
 
 RAW_DATA = Path(__file__).parent.parent.parent / "raw_data"
-
-LABEL_MAP = [
-    ("petir", "PETIR"), ("layang", "LAYANG-LAYANG"),
-    ("pohon", "POHON"), ("hewan", "HEWAN"), ("ular", "HEWAN"),
-    ("babi", "HEWAN"), ("tower roboh", "KONDUKTOR"),
-    ("konduktor", "KONDUKTOR"), ("benda asing", "BENDA ASING"),
-]
 SKIP_FRAGS = ["olah", "_extracted", "locus", "analisa"]
 
-def _infer_label(path_str):
-    low = path_str.lower()
-    for frag, lbl in LABEL_MAP:
-        if frag in low:
-            return lbl
-    return ""
-
 def _scan_recordings():
-    """Return list of dicts describing every labeled CFG in raw_data/."""
+    """Return list of dicts describing discoverable CFGs in raw_data/."""
     events = []
     seen = set()
     if not RAW_DATA.exists():
@@ -1033,9 +1025,6 @@ def _scan_recordings():
         seen.add(key)
         path_str = str(cfg)
         if any(f in path_str.lower() for f in SKIP_FRAGS):
-            continue
-        label = _infer_label(path_str)
-        if not label:
             continue
         dat = cfg.with_suffix(".dat")
         if not dat.exists():
@@ -1054,9 +1043,24 @@ def _scan_recordings():
         except Exception:
             month = "-"
             gi    = "-"
+        status_data = infer_status_data(path_str)
+        suspected_label = infer_suspected_label(path_str)
+        path_tag = infer_path_tag(path_str)
         events.append({
-            "upt": upt, "year": year, "month": month, "label": label,
-            "gi": gi, "filename": cfg.name, "cfg_path": str(cfg),
+            "upt": upt,
+            "year": year,
+            "month": month,
+            "gi": gi,
+            "filename": cfg.name,
+            "cfg_path": str(cfg),
+            "status_data": status_data,
+            "suspected_label": suspected_label,
+            "path_tag": path_tag,
+            "kind": infer_path_kind(path_str),
+            "search_text": (
+                f"{path_str} {upt} {year} {month} {gi} {cfg.name} "
+                f"{status_data} {suspected_label} {path_tag}"
+            ),
         })
     return events
 
@@ -1919,13 +1923,31 @@ def results():
 @app.route("/browse")
 def browse():
     if not RAW_DATA.exists():
-        return render_template("browse.html", events=[], upts=[], labels=[],
+        return render_template("browse.html", events=[], upts=[], status_groups=[],
+                               status_counts={},
                                offline_mode=True, db_enabled=_db_enabled())
     events = _scan_recordings()
+    status_order = {"TRANSIENT": 0, "TRANSFORMER": 1, "UNKNOWN": 2}
+    events.sort(key=lambda e: (
+        status_order.get(e.get("status_data", "UNKNOWN"), 99),
+        e.get("upt", ""),
+        e.get("year", ""),
+        e.get("month", ""),
+        e.get("gi", ""),
+        e.get("filename", ""),
+    ))
     upts   = sorted(set(e["upt"]   for e in events))
-    labels = sorted(set(e["label"] for e in events))
-    return render_template("browse.html", events=events, upts=upts, labels=labels,
-                           offline_mode=False, db_enabled=_db_enabled())
+    status_groups = sorted(set(e["status_data"] for e in events))
+    status_counts = dict(Counter(e["status_data"] for e in events))
+    return render_template(
+        "browse.html",
+        events=events,
+        upts=upts,
+        status_groups=status_groups,
+        status_counts=status_counts,
+        offline_mode=False,
+        db_enabled=_db_enabled()
+    )
 
 
 @app.route("/analyze-from-browse", methods=["POST"])

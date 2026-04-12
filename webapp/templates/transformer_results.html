@@ -196,6 +196,29 @@
 .wave-measure strong { color: var(--text); font-weight: 700; }
 .wave-measure .btn { padding: 6px 10px; font-size: 11px; }
 .wave-measure .btn.active { border-color: rgba(59,130,246,0.5); color: var(--accent); background: rgba(59,130,246,0.08); }
+.cursor-toggle {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--card-bg);
+}
+.cursor-toggle .btn {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+}
+.cursor-toggle .btn + .btn {
+    border-left: 1px solid var(--border);
+}
+.cursor-toggle .btn.active {
+    color: var(--accent);
+    background: rgba(59,130,246,0.08);
+    font-weight: 700;
+}
 #_tfaPrintDiv { display: none; }
 @media print {
     body > *:not(#_tfaPrintDiv) { display: none !important; }
@@ -594,10 +617,15 @@
     <div class="wave-measure">
         <span>Measure:</span>
         <button class="btn btn-outline" id="measureCurrentBtn">Current</button>
-        <span>Cursor A: <strong id="cursorAVal">-</strong></span>
-        <span>Cursor B: <strong id="cursorBVal">-</strong></span>
+        <span>Cursor aktif:</span>
+        <div class="cursor-toggle" role="group" aria-label="Pilih cursor aktif">
+            <button type="button" class="btn btn-outline" id="cursor1Btn">Cursor 1</button>
+            <button type="button" class="btn btn-outline" id="cursor2Btn">Cursor 2</button>
+        </div>
+        <span>Cursor 1: <strong id="cursorAVal">-</strong></span>
+        <span>Cursor 2: <strong id="cursorBVal">-</strong></span>
         <span>Δt: <strong id="cursorDeltaT">-</strong></span>
-        <span>Δy: <strong id="cursorDeltaY">-</strong></span>
+        <span id="cursorDeltaYLabel">ΔI:</span> <strong id="cursorDeltaY">-</strong>
         <button class="btn btn-outline" id="cursorResetBtn">Reset Cursor</button>
         <button class="btn btn-outline" id="peakFindBtn">Peak Finder</button>
         <span id="peakResult"></span>
