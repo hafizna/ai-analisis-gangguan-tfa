@@ -13,6 +13,40 @@ import re
 logger = logging.getLogger(__name__)
 
 
+def _normalize_fault_phase_list(phases: Optional[List[str]]) -> List[str]:
+    """Keep only active phase labels in stable A/B/C order."""
+    order = {"A": 0, "B": 1, "C": 2}
+    cleaned = []
+    for ph in phases or []:
+        key = str(ph or "").upper().strip()
+        if key in order and key not in cleaned:
+            cleaned.append(key)
+    return sorted(cleaned, key=lambda ph: order[ph])
+
+
+def _prefer_waveform_fault_phases(status_phases: Optional[List[str]], waveform_phases: Optional[List[str]]) -> List[str]:
+    """
+    Reconcile phase picks from status and waveform detection.
+
+    Status trip outputs can reflect a three-pole trip command rather than the true
+    faulted phases. When waveform evidence is available and is more specific, prefer it.
+    """
+    status_clean = _normalize_fault_phase_list(status_phases)
+    wave_clean = _normalize_fault_phase_list(waveform_phases)
+    if not wave_clean:
+        return status_clean
+    if not status_clean:
+        return wave_clean
+
+    status_set = set(status_clean)
+    wave_set = set(wave_clean)
+    if status_set == wave_set:
+        return wave_clean
+    if status_set.issuperset(wave_set):
+        return wave_clean
+    return status_clean
+
+
 def _extract_line_tag(channel_name: str) -> Optional[str]:
     s = (channel_name or "").upper()
     m = re.search(r"(?:LINE|BAY|JEPARA|SIRKIT|CCT|CIRCUIT)\s*#?\s*([0-9A-Z]+)\b", s)
@@ -134,9 +168,19 @@ def detect_fault(record) -> Optional[FaultEvent]:
             )
             fault.inception_idx = wf_fault.inception_idx
             fault.inception_time = wf_fault.inception_time
-            if not fault.faulted_phases:
-                fault.faulted_phases = wf_fault.faulted_phases
             fault.detection_method = "status_waveform_aligned"
+
+        reconciled_phases = _prefer_waveform_fault_phases(
+            fault.faulted_phases,
+            wf_fault.faulted_phases,
+        )
+        if reconciled_phases != _normalize_fault_phase_list(fault.faulted_phases):
+            logger.debug(
+                "Using waveform-derived fault phases over status phases "
+                f"(status={fault.faulted_phases}, wave={wf_fault.faulted_phases}, "
+                f"resolved={reconciled_phases})"
+            )
+            fault.faulted_phases = reconciled_phases
 
     if fault and fault.confidence > 0.7:
         # If status channels found a plausible duration (>= 5ms), return it.

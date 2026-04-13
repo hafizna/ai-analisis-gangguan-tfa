@@ -12,6 +12,8 @@ import tempfile
 from core.comtrade_parser import parse_comtrade, ComtradeRecord
 from core.channel_normalizer import normalize_channel_name, detect_manufacturer
 from core.protection_router import determine_protection, ProtectionType
+from core.fault_detector import detect_fault
+from core.feature_extractor import extract_distance_features
 from models.predict import classify_file
 
 
@@ -211,6 +213,24 @@ def test_line_diff_real_file_falls_back_to_line_analysis():
     assert result.event_type == "LINE"
     assert "proteksi diferensial saluran (87L)" in result.evidence
     assert result.label != "GANGGUAN INTERNAL TRAFO"
+
+
+def test_mrica_wsobo_real_file_prefers_waveform_faulted_phases():
+    root = Path(__file__).resolve().parents[2]
+    cfg_path = root / "raw_data" / "UPT PURWOKERTO" / "2024" / "04. APRIL" / "03. 11042024 SUTT MRICA-WSOBO #1 (17.48)" / "11042024 WNSB-MRICA 1 SISI MRICA" / "Thursday 11 April 2024 17.48.12.001.CFG"
+
+    record = parse_comtrade(str(cfg_path))
+    assert record is not None
+
+    prot = determine_protection(record)
+    fault = detect_fault(record)
+    feat = extract_distance_features(record, fault, prot)
+
+    assert fault is not None
+    assert fault.faulted_phases == ["B", "C"]
+    assert feat is not None
+    assert feat.faulted_phases == ["B", "C"]
+    assert feat.fault_type != "3PH"
 
 
 if __name__ == "__main__":
