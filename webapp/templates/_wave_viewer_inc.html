@@ -630,6 +630,7 @@
         if (!st) return;
         const xArr = st.x;
         const yArr = st.y;
+        const unitSuffix = st.unit ? ` (${st.unit})` : '';
 
         function valAt(x) {
             if (x === null || xArr.length === 0) return null;
@@ -639,14 +640,14 @@
 
         const a = valAt(cursor.c1);
         const b = valAt(cursor.c2);
-        cursorAEl.textContent = a ? `${fmt(a.x, 2)} ms | ${fmt(a.y, 3)}` : '-';
-        cursorBEl.textContent = b ? `${fmt(b.x, 2)} ms | ${fmt(b.y, 3)}` : '-';
+        cursorAEl.textContent = a ? `${fmt(a.x, 2)} ms | ${fmt(a.y, 3)}${unitSuffix}` : '-';
+        cursorBEl.textContent = b ? `${fmt(b.x, 2)} ms | ${fmt(b.y, 3)}${unitSuffix}` : '-';
         if (deltaYLabelEl) {
-            deltaYLabelEl.textContent = activeMeasure === 'voltage' ? 'ΔV:' : 'ΔI:';
+            deltaYLabelEl.textContent = activeMeasure === 'voltage' ? `ΔV${unitSuffix}:` : `ΔI${unitSuffix}:`;
         }
         if (a && b) {
             deltaTEl.textContent = `${fmt(Math.abs(b.x - a.x), 3)} ms`;
-            deltaYEl.textContent = `${fmt(Math.abs(b.y - a.y), 3)}`;
+            deltaYEl.textContent = `${fmt(Math.abs(b.y - a.y), 3)}${unitSuffix}`;
         } else {
             deltaTEl.textContent = '-';
             deltaYEl.textContent = '-';
