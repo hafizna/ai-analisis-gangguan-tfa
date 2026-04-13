@@ -570,7 +570,7 @@
 
 {% if analysis.waveform_data %}
 <!-- COMTRADE Explorer -->
-<div class="wave-shell">
+<div class="wave-shell" id="waveInteractiveShell">
     <div class="wave-head">
         <div>
             <div class="wave-title">COMTRADE Explorer — Trafo</div>
@@ -631,6 +631,34 @@
         <span id="peakResult"></span>
     </div>
     <div class="wave-hint" id="waveHint"></div>
+</div>
+{% if analysis.waveform_b64 %}
+<div id="waveFallbackBlock" style="display:none; grid-column:1/-1; background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-top:14px;">
+    <div style="padding:12px 20px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <div>
+            <div class="x-section-label" style="margin:0;">Fallback Waveform</div>
+            <div id="waveFallbackReason" style="font-size:11px; color:var(--text-muted); margin-top:4px;">
+                Viewer interaktif tidak tersedia. Menampilkan waveform statis sebagai fallback.
+            </div>
+        </div>
+        <div style="font-size:11px; color:var(--text-muted);">
+            Gambar ini setara dengan output PNG/PDF server-side.
+        </div>
+    </div>
+    <img src="data:image/png;base64,{{ analysis.waveform_b64 }}"
+         style="width:100%; display:block;" alt="Waveform COMTRADE Fallback">
+</div>
+{% endif %}
+{% elif analysis.waveform_b64 %}
+<div style="grid-column:1/-1; background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; overflow:hidden;">
+    <div style="padding:12px 20px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <div class="x-section-label" style="margin:0;">Waveform COMTRADE</div>
+        <div style="font-size:11px; color:var(--text-muted);">
+            Viewer interaktif tidak tersedia. Menampilkan waveform statis dari server.
+        </div>
+    </div>
+    <img src="data:image/png;base64,{{ analysis.waveform_b64 }}"
+         style="width:100%; display:block;" alt="Waveform COMTRADE">
 </div>
 {% endif %}
 {% endblock %}

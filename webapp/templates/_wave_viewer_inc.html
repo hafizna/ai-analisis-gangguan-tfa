@@ -3,12 +3,33 @@
 <script id="waveformData" type="application/json">{{ analysis.waveform_data | tojson }}</script>
 <script>
 (function() {
-    const dataEl = document.getElementById('waveformData');
-    if (!dataEl) return;
-    const wf = JSON.parse(dataEl.textContent || '{}');
-    const analogChannelsAll = Array.isArray(wf.channels) ? wf.channels : [];
-    const digitalChannelsAll = Array.isArray(wf.digital) ? wf.digital : [];
-    if (analogChannelsAll.length === 0 && digitalChannelsAll.length === 0) return;
+    const interactiveShell = document.getElementById('waveInteractiveShell');
+    const fallbackBlock = document.getElementById('waveFallbackBlock');
+    const fallbackReason = document.getElementById('waveFallbackReason');
+
+    function showWaveFallback(reason) {
+        if (interactiveShell) interactiveShell.style.display = 'none';
+        if (fallbackBlock) fallbackBlock.style.display = 'block';
+        if (fallbackReason && reason) fallbackReason.textContent = reason;
+    }
+
+    try {
+        const dataEl = document.getElementById('waveformData');
+        if (!dataEl) {
+            showWaveFallback('Data waveform interaktif tidak ditemukan. Menampilkan waveform statis.');
+            return;
+        }
+        const wf = JSON.parse(dataEl.textContent || '{}');
+        const analogChannelsAll = Array.isArray(wf.channels) ? wf.channels : [];
+        const digitalChannelsAll = Array.isArray(wf.digital) ? wf.digital : [];
+        if (analogChannelsAll.length === 0 && digitalChannelsAll.length === 0) {
+            showWaveFallback('Payload waveform interaktif kosong. Menampilkan waveform statis.');
+            return;
+        }
+        if (typeof Plotly === 'undefined') {
+            showWaveFallback('Library plot interaktif gagal dimuat. Menampilkan waveform statis.');
+            return;
+        }
 
     const voltageWrap = document.getElementById('waveVoltageWrap');
     const voltagePlot = document.getElementById('waveVoltagePlot');
@@ -990,7 +1011,10 @@
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 8000);
     }
-
+    } catch (err) {
+        console.error('Waveform viewer init failed', err);
+        showWaveFallback('Viewer interaktif gagal dimuat. Menampilkan waveform statis dari server.');
+    }
 })();
 </script>
 {% endif %}
