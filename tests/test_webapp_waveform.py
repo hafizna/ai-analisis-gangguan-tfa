@@ -276,6 +276,30 @@ def test_build_waveform_payload_filters_to_active_line(monkeypatch):
     assert "SPARE" not in names
 
 
+def test_build_waveform_payload_keeps_all_lines_when_activity_is_not_dominant(monkeypatch):
+    time_axis = np.arange(0.0, 0.010, 0.001)
+    record = SimpleNamespace(
+        time=time_axis,
+        analog_channels=[
+            _mk_analog("IR LOCAL 1", "IA", "current", [10, 12, 11, 15, 150, 145, 60, 14, 12, 11]),
+            _mk_analog("IS LOCAL 1", "IB", "current", [8, 9, 8, 10, 110, 108, 40, 9, 8, 8]),
+            _mk_analog("IT LOCAL 1", "IC", "current", [7, 8, 7, 9, 90, 88, 30, 8, 7, 7]),
+            _mk_analog("IR REMOTE 2", "IA", "current", [9, 10, 9, 12, 140, 138, 55, 10, 9, 9]),
+            _mk_analog("IS REMOTE 2", "IB", "current", [8, 8, 8, 9, 105, 103, 38, 8, 8, 8]),
+            _mk_analog("IT REMOTE 2", "IC", "current", [7, 7, 7, 8, 87, 86, 28, 7, 7, 7]),
+        ],
+        status_channels=[],
+    )
+    monkeypatch.setattr(webapp_app, "parse_comtrade", lambda _: record)
+
+    payload = webapp_app._build_waveform_payload("dummy.cfg", inception_ms=4.0, duration_ms=2.0)
+
+    names = [ch["name"] for ch in payload["channels"]]
+    assert payload["meta"]["selected_line_tag"] is None
+    assert "IR LOCAL 1" in names
+    assert "IR REMOTE 2" in names
+
+
 def test_build_waveform_payload_includes_transformer_currents(monkeypatch):
     time_axis = np.arange(0.0, 0.010, 0.001)
     record = SimpleNamespace(
@@ -304,3 +328,22 @@ def test_build_waveform_payload_includes_transformer_currents(monkeypatch):
     assert groups["LVS.Ia"] == "current_lv"
     assert groups["87T.ida"] == "current_diff"
     assert len(payload["digital"]) == 1
+
+
+def test_generic_current_channels_are_not_hidden_when_structured_channels_exist():
+    current_channels = [
+        {"name": "HVS.Ia", "group": "current_hv", "measurement": "current"},
+        {"name": "LVS.Ia", "group": "current_lv", "measurement": "current"},
+        {"name": "REMOTE BIAS", "group": "current_other", "measurement": "current"},
+    ]
+
+    generic = [ch for ch in current_channels if (ch.get("group") or "current_other") == "current_other"]
+    structured = any((ch.get("group") or "") != "current_other" for ch in current_channels)
+    lv_panel = [ch for ch in current_channels if (ch.get("group") or "current_other") in {"current_lv", "current_tv"}]
+    if not structured and generic:
+        lv_panel = generic
+    elif generic:
+        lv_panel = [*lv_panel, *generic]
+
+    assert structured is True
+    assert any(ch["name"] == "REMOTE BIAS" for ch in lv_panel)
