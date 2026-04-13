@@ -1611,7 +1611,11 @@ def _select_waveform_line_tag(analog_channels, status_channels, raw_t_ms, incept
             if rises:
                 status_scores[tag] = status_scores.get(tag, 0.0) + float(rises)
         if status_scores:
-            return max(status_scores.items(), key=lambda item: item[1])[0]
+            ranked = sorted(status_scores.items(), key=lambda item: item[1], reverse=True)
+            best_tag, best_score = ranked[0]
+            second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+            if best_score > 0 and (len(ranked) == 1 or best_score >= second_score * 1.5):
+                return best_tag
 
     activity_scores = {}
     for ch in phase_currents:
@@ -1630,7 +1634,11 @@ def _select_waveform_line_tag(analog_channels, status_channels, raw_t_ms, incept
         if segment.size:
             activity_scores[tag] = activity_scores.get(tag, 0.0) + float(np.max(np.abs(segment)))
     if activity_scores:
-        return max(activity_scores.items(), key=lambda item: item[1])[0]
+        ranked = sorted(activity_scores.items(), key=lambda item: item[1], reverse=True)
+        best_tag, best_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+        if best_score > 0 and (len(ranked) == 1 or best_score >= second_score * 1.25):
+            return best_tag
     return None
 
 

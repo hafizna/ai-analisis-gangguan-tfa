@@ -171,6 +171,12 @@
     if (!hasStructuredCurrent && genericCurrentChannels.length) {
         currentChannelSets.current_lv = genericCurrentChannels;
         currentStates.current_lv = buildState(genericCurrentChannels);
+    } else if (genericCurrentChannels.length) {
+        // Keep ambiguous current channels visible instead of hiding them entirely.
+        // This is useful for local/remote or vendor-specific labels that do not map
+        // cleanly into HV/LV/DIFF groups but still carry valid waveform information.
+        currentChannelSets.current_lv = [...currentChannelSets.current_lv, ...genericCurrentChannels];
+        currentStates.current_lv = buildState(currentChannelSets.current_lv);
     }
 
     function buildTraces(chs) {
