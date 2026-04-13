@@ -527,10 +527,18 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         # For transmission line recordings this typically means the DFR only captured
         # analog waveforms / generic trip outputs, not zone-specific relay signals.
         # Attempt waveform-based classification with a caveat.
-        _unknown_prot_caveat = (
+        _routing_caveat = (
             " | [CATATAN: Tipe proteksi tidak teridentifikasi dari sinyal digital — "
             "diklasifikasikan berdasarkan analisis gelombang arus/tegangan saja. "
             "Verifikasi manual diperlukan.]"
+        )
+    elif prot.primary_protection == ProtectionType.DIFFERENTIAL:
+        # 87L line differential is a valid transmission-line event, but we do not yet
+        # model the 87L logic itself. Fall back to waveform-based line analysis with a caveat.
+        _routing_caveat = (
+            " | [CATATAN: Rekaman menunjukkan proteksi diferensial saluran (87L) — "
+            "analisis berikut dihitung dari pola gelombang arus/tegangan, "
+            "bukan logika 87L khusus. Verifikasi manual diperlukan.]"
         )
     elif prot.primary_protection.name != "DISTANCE":
         raise ValueError(
@@ -538,7 +546,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             f"(only DISTANCE relay files are classified)"
         )
     else:
-        _unknown_prot_caveat = ""
+        _routing_caveat = ""
 
     feat = extract_distance_features(record, fault, prot)
     if feat is None:
@@ -565,7 +573,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             confidence=rule_result.confidence,
             tier=1,
             rule_name=rule_result.rule_name,
-            evidence=rule_result.evidence + _unknown_prot_caveat,
+            evidence=rule_result.evidence + _routing_caveat,
             recommendation=_tier1_recs.get(
                 rule_result.label,
                 "Kumpulkan data pendukung untuk menentukan penyebab gangguan."
@@ -596,7 +604,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
                 f"fault_count={row.get('fault_count', '?')}  |  "
                 f"Estimasi penyebab (heuristik): {likelihoods}"
-                + _unknown_prot_caveat
+                + _routing_caveat
             ),
             recommendation=_transient_recommendation(row),
             features=row,
@@ -630,7 +638,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                     f"Estimasi penyebab (heuristik): {likelihoods}  |  "
                     f"Catatan: karakteristik gelombang PETIR/Layang/Hewan/Benda Asing serupa "
                     f"— konfirmasi via data cuaca atau inspeksi lapangan."
-                    + _unknown_prot_caveat
+                    + _routing_caveat
                 ),
                 recommendation=_transient_recommendation(row),
                 features=row,
@@ -654,7 +662,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                     f"Estimasi penyebab (heuristik): {likelihoods}  |  "
                     f"Catatan: data latih non-PETIR terbatas — konfirmasi penyebab via "
                     f"data cuaca, CCTV, atau inspeksi lapangan."
-                    + _unknown_prot_caveat
+                    + _routing_caveat
                 ),
                 recommendation=_transient_recommendation(row),
                 features=row,
@@ -672,7 +680,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         rule_name="no_model",
         evidence=(
             "Tidak ada aturan Tier 1 yang cocok dan model ML belum tersedia — jalankan models/train.py"
-            + _unknown_prot_caveat
+            + _routing_caveat
         ),
         recommendation=(
             "Kumpulkan data pendukung (cuaca, CCTV, laporan patroli) "

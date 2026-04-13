@@ -1313,6 +1313,12 @@ def _waveform_raw_text(ch) -> str:
 def _infer_waveform_winding(ch) -> str | None:
     """Infer transformer winding tags from raw channel identifiers."""
     raw_text = _waveform_raw_text(ch)
+    if re.search(r"\b(?:HVS|HV SIDE|HIGH VOLTAGE SIDE)\b", raw_text):
+        return "HV/W1"
+    if re.search(r"\b(?:LVS|LV SIDE|LOW VOLTAGE SIDE)\b", raw_text):
+        return "LV/W2"
+    if re.search(r"\b(?:TVS|TERTIARY SIDE)\b", raw_text):
+        return "TV/W3"
     if re.search(r"\[[^\]]*-\s*1\]", raw_text):
         return "HV/W1"
     if re.search(r"\[[^\]]*-\s*2\]", raw_text):
@@ -1344,10 +1350,12 @@ def _infer_waveform_winding(ch) -> str | None:
 def _infer_waveform_family(ch) -> str | None:
     """Infer special current families such as differential and bias."""
     text = re.sub(r"[_:/\-\[\]\(\)]+", " ", _waveform_raw_text(ch))
-    if re.search(r"\b(DIFF|IDIFF|87T|OPERATE|OP)\b", text):
-        return "DIFF"
     if re.search(r"\b(RSTR|RESTRAINT|IRSTR|BIAS)\b", text):
         return "RESTRAINT"
+    if re.search(r"\b(IREST|IRESTR|I RESTR|I RESTRAINT)\b", text):
+        return "RESTRAINT"
+    if re.search(r"\b(IDIFF|IDIF|I DIFF|I DIFF OPERATE|DIFF|87T)\b", text):
+        return "DIFF"
     return None
 
 
@@ -1424,6 +1432,10 @@ def _infer_waveform_measurement(ch) -> str:
     raw_text = _waveform_raw_text(ch)
     if re.search(r"\b(?:FREQ|FREQUENCY)\b", raw_text):
         return "other"
+    if re.search(r"\b(?:IDIFF|IDIF|I[\s_\-]?DIFF|I[\s_\-]?RESTR(?:AINT)?|IREST|IRESTR|RSTR|RESTRAINT|BIAS)\b", raw_text):
+        return "current"
+    if re.search(r"\b87T\b", raw_text) and re.search(r"\bID[ABCN]\b", raw_text):
+        return "current"
     if re.search(r"\b(?:I[ABCN]|IN|I0|3I0|IDIFF|IDIF|DIFF|BIAS|RSTR|REST)\b", raw_text):
         return "current"
     if re.search(r"\b(?:V[ABCN]|VN|V0|VOLT|VX)\b", raw_text):
@@ -1953,7 +1965,7 @@ def browse():
 @app.route("/analyze-from-browse", methods=["POST"])
 def analyze_from_browse():
     cfg_path = request.form.get("cfg_path", "")
-    if not cfg_path or not Path(cfg_path).exists():
+    if not cfg_path:
         return jsonify({"error": "File tidak ditemukan"}), 404
 
     try:

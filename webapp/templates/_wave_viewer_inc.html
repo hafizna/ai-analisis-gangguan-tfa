@@ -6,7 +6,9 @@
     const dataEl = document.getElementById('waveformData');
     if (!dataEl) return;
     const wf = JSON.parse(dataEl.textContent || '{}');
-    if (!wf.channels || wf.channels.length === 0) return;
+    const analogChannelsAll = Array.isArray(wf.channels) ? wf.channels : [];
+    const digitalChannelsAll = Array.isArray(wf.digital) ? wf.digital : [];
+    if (analogChannelsAll.length === 0 && digitalChannelsAll.length === 0) return;
 
     const voltageWrap = document.getElementById('waveVoltageWrap');
     const voltagePlot = document.getElementById('waveVoltagePlot');
@@ -88,8 +90,8 @@
     bindOnce(printBtn, 'boundExport', printCombined);
     bindOnce(csvBtn, 'boundExport', exportCSV);
 
-    const voltageChannels = showVoltagePanel ? wf.channels.filter(ch => ch.measurement === 'voltage') : [];
-    const currentChannels = wf.channels.filter(ch => ch.measurement === 'current');
+    const voltageChannels = showVoltagePanel ? analogChannelsAll.filter(ch => ch.measurement === 'voltage') : [];
+    const currentChannels = analogChannelsAll.filter(ch => ch.measurement === 'current');
 
     function channelLabel(ch) {
         return ch.display_name || ch.canonical || ch.name || ch.id;

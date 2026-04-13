@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 from pathlib import Path
 import logging
+import os
 import re
 import shutil
 import tempfile
@@ -22,6 +23,28 @@ except ImportError:
 from .channel_normalizer import normalize_channel_name, detect_manufacturer
 
 logger = logging.getLogger(__name__)
+
+
+def _windows_long_path(path: str | Path) -> str:
+    """Return a Windows long-path-safe string when needed."""
+    raw = str(path)
+    if os.name != "nt":
+        return raw
+    if raw.startswith("\\\\?\\"):
+        return raw
+    if raw.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + raw.lstrip("\\")
+
+    abs_raw = os.path.abspath(raw)
+    if re.match(r"^[A-Za-z]:[\\/]", abs_raw):
+        return "\\\\?\\" + abs_raw.replace("/", "\\")
+    return raw
+
+
+def _path_exists(path: str | Path) -> bool:
+    """Path.exists() with a Windows long-path fallback."""
+    raw = str(path)
+    return Path(raw).exists() or Path(_windows_long_path(raw)).exists()
 
 
 @dataclass
@@ -93,9 +116,10 @@ def parse_comtrade(cfg_path: str, dat_path: Optional[str] = None) -> Optional[Co
         - Never crashes - returns None only for truly unreadable files
         - All warnings are logged and stored in record.warnings
     """
+    cfg_path = _windows_long_path(cfg_path)
     cfg_path_obj = Path(cfg_path)
 
-    if not cfg_path_obj.exists():
+    if not _path_exists(cfg_path):
         logger.error(f"CFG file not found: {cfg_path}")
         return None
 
@@ -128,7 +152,7 @@ def parse_comtrade(cfg_path: str, dat_path: Optional[str] = None) -> Optional[Co
             warnings.append("Primary COMTRADE parse failed - retrying with sanitized CFG")
             _load_with_sanitized_cfg(com, cfg_path_obj, dat_path)
 
-        if dat_path is None or not Path(dat_path).exists():
+        if dat_path is None or not _path_exists(dat_path):
             warnings.append("DAT file not found - metadata only")
 
         # Detect manufacturer
@@ -211,7 +235,7 @@ def _load_without_optional_sidecars(com: Comtrade, cfg_path: Path, dat_path: Opt
         shutil.copy2(cfg_path, tmp_cfg)
 
         tmp_dat = None
-        if dat_path and Path(dat_path).exists():
+        if dat_path and _path_exists(dat_path):
             tmp_dat = tmp_dir_path / Path(dat_path).name
             shutil.copy2(dat_path, tmp_dat)
 
@@ -260,7 +284,7 @@ def _load_with_sanitized_cfg(com: Comtrade, cfg_path: Path, dat_path: Optional[s
 
         tmp_cfg.write_text("\n".join(cfg_lines), encoding="utf-8")
 
-        if dat_path and Path(dat_path).exists():
+        if dat_path and _path_exists(dat_path):
             tmp_dat = tmp_dir_path / Path(dat_path).name
             shutil.copy2(dat_path, tmp_dat)
 
@@ -272,8 +296,8 @@ def _find_dat_file(cfg_path: Path) -> Optional[str]:
     # Try same stem with .dat extension
     for ext in ['.dat', '.DAT']:
         dat_candidate = cfg_path.with_suffix(ext)
-        if dat_candidate.exists():
-            return str(dat_candidate)
+        if _path_exists(dat_candidate):
+            return _windows_long_path(dat_candidate)
 
     logger.warning(f"No .dat file found for {cfg_path.name}")
     return None

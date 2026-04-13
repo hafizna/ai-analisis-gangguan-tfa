@@ -17,6 +17,59 @@ logger = logging.getLogger(__name__)
 _CHANNEL_MAPPINGS: Optional[dict] = None
 
 
+def _extract_protection_phase(raw_upper: str) -> Optional[str]:
+    """Extract phase tags from protection-analog labels such as IDA or phs A."""
+    patterns = (
+        r"\bPHS\s*([ABCN])\b",
+        r"\bPHASE\s*([ABCN])\b",
+        r"\bID([ABCN])\b",
+        r"\bIRST([ABCN])\b",
+        r"\bRSTR([ABCN])\b",
+        r"\bBIAS([ABCN])\b",
+        r"[_:\.\-\s]([ABCN])(?:$|[_:\.\-\s])",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw_upper)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _normalize_protection_analog_channel(raw_name: str, raw_upper: str) -> Optional[Dict[str, Optional[str]]]:
+    """
+    Recognize line/transformer differential analog channels that often use non-A units
+    such as pu, %, or In but still represent current-derived quantities.
+    """
+    text = re.sub(r"[_:/\-\[\]\(\)]+", " ", raw_upper)
+    phase = _extract_protection_phase(raw_upper)
+
+    if re.search(r"\b(?:HM2|H2|HM5|H5|HARM(?:ONIC)?)\b", text):
+        return None
+
+    if re.search(r"\b(?:IREST|IRESTR|I RESTR|I RESTRAINT|RSTR|RESTRAINT|BIAS)\b", text):
+        return {
+            "canonical_name": f"IREST_{phase}" if phase else raw_name,
+            "phase": phase,
+            "measurement": "current",
+        }
+
+    if re.search(r"\b(?:IDIFF|IDIF|I DIFF|I DIFF OPERATE|I DIFF PHS|87L I DIFF)\b", text):
+        return {
+            "canonical_name": f"IDIFF_{phase}" if phase else raw_name,
+            "phase": phase,
+            "measurement": "current",
+        }
+
+    if re.search(r"\b87T\b", text) and re.search(r"\bID[ABCN]\b", text):
+        return {
+            "canonical_name": f"IDIFF_{phase}" if phase else raw_name,
+            "phase": phase,
+            "measurement": "current",
+        }
+
+    return None
+
+
 def load_channel_mappings(config_path: Optional[str] = None) -> dict:
     """Load channel mappings from JSON file (cached)."""
     global _CHANNEL_MAPPINGS
@@ -90,6 +143,11 @@ def normalize_channel_name(raw_name: str, unit: str, manufacturer: str = "UNKNOW
     # Normalize inputs
     raw_upper = raw_name.strip().upper()
     unit_upper = unit.strip().upper()
+
+    protection_analog = _normalize_protection_analog_channel(raw_name, raw_upper)
+    if protection_analog is not None:
+        logger.debug(f"Protection analog match '{raw_name}' -> '{protection_analog['canonical_name']}'")
+        return protection_analog
 
     # Determine measurement type from unit
     if (
