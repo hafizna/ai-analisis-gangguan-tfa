@@ -266,16 +266,21 @@ def _check_transformer_diff_operate(
     Deliberately conservative — requires explicit transformer keywords
     to avoid false-matching line differential signals.
     """
+    line_diff_markers = [
+        '87L', 'LN1', 'LN2', 'LN3', 'LINE DIFF', 'LINE DIFFERENTIAL',
+        'REMOTE TRIP', 'I DIFF OPERATE',
+    ]
+
+    def _looks_like_line_diff(variants: list[str]) -> bool:
+        return any(marker in v for v in variants for marker in line_diff_markers)
+
     # Patterns that are specific to TRANSFORMER differential (not line 87L)
     xfmr_patterns = [
         '87T', 'TR_DIFF', 'XFMR_DIFF', 'TRANSFORMER DIFF',
         'TRDIFF', 'TR87', 'PDIF',          # ABB RET615 IEC 61850 PDIF LN
-        'DIFF OPERATE', 'DIFF_OPERATE',    # Siemens 7UT
-        'DIFF OP',                          # SEL-387: "DIFF OP" output
         'XFMR DIFF', 'XFMR_DIFF',          # GE T60: "XFMR DIFF OPERATE"
-        'TRAFO', 'TRANSF', 'TRF', 'TX',     # Generic transformer keywords
+        'TRAFO', 'TRANSF',                 # Generic transformer keywords
         '87T_ACT', 'DIFF_ACT',             # NARI PCS-985T
-        'IDIFF', 'IDIF',                    # Some relays label differential as IDIFF
     ]
     # Transformer-only hints that are unlikely for line differential
     xfmr_only_hints = [
@@ -290,12 +295,15 @@ def _check_transformer_diff_operate(
         for key in (
             '7UT', 'RET', 'P64', 'P643', 'SEL-387', 'SEL387',
             'T60', 'PCS-985', 'PCS985', 'MICOM', 'TRAFO',
+            'TRANSFORMER', 'XFMR',
         )
     )
 
     # First pass: explicit 87T / transformer-labeled differential operate
     for name in status_names:
         variants = _name_variants(name)
+        if _looks_like_line_diff(variants):
+            continue
         has_xfmr = any(p in v for v in variants for p in xfmr_patterns)
         has_operate = any(k in v for v in variants for k in operate_keywords)
 
@@ -308,6 +316,8 @@ def _check_transformer_diff_operate(
     # Second pass: REF / LV / HV indicators combined with operate = transformer event
     for name in status_names:
         variants = _name_variants(name)
+        if _looks_like_line_diff(variants):
+            continue
         has_xfmr_hint = any(h in v for v in variants for h in xfmr_only_hints)
         has_operate = any(k in v for v in variants for k in operate_keywords)
         if has_xfmr_hint and has_operate:
@@ -322,6 +332,8 @@ def _check_transformer_diff_operate(
         generic_diff_patterns = ['DIFF', 'DIFFERENTIAL', 'IDIFF', 'IDIF']
         for name in status_names:
             variants = _name_variants(name)
+            if _looks_like_line_diff(variants):
+                continue
             has_diff = any(p in v for v in variants for p in generic_diff_patterns)
             has_operate = any(k in v for v in variants for k in operate_keywords)
             if has_diff and has_operate:

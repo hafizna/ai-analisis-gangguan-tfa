@@ -274,3 +274,33 @@ def test_build_waveform_payload_filters_to_active_line(monkeypatch):
     assert all("PBLGA 2" not in name for name in names)
     assert all("Freq:" not in name for name in names)
     assert "SPARE" not in names
+
+
+def test_build_waveform_payload_includes_transformer_currents(monkeypatch):
+    time_axis = np.arange(0.0, 0.010, 0.001)
+    record = SimpleNamespace(
+        time=time_axis,
+        analog_channels=[
+            _mk_analog("HVS.Ia", "IA", "current", [10, 11, 12, 50, 45, 20, 12, 11, 10, 10]),
+            _mk_analog("HVS.Ib", "IB", "current", [9, 10, 11, 40, 36, 18, 11, 10, 9, 9]),
+            _mk_analog("HVS.Ic", "IC", "current", [8, 9, 10, 35, 30, 16, 10, 9, 8, 8]),
+            _mk_analog("LVS.Ia", "IA", "current", [8, 8, 9, 30, 25, 14, 9, 8, 8, 8]),
+            _mk_analog("LVS.Ib", "IB", "current", [7, 7, 8, 25, 21, 12, 8, 7, 7, 7]),
+            _mk_analog("LVS.Ic", "IC", "current", [7, 7, 7, 20, 18, 11, 7, 7, 7, 7]),
+            _mk_analog("87T.ida", "IDIFF_A", "current", [0.1, 0.1, 0.2, 0.8, 0.7, 0.3, 0.2, 0.1, 0.1, 0.1], unit="pu"),
+            _mk_analog("87T.idb", "IDIFF_B", "current", [0.1, 0.1, 0.2, 0.7, 0.6, 0.3, 0.2, 0.1, 0.1, 0.1], unit="pu"),
+            _mk_analog("87T.idc", "IDIFF_C", "current", [0.1, 0.1, 0.2, 0.6, 0.5, 0.3, 0.2, 0.1, 0.1, 0.1], unit="pu"),
+        ],
+        status_channels=[
+            _mk_status("87T.Op_Inst", [0, 0, 0, 1, 1, 1, 0, 0, 0, 0]),
+        ],
+    )
+    monkeypatch.setattr(webapp_app, "parse_comtrade", lambda _: record)
+
+    payload = webapp_app._build_waveform_payload("dummy.cfg", inception_ms=3.0, duration_ms=2.0)
+
+    groups = {ch["name"]: ch["group"] for ch in payload["channels"]}
+    assert groups["HVS.Ia"] == "current_hv"
+    assert groups["LVS.Ia"] == "current_lv"
+    assert groups["87T.ida"] == "current_diff"
+    assert len(payload["digital"]) == 1

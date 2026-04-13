@@ -12,6 +12,7 @@ import tempfile
 from core.comtrade_parser import parse_comtrade, ComtradeRecord
 from core.channel_normalizer import normalize_channel_name, detect_manufacturer
 from core.protection_router import determine_protection, ProtectionType
+from models.predict import classify_file
 
 
 class TestChannelNormalization:
@@ -64,6 +65,24 @@ class TestChannelNormalization:
         result = normalize_channel_name("WEIRD_CHANNEL_123", "kV", "UNKNOWN")
         assert result['canonical_name'] == "WEIRD_CHANNEL_123"  # Should keep raw name
         assert result['phase'] is None
+
+    def test_87l_diff_percent_channel_maps_as_current(self):
+        result = normalize_channel_name("Ln1:87L:I-DIFF:I diff.:phs A", "%", "SIEMENS")
+        assert result['measurement'] == "current"
+        assert result['phase'] == "A"
+        assert result['canonical_name'] == "IDIFF_A"
+
+    def test_87l_restraint_percent_channel_maps_as_current(self):
+        result = normalize_channel_name("Ln1:87L:I-DIFF:I restr.:phs B", "%", "SIEMENS")
+        assert result['measurement'] == "current"
+        assert result['phase'] == "B"
+        assert result['canonical_name'] == "IREST_B"
+
+    def test_87t_diff_pu_channel_maps_as_current(self):
+        result = normalize_channel_name("87T.ida", "pu", "UNKNOWN")
+        assert result['measurement'] == "current"
+        assert result['phase'] == "A"
+        assert result['canonical_name'] == "IDIFF_A"
 
 
 class TestManufacturerDetection:
@@ -170,6 +189,28 @@ def test_transformer_diff_real_file_routes_to_87t():
     prot = determine_protection(record)
     assert prot.primary_protection == ProtectionType.TRANSFORMER_DIFF
     assert prot.classifiable is True
+
+
+def test_line_diff_real_file_does_not_route_to_87t():
+    root = Path(__file__).resolve().parents[2]
+    cfg_path = root / "raw_data" / "UPT PURWOKERTO" / "2024" / "02. FEBRUARI" / "06. 11022024 SUTT BREBES-KANCI #1 (17.20)_PETIR" / "RECLOSE KNCI-BREBES 1 (11 FEB 2024)" / "RECLOSE KNCI-BREBES 1 (11 FEB 2024)" / "REKAMAN DFR" / "GI KANCI" / "BREBES 1" / "BREBES 1.CFG"
+    record = parse_comtrade(str(cfg_path))
+    assert record is not None
+    assert any("87L" in ch.name for ch in record.status_channels)
+
+    prot = determine_protection(record)
+    assert prot.primary_protection == ProtectionType.DIFFERENTIAL
+
+
+def test_line_diff_real_file_falls_back_to_line_analysis():
+    root = Path(__file__).resolve().parents[2]
+    cfg_path = root / "raw_data" / "UPT PURWOKERTO" / "2024" / "02. FEBRUARI" / "06. 11022024 SUTT BREBES-KANCI #1 (17.20)_PETIR" / "RECLOSE KNCI-BREBES 1 (11 FEB 2024)" / "RECLOSE KNCI-BREBES 1 (11 FEB 2024)" / "REKAMAN DFR" / "GI KANCI" / "BREBES 1" / "BREBES 1.CFG"
+
+    result = classify_file(str(cfg_path))
+
+    assert result.event_type == "LINE"
+    assert "proteksi diferensial saluran (87L)" in result.evidence
+    assert result.label != "GANGGUAN INTERNAL TRAFO"
 
 
 if __name__ == "__main__":

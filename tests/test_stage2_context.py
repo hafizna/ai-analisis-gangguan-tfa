@@ -156,6 +156,18 @@ class TestProtectionRouterGeneral:
         prot = determine_protection(record)
         assert prot.primary_protection == ProtectionType.DIFFERENTIAL
 
+    def test_ln1_87l_idiff_operate_does_not_route_transformer(self):
+        """Line differential IDIFF signals must stay on the 87L path."""
+        record = MockRecord(
+            rec_dev_id="7SA522",
+            status_channels=_make_status(
+                ["Ln1:87L:I-DIFF:Operate:general"],
+                triggered=True,
+            ),
+        )
+        prot = determine_protection(record)
+        assert prot.primary_protection == ProtectionType.DIFFERENTIAL
+
 
 # ---------------------------------------------------------------------------
 # Transformer relay family detection
