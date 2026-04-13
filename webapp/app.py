@@ -1664,19 +1664,35 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
         t0 = float(raw_t_ms[0])
     t_ms = raw_t_ms - t0
 
+    max_analog = 24
+    max_digital = 16
+
     analog_all = [
         ch for ch in record.analog_channels
         if len(ch.samples) == total_samples and not _waveform_should_skip_channel(ch)
     ]
-    selected_line_tag = _select_waveform_line_tag(
+    digital_all = [ch for ch in record.status_channels if len(ch.samples) == total_samples]
+    digital_active_unfiltered = [ch for ch in digital_all if len(np.unique(ch.samples)) > 1]
+
+    selected_line_tag = None
+    candidate_line_tag = _select_waveform_line_tag(
         analog_all,
         getattr(record, "status_channels", []),
         raw_t_ms,
         float(inception_ms or 0.0),
     )
-    if selected_line_tag:
+    should_focus_single_tag = (
+        candidate_line_tag is not None
+        and (len(analog_all) > max_analog or len(digital_active_unfiltered) > max_digital)
+    )
+    if should_focus_single_tag:
+        selected_line_tag = candidate_line_tag
         analog_all = [
             ch for ch in analog_all
+            if (tag := _extract_waveform_line_tag(getattr(ch, "name", ""))) in {None, selected_line_tag}
+        ]
+        digital_all = [
+            ch for ch in digital_all
             if (tag := _extract_waveform_line_tag(getattr(ch, "name", ""))) in {None, selected_line_tag}
         ]
     duplicate_canonicals = Counter(
@@ -1685,18 +1701,10 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
         if _s(ch.canonical_name, "").strip()
     )
     analog_sorted = sorted(analog_all, key=_waveform_priority_key)
-    max_analog = 24
     analog_chs = analog_sorted[:max_analog]
     analog_truncated = len(analog_sorted) > max_analog
 
-    digital_all = [ch for ch in record.status_channels if len(ch.samples) == total_samples]
-    if selected_line_tag:
-        digital_all = [
-            ch for ch in digital_all
-            if (tag := _extract_waveform_line_tag(getattr(ch, "name", ""))) in {None, selected_line_tag}
-        ]
     digital_active = [ch for ch in digital_all if len(np.unique(ch.samples)) > 1]
-    max_digital = 16
     digital_chs = digital_active[:max_digital]
     digital_truncated = len(digital_active) > max_digital
 

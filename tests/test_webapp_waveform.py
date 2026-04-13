@@ -242,7 +242,7 @@ def test_recalculate_scales_relative_to_hidden_baseline_not_absolute(monkeypatch
     assert updated["ratio_override_active"] is True
 
 
-def test_build_waveform_payload_filters_to_active_line(monkeypatch):
+def test_build_waveform_payload_does_not_force_active_line_when_payload_is_small(monkeypatch):
     time_axis = np.arange(0.0, 0.010, 0.001)
     record = SimpleNamespace(
         time=time_axis,
@@ -268,10 +268,11 @@ def test_build_waveform_payload_filters_to_active_line(monkeypatch):
     payload = webapp_app._build_waveform_payload("dummy.cfg", inception_ms=4.0, duration_ms=2.0)
 
     names = [ch["name"] for ch in payload["channels"]]
-    assert payload["meta"]["selected_line_tag"] == "1"
+    assert payload["meta"]["selected_line_tag"] is None
     assert "VR PBLGA 1" in names
     assert "IR PBLGA 1" in names
-    assert all("PBLGA 2" not in name for name in names)
+    assert "VR PBLGA 2" in names
+    assert "IR PBLGA 2" in names
     assert all("Freq:" not in name for name in names)
     assert "SPARE" not in names
 
@@ -298,6 +299,39 @@ def test_build_waveform_payload_keeps_all_lines_when_activity_is_not_dominant(mo
     assert payload["meta"]["selected_line_tag"] is None
     assert "IR LOCAL 1" in names
     assert "IR REMOTE 2" in names
+
+
+def test_build_waveform_payload_caps_large_payload_without_forcing_line_tag(monkeypatch):
+    time_axis = np.arange(0.0, 0.010, 0.001)
+    analog_channels = []
+    status_channels = []
+
+    for idx in range(1, 4):
+        analog_channels.extend([
+            _mk_analog(f"VR PBLGA {idx}", "VA", "voltage", [80, 81, 79, 82, 60 + idx, 55 + idx, 58, 80, 81, 80], unit="kV"),
+            _mk_analog(f"VS PBLGA {idx}", "VB", "voltage", [81, 82, 80, 83, 61 + idx, 56 + idx, 59, 81, 82, 81], unit="kV"),
+            _mk_analog(f"VT PBLGA {idx}", "VC", "voltage", [82, 83, 81, 84, 62 + idx, 57 + idx, 60, 82, 83, 82], unit="kV"),
+            _mk_analog(f"IR PBLGA {idx}", "IA", "current", [10, 12, 11, 15, 300 if idx == 1 else 40, 250 if idx == 1 else 35, 60 if idx == 1 else 14, 12, 11, 10]),
+            _mk_analog(f"IS PBLGA {idx}", "IB", "current", [8, 9, 8, 10, 200 if idx == 1 else 30, 170 if idx == 1 else 26, 40 if idx == 1 else 12, 9, 8, 8]),
+            _mk_analog(f"IT PBLGA {idx}", "IC", "current", [7, 8, 7, 9, 180 if idx == 1 else 28, 150 if idx == 1 else 24, 30 if idx == 1 else 11, 8, 7, 7]),
+            _mk_analog(f"IN PBLGA {idx}", "IN", "current", [1, 1, 1, 1, 50 if idx == 1 else 5, 45 if idx == 1 else 4, 8 if idx == 1 else 2, 1, 1, 1]),
+        ])
+        status_channels.append(_mk_status(f"LP OPRT PBLGA {idx}", [0, 0, 0, 0, 1 if idx == 1 else 0, 1 if idx == 1 else 0, 1 if idx == 1 else 0, 0, 0, 0]))
+
+    record = SimpleNamespace(
+        time=time_axis,
+        analog_channels=analog_channels,
+        status_channels=status_channels,
+    )
+    monkeypatch.setattr(webapp_app, "parse_comtrade", lambda _: record)
+
+    payload = webapp_app._build_waveform_payload("dummy.cfg", inception_ms=4.0, duration_ms=2.0)
+
+    names = [ch["name"] for ch in payload["channels"]]
+    assert payload["meta"]["selected_line_tag"] is None
+    assert len(payload["channels"]) <= 24
+    assert "IR PBLGA 1" in names
+    assert any("PBLGA 2" in name for name in names)
 
 
 def test_build_waveform_payload_includes_transformer_currents(monkeypatch):
