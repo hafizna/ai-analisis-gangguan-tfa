@@ -1430,15 +1430,20 @@ def _infer_waveform_measurement(ch) -> str:
     if measurement in {"current", "voltage"}:
         return measurement
     raw_text = _waveform_raw_text(ch)
-    if re.search(r"\b(?:FREQ|FREQUENCY)\b", raw_text):
+    # Normalize separators so word-boundary regexes work on names like "87T.Ida_Hm2_Pcnt"
+    norm_text = re.sub(r"[_\-\.:/\[\]\(\)]+", " ", raw_text)
+    if re.search(r"\b(?:FREQ|FREQUENCY)\b", norm_text):
         return "other"
-    if re.search(r"\b(?:IDIFF|IDIF|I[\s_\-]?DIFF|I[\s_\-]?RESTR(?:AINT)?|IREST|IRESTR|RSTR|RESTRAINT|BIAS)\b", raw_text):
+    if re.search(r"\b(?:IDIFF|IDIF|I[\s_\-]?DIFF|I[\s_\-]?RESTR(?:AINT)?|IREST|IRESTR|RSTR|RESTRAINT|BIAS)\b", norm_text):
         return "current"
-    if re.search(r"\b87T\b", raw_text) and re.search(r"\bID[ABCN]\b", raw_text):
+    if re.search(r"\b87T\b", norm_text) and re.search(r"\bID[ABCN]\b", norm_text):
         return "current"
-    if re.search(r"\b(?:I[ABCN]|IN|I0|3I0|IDIFF|IDIF|DIFF|BIAS|RSTR|REST)\b", raw_text):
+    if re.search(r"\b(?:I[ABCN]|IN|I0|3I0|IDIFF|IDIF|DIFF|BIAS|RSTR|REST)\b", norm_text):
         return "current"
-    if re.search(r"\b(?:V[ABCN]|VN|V0|VOLT|VX)\b", raw_text):
+    # Zero-sequence / residual / REF protection currents (e.g. HVS.64REF.3i0d, 3i0Ext)
+    if re.search(r"\b(?:3I0|3IO|REF|64REF)\b", norm_text):
+        return "current"
+    if re.search(r"\b(?:V[ABCN]|VN|V0|VOLT|VX)\b", norm_text):
         return "voltage"
     return measurement or "other"
 
