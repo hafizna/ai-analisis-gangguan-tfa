@@ -1726,6 +1726,9 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
         y = np.array(ch.samples, dtype=float)
         def _safe_stat(val):
             return float(val) if np.isfinite(val) else 0.0
+        def _nan_safe_list(arr):
+            """Convert numpy array to list, replacing NaN/Inf with None (JSON null)."""
+            return [None if not np.isfinite(v) else float(v) for v in arr]
         x_ds, y_ds = _downsample_minmax(t_ms, y, target_points=4000)
 
         channels.append({
@@ -1741,8 +1744,8 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
             "unit": ch.unit,
             "color": color,
             "line_dash": line_dash,
-            "x": x_ds.tolist(),
-            "y": y_ds.tolist(),
+            "x": _nan_safe_list(x_ds),
+            "y": _nan_safe_list(y_ds),
             "min": _safe_stat(np.min(y)) if y.size else 0.0,
             "max": _safe_stat(np.max(y)) if y.size else 0.0,
             "rms": _safe_stat(np.sqrt(np.mean(y ** 2))) if y.size else 0.0,
@@ -1755,23 +1758,27 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
         digital.append({
             "id": ch.id,
             "name": ch.name,
-            "x": x_ds.tolist(),
-            "y": y_ds.tolist(),
+            "x": _nan_safe_list(x_ds),
+            "y": [int(v) for v in y_ds],
             "events": int(len(np.where(np.diff(y) != 0)[0])) if y.size else 0,
         })
 
     # Estimate sampling rate from time axis
     if total_samples > 1:
         dt = np.mean(np.diff(t_ms)) / 1000.0
-        sampling_hz = float(1.0 / dt) if dt > 0 else 0.0
+        sampling_hz = float(1.0 / dt) if (dt > 0 and np.isfinite(dt)) else 0.0
     else:
         sampling_hz = 0.0
+
+    dur_ms = float(t_ms[-1] - t_ms[0]) if total_samples else 0.0
+    if not np.isfinite(dur_ms):
+        dur_ms = 0.0
 
     return {
         "meta": {
             "total_samples": total_samples,
             "sampling_hz": sampling_hz,
-            "duration_ms": float(t_ms[-1] - t_ms[0]) if total_samples else 0.0,
+            "duration_ms": dur_ms,
             "analog_total": len(analog_all),
             "digital_total": len(digital_all),
             "analog_truncated": analog_truncated,
