@@ -67,6 +67,15 @@ def _normalize_protection_analog_channel(raw_name: str, raw_upper: str) -> Optio
             "measurement": "current",
         }
 
+    # Zero-sequence / residual / REF protection currents (e.g. HVS.64REF.3i0d, 3i0Ext)
+    # Units 'In' (per-unit nominal) or standard 'A' — always represent current.
+    if re.search(r"\b(?:3I0|3IO|64REF)\b", text):
+        return {
+            "canonical_name": "IN",
+            "phase": "N",
+            "measurement": "current",
+        }
+
     return None
 
 
@@ -158,7 +167,7 @@ def normalize_channel_name(raw_name: str, unit: str, manufacturer: str = "UNKNOW
         measurement = "voltage"
     elif (
         unit_upper.startswith("I/")
-        or unit_upper in {"KA", "A"}
+        or unit_upper in {"KA", "A", "IN", "PU", "P.U."}  # 'In' = per-unit nominal current (COMTRADE standard)
         or re.search(r"\b(?:KA|A)\b", unit_upper)
     ):
         measurement = "current"

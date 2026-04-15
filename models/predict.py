@@ -411,6 +411,16 @@ def _classify_transformer_file(record, prot, fault, soe, cfg_path: str) -> "Clas
         row['station_name']    = getattr(record, 'station_name', '')
         row['relay_model']     = getattr(record, 'rec_dev_id', '')
 
+        # Copy fault timing from FaultEvent so waveform viewer can auto-zoom to the fault window.
+        # Without this, fault_inception_ms stays None and the Focus Fault button doesn't work.
+        if fault is not None:
+            row['fault_inception_ms'] = round(float(fault.inception_time) * 1000.0, 2)
+            clearing = getattr(fault, 'clearing_time', None)
+            if clearing is not None:
+                row['fault_clearance_ms'] = round(float(clearing) * 1000.0, 2)
+            elif fault.duration_ms and fault.duration_ms > 0:
+                row['fault_clearance_ms'] = row['fault_inception_ms'] + fault.duration_ms
+
         result = ClassificationResult(
             label=label,
             confidence=xfmr_result.confidence,

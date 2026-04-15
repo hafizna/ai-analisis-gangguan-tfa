@@ -7,10 +7,15 @@
     const fallbackBlock = document.getElementById('waveFallbackBlock');
     const fallbackReason = document.getElementById('waveFallbackReason');
 
-    function showWaveFallback(reason) {
+    function showWaveFallback(reason, detail) {
         if (interactiveShell) interactiveShell.style.display = 'none';
         if (fallbackBlock) fallbackBlock.style.display = 'block';
-        if (fallbackReason && reason) fallbackReason.textContent = reason;
+        if (fallbackReason) {
+            const parts = [];
+            if (reason) parts.push(reason);
+            if (detail) parts.push(`Detail: ${detail}`);
+            fallbackReason.textContent = parts.join(' ');
+        }
     }
 
     try {
@@ -27,7 +32,7 @@
             return;
         }
         if (typeof Plotly === 'undefined') {
-            showWaveFallback('Library plot interaktif gagal dimuat. Menampilkan waveform statis.');
+            showWaveFallback('Library plot interaktif gagal dimuat. Menampilkan waveform statis.', 'Objek Plotly tidak tersedia di browser.');
             return;
         }
 
@@ -1019,7 +1024,10 @@
     }
     } catch (err) {
         console.error('Waveform viewer init failed', err);
-        showWaveFallback('Viewer interaktif gagal dimuat. Menampilkan waveform statis dari server.');
+        showWaveFallback(
+            'Viewer interaktif gagal dimuat. Menampilkan waveform statis dari server.',
+            err && err.message ? err.message : String(err || 'Unknown error')
+        );
     }
 })();
 </script>
