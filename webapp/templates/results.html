@@ -100,49 +100,58 @@
 .dur-transien { background: rgba(245,158,11,0.15); color: #f59e0b; }
 .dur-permanen { background: rgba(239,68,68,0.15);  color: #ef4444; }
 
-/* ── SOE ─────────────────────────────────────────────────────── */
-.soe-wrap { max-height: 260px; overflow-y: auto; }
+/* ── SOE full-width ──────────────────────────────────────────── */
+.soe-full { grid-column: 1 / -1; }
+.soe-cols { column-count: 2; column-gap: 24px; }
+@media (max-width: 900px) { .soe-cols { column-count: 1; } }
 .soe-row {
     display: flex; align-items: center; gap: 8px;
     padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
-    font-size: 12px;
+    font-size: 12px; break-inside: avoid;
 }
 .soe-row:last-child { border-bottom: none; }
-.soe-num  { color: #475569; width: 20px; flex-shrink: 0; font-size: 10px; }
-.soe-time { color: #60a5fa; font-family: monospace; width: 72px; flex-shrink: 0; font-size: 11px; }
+.soe-num  { color: #475569; width: 22px; flex-shrink: 0; font-size: 10px; font-variant-numeric: tabular-nums; }
+.soe-time { color: #60a5fa; font-family: monospace; width: 76px; flex-shrink: 0; font-size: 11px; }
 .soe-ch   { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.soe-state-on  { font-size: 10px; font-weight: 700; color: #10b981; width: 30px; text-align: right; flex-shrink: 0; }
-.soe-state-off { font-size: 10px; font-weight: 700; color: #ef4444; width: 30px; text-align: right; flex-shrink: 0; }
+.soe-state-on  { font-size: 10px; font-weight: 700; color: #10b981; width: 34px; text-align: right; flex-shrink: 0; }
+.soe-state-off { font-size: 10px; font-weight: 700; color: #ef4444; width: 34px; text-align: right; flex-shrink: 0; }
+.soe-row[data-cat="trip"]   .soe-ch { color: #ef4444; }
+.soe-row[data-cat="ar"]     .soe-ch { color: #f59e0b; }
+.soe-row[data-cat="pickup"] .soe-ch { color: #60a5fa; }
 
-/* ── Right panel: parameter grid ────────────────────────────── */
-.param-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* ── Right panel: parameter grid (compact) ───────────────────── */
+.param-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .param-box {
     background: var(--card-bg); border: 1px solid var(--border);
-    border-radius: 10px; padding: 14px 16px;
+    border-radius: 8px; padding: 10px 12px;
 }
 .param-box label {
     font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 4px;
+    text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 3px;
 }
-.param-val  { font-size: 20px; font-weight: 800; color: var(--text); }
-.param-unit { font-size: 11px; color: var(--text-muted); margin-left: 3px; }
-.param-sub  { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.param-val  { font-size: 15px; font-weight: 800; color: var(--text); }
+.param-unit { font-size: 11px; color: var(--text-muted); margin-left: 2px; }
+.param-sub  { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
 
-/* ── Symmetrical components ──────────────────────────────────── */
-.sym-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-.sym-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: center; }
-.sym-box label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 4px; }
-.sym-val { font-size: 16px; font-weight: 800; color: var(--accent); }
+/* ── Symmetrical components (inline with ratios) ─────────────── */
+.sym-row { display: grid; grid-template-columns: repeat(3,1fr) auto; gap: 6px; align-items: center; }
+.sym-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; text-align: center; }
+.sym-box label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 2px; }
+.sym-val { font-size: 13px; font-weight: 800; color: var(--accent); }
 .sym-unit { font-size: 10px; color: var(--text-muted); }
-.sym-ratios { display: flex; gap: 20px; }
-.sym-ratio-item { font-size: 13px; color: var(--text-muted); }
-.sym-ratio-item strong { color: var(--text); font-weight: 800; font-size: 18px; }
+.sym-ratios-inline {
+    display: flex; flex-direction: column; gap: 4px;
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; white-space: nowrap;
+}
+.sym-ratio-item { font-size: 11px; color: var(--text-muted); }
+.sym-ratio-item strong { color: var(--text); font-weight: 800; font-size: 13px; }
 
-/* ── Impedance grid ──────────────────────────────────────────── */
-.imp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.imp-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-.imp-box label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 4px; }
-.imp-val { font-size: 17px; font-weight: 800; color: #60a5fa; }
+/* ── Impedance grid (4 cols compact) ────────────────────────── */
+.imp-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; }
+.imp-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; }
+.imp-box label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 2px; }
+.imp-val { font-size: 14px; font-weight: 800; color: #60a5fa; }
 .imp-unit { font-size: 10px; color: var(--text-muted); }
 
 /* ── Description ─────────────────────────────────────────────── */
@@ -593,28 +602,6 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         </div>
     </div>
 
-    <!-- SOE -->
-    {% if analysis.soe %}
-    <div class="r-card">
-        <div class="r-section-label">Urutan Event Digital (SOE)</div>
-        <div class="soe-wrap">
-            {% for ev in analysis.soe %}
-            <div class="soe-row">
-                <span class="soe-num">{{ loop.index }}.</span>
-                <span class="soe-time">
-                    {% if ev.rel_ms >= 0 %}+{{ "%.2f"|format(ev.rel_ms) }}{% else %}{{ "%.2f"|format(ev.rel_ms) }}{% endif %} ms
-                </span>
-                <span class="soe-ch" title="{{ ev.channel }}">{{ ev.channel }}</span>
-                {% if ev.state == 1 %}
-                    <span class="soe-state-on">ON ▲</span>
-                {% else %}
-                    <span class="soe-state-off">OFF ▼</span>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
 
 </div>
 
@@ -717,53 +704,35 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         </div>
     </div>
 
-    <!-- Symmetrical components -->
-    {% if analysis.i1_magnitude_a > 0 %}
-    <div class="r-card">
+    <!-- Symmetrical components + Impedance compact -->
+    {% if analysis.i1_magnitude_a > 0 or analysis.z_magnitude_ohms > 0 %}
+    <div class="r-card" style="padding:12px 14px;">
+        {% if analysis.i1_magnitude_a > 0 %}
         <div class="r-section-label">Komponen Simetris</div>
-        <div class="sym-grid">
+        <div class="sym-row" style="margin-bottom:8px;">
             <div class="sym-box">
                 <label>I<sub>1</sub> (+)</label>
-                <div>
-                    <span class="sym-val" id="disp-i1" data-val="{{ "%.2f"|format(analysis.i1_magnitude_a) }}">{{ "%.2f"|format(analysis.i1_magnitude_a) }}</span>
-                    <span class="sym-unit"> A</span>
-                </div>
+                <span class="sym-val" id="disp-i1" data-val="{{ "%.2f"|format(analysis.i1_magnitude_a) }}">{{ "%.2f"|format(analysis.i1_magnitude_a) }}</span>
+                <span class="sym-unit"> A</span>
             </div>
             <div class="sym-box">
                 <label>I<sub>2</sub> (-)</label>
-                <div>
-                    <span class="sym-val" id="disp-i2" data-val="{{ "%.2f"|format(analysis.i2_magnitude_a) }}">{{ "%.2f"|format(analysis.i2_magnitude_a) }}</span>
-                    <span class="sym-unit"> A</span>
-                </div>
+                <span class="sym-val" id="disp-i2" data-val="{{ "%.2f"|format(analysis.i2_magnitude_a) }}">{{ "%.2f"|format(analysis.i2_magnitude_a) }}</span>
+                <span class="sym-unit"> A</span>
             </div>
             <div class="sym-box">
                 <label>I<sub>0</sub> (0)</label>
-                <div>
-                    <span class="sym-val" id="disp-i0" data-val="{{ "%.2f"|format(analysis.i0_magnitude_a) }}">{{ "%.2f"|format(analysis.i0_magnitude_a) }}</span>
-                    <span class="sym-unit"> A</span>
-                </div>
+                <span class="sym-val" id="disp-i0" data-val="{{ "%.2f"|format(analysis.i0_magnitude_a) }}">{{ "%.2f"|format(analysis.i0_magnitude_a) }}</span>
+                <span class="sym-unit"> A</span>
+            </div>
+            <div class="sym-ratios-inline">
+                <div class="sym-ratio-item">I₂/I₁: <strong>{% if analysis.i1_magnitude_a > 0 %}<span id="disp-i2-i1" data-val="{{ "%.3f"|format(analysis.i2_magnitude_a / analysis.i1_magnitude_a) }}">{{ "%.3f"|format(analysis.i2_magnitude_a / analysis.i1_magnitude_a) }}</span>{% else %}—{% endif %}</strong></div>
+                <div class="sym-ratio-item">I₀/I₁: <strong><span id="disp-i0-i1" data-val="{{ "%.3f"|format(analysis.i0_i1_ratio) }}">{{ "%.3f"|format(analysis.i0_i1_ratio) }}</span></strong></div>
             </div>
         </div>
-        <div class="sym-ratios">
-            <div class="sym-ratio-item">
-                I<sub>2</sub>/I<sub>1</sub>: <strong>
-                    {% if analysis.i1_magnitude_a > 0 %}<span id="disp-i2-i1" data-val="{{ "%.3f"|format(analysis.i2_magnitude_a / analysis.i1_magnitude_a) }}">{{ "%.3f"|format(analysis.i2_magnitude_a / analysis.i1_magnitude_a) }}</span>{% else %}—{% endif %}
-                </strong>
-            </div>
-            <div class="sym-ratio-item">
-                I<sub>0</sub>/I<sub>1</sub>: <strong><span id="disp-i0-i1" data-val="{{ "%.3f"|format(analysis.i0_i1_ratio) }}">{{ "%.3f"|format(analysis.i0_i1_ratio) }}</span></strong>
-            </div>
-        </div>
-        <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
-            Rasio I<sub>2</sub>/I<sub>1</sub> dan I<sub>0</sub>/I<sub>1</sub> tidak berubah saat koreksi CT karena pembilang dan penyebut diskalakan bersama.
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Impedance -->
-    {% if analysis.z_magnitude_ohms > 0 %}
-    <div class="r-card">
-        <div class="r-section-label">Impedansi Gangguan</div>
+        {% endif %}
+        {% if analysis.z_magnitude_ohms > 0 %}
+        <div class="r-section-label" style="margin-top:10px;">Impedansi Gangguan</div>
         <div class="imp-grid">
             <div class="imp-box">
                 <label>Z Min</label>
@@ -775,24 +744,21 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <span class="imp-val">{{ "%.1f"|format(analysis.z_angle_degrees) }}</span>
                 <span class="imp-unit">°</span>
             </div>
-            {% if analysis.r_x_ratio != 0 %}
             <div class="imp-box">
                 <label>R/X Ratio</label>
-                <span class="imp-val">{{ "%.3f"|format(analysis.r_x_ratio) }}</span>
+                <span class="imp-val">{{ "%.3f"|format(analysis.r_x_ratio) if analysis.r_x_ratio != 0 else "—" }}</span>
             </div>
-            {% endif %}
             <div class="imp-box">
                 <label>AR</label>
-                <span class="imp-val" style="font-size:15px;">
+                <span class="imp-val" style="font-size:13px;">
                     {% if analysis.reclose_successful == 'True' %}<span style="color:#10b981;">BERHASIL</span>
                     {% elif analysis.reclose_successful == 'False' %}<span style="color:#ef4444;">GAGAL</span>
                     {% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </span>
-                {% if analysis.reclose_time_ms > 0 %}
-                <div style="font-size:10px; color:var(--text-muted);">Dead time: {{ "%.0f"|format(analysis.reclose_time_ms) }} ms</div>
-                {% endif %}
+                {% if analysis.reclose_time_ms > 0 %}<div style="font-size:10px; color:var(--text-muted);">Dead time: {{ "%.0f"|format(analysis.reclose_time_ms) }} ms</div>{% endif %}
             </div>
         </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -903,6 +869,32 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     </div>
     <img src="data:image/png;base64,{{ analysis.waveform_b64 }}"
          style="width:100%; display:block;" alt="Waveform COMTRADE">
+</div>
+{% endif %}
+
+{% if analysis.soe %}
+<!-- ══ SOE full-width ══════════════════════════════════════════ -->
+<div class="r-card soe-full">
+    <div class="r-section-label" style="margin-bottom:10px;">
+        Urutan Event Digital (SOE)
+        <span style="font-weight:400; text-transform:none; letter-spacing:0; font-size:11px; color:var(--text-muted); margin-left:8px;">{{ analysis.soe | length }} event</span>
+    </div>
+    <div class="soe-cols">
+        {% for ev in analysis.soe %}
+        {% set ch_upper = ev.channel | upper %}
+        {% if 'TRIP' in ch_upper or 'PMT' in ch_upper or 'CB OPEN' in ch_upper %}{% set cat = 'trip' %}
+        {% elif 'AR ' in ch_upper or 'RECLOSE' in ch_upper or 'RECLOS' in ch_upper %}{% set cat = 'ar' %}
+        {% elif 'PICKUP' in ch_upper or 'PKP' in ch_upper or 'OPERATE' in ch_upper or 'START' in ch_upper %}{% set cat = 'pickup' %}
+        {% else %}{% set cat = '' %}{% endif %}
+        <div class="soe-row"{% if cat %} data-cat="{{ cat }}"{% endif %}>
+            <span class="soe-num">{{ loop.index }}.</span>
+            <span class="soe-time">{% if ev.rel_ms >= 0 %}+{{ "%.2f"|format(ev.rel_ms) }}{% else %}{{ "%.2f"|format(ev.rel_ms) }}{% endif %} ms</span>
+            <span class="soe-ch" title="{{ ev.channel }}">{{ ev.channel }}</span>
+            {% if ev.state == 1 %}<span class="soe-state-on">ON ▲</span>
+            {% else %}<span class="soe-state-off">OFF ▼</span>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
 </div>
 {% endif %}
 
