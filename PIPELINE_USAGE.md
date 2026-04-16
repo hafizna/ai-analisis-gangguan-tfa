@@ -68,6 +68,8 @@ python webapp/app.py
 Fitur:
 - Upload file `.cfg` + `.dat` atau pilih dari `raw_data/` via Browse
 - Tampilkan hasil klasifikasi + evidence + probabilitas per kelas (bar chart)
+
+Panduan labeling tim tersedia di [LABELING_GUIDELINES.md](LABELING_GUIDELINES.md).
 - Badge TRANSIEN / PERMANEN berdasarkan outcome reclose
 - Rekomendasi tindak lanjut berdasarkan kelas prediksi
 - Dark mode toggle
