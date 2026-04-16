@@ -91,7 +91,7 @@ def load_channel_mappings(config_path: Optional[str] = None) -> dict:
         config_path = Path(__file__).parent.parent / "config" / "channel_mappings.json"
 
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             _CHANNEL_MAPPINGS = json.load(f)
         logger.info(f"Loaded channel mappings from {config_path}")
         return _CHANNEL_MAPPINGS
@@ -123,6 +123,20 @@ def detect_manufacturer(rec_dev_id: str, station_name: str = "") -> str:
     if re.match(r'^BM\d{8,12}$', rec_dev_id.strip()):
         logger.debug(f"Detected manufacturer: SIEMENS (BM order number: {rec_dev_id})")
         return "SIEMENS"
+
+    # NARI/NR: station_name = "NR" is too short for safe substring match,
+    # so handle it explicitly before the generic loop.
+    # rec_dev_id patterns: LINE_DISTANCE_RELAY, LINE_DIFFERENTIAL_RELAY
+    # station_name: "NR", "NR ELECTRIC", or file paths containing PCS900
+    dev_upper = rec_dev_id.strip().upper()
+    sta_upper = station_name.strip().upper()
+    if dev_upper in ("LINE_DISTANCE_RELAY", "LINE_DIFFERENTIAL_RELAY",
+                     "LINE DISTANCE RELAY", "LINE DIFFERENTIAL RELAY"):
+        logger.debug(f"Detected manufacturer: NARI (rec_dev_id: {rec_dev_id})")
+        return "NARI"
+    if sta_upper in ("NR", "NR ELECTRIC") or re.match(r'^PCS[-_]?9', dev_upper):
+        logger.debug(f"Detected manufacturer: NARI (station: {station_name})")
+        return "NARI"
 
     for manufacturer, patterns in detection_patterns.items():
         for pattern in patterns:
