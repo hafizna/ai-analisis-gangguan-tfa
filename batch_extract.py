@@ -187,6 +187,7 @@ ERR_CSV  = OUT_DIR / "extraction_errors.csv"
 #                  biawak/monitor lizard, etc.)
 #   BENDA_ASING  — non-living foreign object (other than kite)
 #   KONDUKTOR    — conductor / tower structural failure
+#   PERALATAN    — isolator / VT-CVT / teleprotection / other equipment-origin
 #
 # Intentionally excluded:
 #   APPL         — "Akibat Pekerjaan Pihak Luar" (external-party work);
@@ -226,6 +227,8 @@ LABEL_MAP = [
     ("konduktor",     "KONDUKTOR"),
 
     # Equipment / protection / telecom-origin cases
+    ("alat isolator",       "PERALATAN"),
+    ("isolator",            "PERALATAN"),
     ("kerusakan peralatan", "PERALATAN"),
     ("gangguan peralatan",  "PERALATAN"),
     ("pilot wire",          "PERALATAN"),
@@ -317,6 +320,12 @@ def flatten_features(feat, label, cfg_path, prot, fault):
     d["inception_angle_degrees"]= feat.inception_angle_degrees
     d["voltage_sag_depth_pu"]   = feat.voltage_sag_depth_pu
     d["voltage_sag_phase"]      = feat.voltage_sag_phase
+    d["voltage_phase_ratio_spread_pu"] = feat.voltage_phase_ratio_spread_pu
+    d["healthy_phase_voltage_ratio"]   = feat.healthy_phase_voltage_ratio
+    d["v2_v1_ratio"]                   = feat.v2_v1_ratio
+    d["voltage_thd_max_percent"]       = feat.voltage_thd_max_percent
+    d["v_prefault_v"]                  = feat.v_prefault_v
+    d["v_fault_v"]                     = feat.v_fault_v
 
     # Impedance
     d["r_x_ratio"]        = feat.r_x_ratio
@@ -371,6 +380,12 @@ def flatten_differential_features(feat, label, cfg_path, prot, fault, record):
     d["inception_angle_degrees"] = feat.inception_angle_degrees
     d["voltage_sag_depth_pu"]    = None
     d["voltage_sag_phase"]       = ""
+    d["voltage_phase_ratio_spread_pu"] = None
+    d["healthy_phase_voltage_ratio"]   = None
+    d["v2_v1_ratio"]                   = None
+    d["voltage_thd_max_percent"]       = None
+    d["v_prefault_v"]                  = None
+    d["v_fault_v"]                     = None
 
     d["r_x_ratio"]        = None
     d["z_magnitude_ohms"] = None

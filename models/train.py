@@ -75,6 +75,10 @@ ALL_CLASSES = ["PETIR", "LAYANG", "POHON", "HEWAN", "BENDA_ASING", "KONDUKTOR", 
 #   thd_percent            harmonic distortion; less relevant for lightning
 #   inception_angle_deg    lightning strikes at voltage peak (~90°)
 #   voltage_sag_depth_pu   severity of voltage dip
+#   voltage_phase_ratio_spread_pu  phase-to-phase voltage asymmetry during fault
+#   healthy_phase_voltage_ratio    whether one phase stayed nearly healthy
+#   v2_v1_ratio          negative-sequence voltage unbalance
+#   voltage_thd_max_percent  voltage waveform distortion in the early fault window
 #   reclose_enc            0=failed, 0.5=not attempted/unknown, 1=successful
 #   is_ground_enc          1 if ground fault, 0 if phase fault
 #   trip_type_enc          0=unknown, 1=single_pole, 2=three_pole
@@ -89,6 +93,10 @@ FEATURE_COLS = [
     "thd_percent",
     "inception_angle_degrees",
     "voltage_sag_depth_pu",
+    "voltage_phase_ratio_spread_pu",
+    "healthy_phase_voltage_ratio",
+    "v2_v1_ratio",
+    "voltage_thd_max_percent",
     "reclose_enc",
     "is_ground_enc",
     "trip_type_enc",
@@ -189,10 +197,11 @@ def load_and_prepare(csv_path: Path):
     df["di_dt_max"]            = np.log1p(df["di_dt_max"].fillna(0).clip(lower=0))
     df["peak_fault_current_a"] = np.log1p(df["peak_fault_current_a"].fillna(0).clip(lower=0))
 
-    # Fill remaining NaN with column median
+    # Backward compatibility: older CSVs may not yet have the newest features.
     for col in FEATURE_COLS:
-        if col in df.columns:
-            df[col] = df[col].fillna(df[col].median())
+        if col not in df.columns:
+            df[col] = 0.0
+        df[col] = df[col].fillna(df[col].median())
 
     y = df["label"]
     X = df[FEATURE_COLS]

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from batch_extract import flatten_differential_features
+from batch_extract import flatten_differential_features, infer_label
 from core.feature_extractor import DifferentialFeatures
 
 
@@ -45,8 +45,19 @@ def test_flatten_differential_features_keeps_universal_and_87l_fields():
     assert row["faulted_phases"] == "A"
     assert row["fault_count"] == 2
     assert row["voltage_sag_depth_pu"] is None
+    assert row["voltage_phase_ratio_spread_pu"] is None
+    assert row["v2_v1_ratio"] is None
     assert row["z_magnitude_ohms"] is None
     assert row["teleprotection_rx"] is True
     assert row["comms_failure"] is False
     assert row["idiff_max_percent"] == 140.0
     assert row["classification_status"].startswith("UNCLASSIFIED")
+
+
+def test_infer_label_maps_isolator_to_peralatan():
+    path = (
+        r"C:\data\raw_data\UPT PURWOKERTO\2025\8. AGUSTUS"
+        r"\01. 01082025 TRIP SUTT KSGHN-LMNIS ALAT ISOLATOR\DISTANCE\FR000037.cfg"
+    )
+
+    assert infer_label(path) == "PERALATAN"

@@ -26,6 +26,7 @@ Usage
 
 import sys
 import pickle
+import re
 import warnings
 from pathlib import Path
 from dataclasses import dataclass
@@ -513,27 +514,95 @@ def _load_model() -> Optional[dict]:
         return pickle.load(f)
 
 
-def _build_feature_vector(row: dict) -> np.ndarray:
+def _build_feature_vector(row: dict, feature_cols: list[str] | None = None) -> np.ndarray:
     """Build the numpy feature vector expected by the Tier 2 multi-class classifier."""
     di_dt  = float(row.get("di_dt_max", 0) or 0)
     peak_i = float(row.get("peak_fault_current_a", 0) or 0)
 
-    vec = [
-        float(row.get("fault_duration_ms", 0) or 0),           # fault_duration_ms
-        float(row.get("fault_count", 1) or 1),                  # fault_count
-        np.log1p(max(peak_i, 0)),                               # peak_fault_current_a (log)
-        np.log1p(max(di_dt, 0)),                                # di_dt_max (log)
-        float(row.get("i0_i1_ratio", 0) or 0),                 # i0_i1_ratio
-        float(row.get("thd_percent", 0) or 0),                  # thd_percent
-        float(row.get("inception_angle_degrees", 0) or 0),      # inception_angle_degrees
-        float(row.get("voltage_sag_depth_pu", 0) or 0),        # voltage_sag_depth_pu
-        encode_reclose(row.get("reclose_successful")),           # reclose_enc
-        1 if str(row.get("is_ground_fault", "")).lower() == "true" else 0,  # is_ground_enc
-        encode_trip_type(row.get("trip_type", "")),              # trip_type_enc
-        parse_phase_count(row.get("faulted_phases", "")),        # phase_count
-        encode_zone(row.get("zone_operated", "")),               # zone_enc
-    ]
+    feature_cols = feature_cols or FEATURE_COLS
+    feature_map = {
+        "fault_duration_ms": float(row.get("fault_duration_ms", 0) or 0),
+        "fault_count": float(row.get("fault_count", 1) or 1),
+        "peak_fault_current_a": np.log1p(max(peak_i, 0)),
+        "di_dt_max": np.log1p(max(di_dt, 0)),
+        "i0_i1_ratio": float(row.get("i0_i1_ratio", 0) or 0),
+        "thd_percent": float(row.get("thd_percent", 0) or 0),
+        "inception_angle_degrees": float(row.get("inception_angle_degrees", 0) or 0),
+        "voltage_sag_depth_pu": float(row.get("voltage_sag_depth_pu", 0) or 0),
+        "voltage_phase_ratio_spread_pu": float(row.get("voltage_phase_ratio_spread_pu", 0) or 0),
+        "healthy_phase_voltage_ratio": float(row.get("healthy_phase_voltage_ratio", 0) or 0),
+        "v2_v1_ratio": float(row.get("v2_v1_ratio", 0) or 0),
+        "voltage_thd_max_percent": float(row.get("voltage_thd_max_percent", 0) or 0),
+        "reclose_enc": encode_reclose(row.get("reclose_successful")),
+        "is_ground_enc": 1 if str(row.get("is_ground_fault", "")).lower() == "true" else 0,
+        "trip_type_enc": encode_trip_type(row.get("trip_type", "")),
+        "phase_count": parse_phase_count(row.get("faulted_phases", "")),
+        "zone_enc": encode_zone(row.get("zone_operated", "")),
+    }
+    vec = [feature_map.get(col, float(row.get(col, 0) or 0)) for col in feature_cols]
     return np.array(vec, dtype=float).reshape(1, -1)
+
+
+_SOE_LOOP_PATTERNS = (
+    (re.compile(r"\b(?:LOOP|PHASE)\s*L?12\b"), "A+B"),
+    (re.compile(r"\b(?:LOOP|PHASE)\s*L?23\b"), "B+C"),
+    (re.compile(r"\b(?:LOOP|PHASE)\s*L?31\b"), "A+C"),
+    (re.compile(r"\b(?:LOOP|PHASE)\s*AB\b"), "A+B"),
+    (re.compile(r"\b(?:LOOP|PHASE)\s*BC\b"), "B+C"),
+    (re.compile(r"\b(?:LOOP|PHASE)\s*CA\b"), "A+C"),
+)
+_SOE_PHASE_TOKENS = (("L1", "A"), ("L2", "B"), ("L3", "C"), ("PH A", "A"), ("PH B", "B"), ("PH C", "C"))
+
+
+def _augment_row_with_soe_context(row: dict, soe: list | None) -> dict:
+    """Inject simple SOE-derived context fields used by Tier 1 sanity rules."""
+    row = dict(row)
+    row["soe_faulted_phases"] = ""
+    row["soe_phase_hint_source"] = ""
+    row["soe_phase_mismatch"] = False
+
+    if not soe:
+        return row
+
+    for ev in soe:
+        if int(ev.get("state", 0) or 0) != 1:
+            continue
+        channel = str(ev.get("channel", "") or "")
+        upper = channel.upper()
+        for pattern, phases in _SOE_LOOP_PATTERNS:
+            if pattern.search(upper):
+                row["soe_faulted_phases"] = phases
+                row["soe_phase_hint_source"] = channel
+                row["soe_phase_mismatch"] = (
+                    str(row.get("fault_type", "")).upper() == "3PH" and phases.count("+") == 1
+                )
+                return row
+
+    pickup_phases = {}
+    for ev in soe:
+        if int(ev.get("state", 0) or 0) != 1:
+            continue
+        rel_ms = float(ev.get("rel_ms", 0) or 0)
+        if abs(rel_ms) > 5:
+            continue
+        channel = str(ev.get("channel", "") or "")
+        upper = channel.upper()
+        if "TRIP" in upper:
+            continue
+        if not any(key in upper for key in ("PICKUP", "PICKED UP", "O/C PH", "DIS.PICKUP")):
+            continue
+        for token, phase in _SOE_PHASE_TOKENS:
+            if token in upper:
+                pickup_phases[phase] = channel
+
+    if len(pickup_phases) == 2:
+        ordered = [ph for ph in ("A", "B", "C") if ph in pickup_phases]
+        phases = "+".join(ordered)
+        row["soe_faulted_phases"] = phases
+        row["soe_phase_hint_source"] = " / ".join(pickup_phases[ph] for ph in ordered)
+        row["soe_phase_mismatch"] = str(row.get("fault_type", "")).upper() == "3PH"
+
+    return row
 
 
 def classify_file(cfg_path: str) -> ClassificationResult:
@@ -576,6 +645,12 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             "klasifikasi hanya dari analisis gelombang arus/tegangan. "
             "Untuk konfirmasi, gunakan rekaman rele jarak jika tersedia.]"
         )
+    elif prot.primary_protection == ProtectionType.OVERCURRENT:
+        _routing_caveat = (
+            " | [OCR / 50-51: rekaman berasal dari elemen arus lebih, "
+            "bukan rele jarak. Klasifikasi penyebab dihitung dari bentuk gelombang "
+            "dan status OCR; tidak ada evidence zona impedansi.]"
+        )
     elif prot.primary_protection == ProtectionType.DIFFERENTIAL:
         # 87L line differential is a valid transmission-line event, but we do not yet
         # model the 87L logic itself. Fall back to waveform-based line analysis with a caveat.
@@ -597,7 +672,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         raise ValueError(f"Feature extraction failed: {cfg_path}")
 
     # ── Step 5: flatten features ──────────────────────────────────────────────
-    row = _flatten(feat, fault)
+    row = _augment_row_with_soe_context(_flatten(feat, fault), _soe)
 
     # ── Step 6: Tier 1 rules ──────────────────────────────────────────────────
     rule_result: Optional[RuleResult] = apply_rules(row)
@@ -606,6 +681,10 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             "KONDUKTOR / TOWER": (
                 "Lakukan inspeksi mekanik pada tower dan konduktor di zona operasi rele. "
                 "Periksa kondisi joint, klem, dan struktur tower."
+            ),
+            "PERALATAN / PROTEKSI": (
+                "Periksa rangkaian VT/CVT, isolator, teleproteksi, dan logika rele. "
+                "Cocokkan SOE dengan waveform sebelum menyimpulkan penyebab lapangan."
             ),
             "GANGGUAN PERMANEN": (
                 "Periksa kondisi jalur transmisi di zona gangguan. "
@@ -641,7 +720,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         clf          = model_bundle["clf"]
         classes      = model_bundle.get("classes", [])
         model_type   = model_bundle.get("model_type", "binary")
-        X            = _build_feature_vector(row)
+        X            = _build_feature_vector(row, model_bundle.get("feature_cols", FEATURE_COLS))
         pred         = clf.predict(X)[0]
         proba        = clf.predict_proba(X)[0]
 
@@ -784,6 +863,10 @@ def _flatten(feat, fault) -> dict:
         "inception_angle_degrees": feat.inception_angle_degrees,
         "voltage_sag_depth_pu": feat.voltage_sag_depth_pu,
         "voltage_sag_phase":    feat.voltage_sag_phase,
+        "voltage_phase_ratio_spread_pu": feat.voltage_phase_ratio_spread_pu,
+        "healthy_phase_voltage_ratio": feat.healthy_phase_voltage_ratio,
+        "v2_v1_ratio":          feat.v2_v1_ratio,
+        "voltage_thd_max_percent": feat.voltage_thd_max_percent,
         "v_prefault_v":         feat.v_prefault_v,
         "v_fault_v":            feat.v_fault_v,
         "r_x_ratio":            feat.r_x_ratio,
