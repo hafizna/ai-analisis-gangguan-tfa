@@ -33,7 +33,15 @@ _TRANSIENT_LABEL_MAP = [
     ("monyet", "HEWAN"),
     ("benda asing", "BENDA ASING"),
     ("bfo", "BFO"),
-    ("peralatan", "PERALATAN"),
+    # Equipment / protection / telecom-origin cases
+    ("kerusakan peralatan", "PERALATAN"),
+    ("gangguan peralatan",  "PERALATAN"),
+    ("pilot wire",          "PERALATAN"),
+    ("pilotwire",           "PERALATAN"),
+    ("teleprotection",      "PERALATAN"),
+    ("teleproteksi",        "PERALATAN"),
+    ("plcc",                "PERALATAN"),
+    ("peralatan",           "PERALATAN"),
     ("lain", "LAIN-LAIN"),
 ]
 

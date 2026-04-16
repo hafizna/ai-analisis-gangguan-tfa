@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Unggah File — TFA{% endblock %}
+{% block topbar_title %}Unggah File COMTRADE{% endblock %}
+{% block topbar_sub %}Klasifikasi penyebab gangguan saluran berbasis AI{% endblock %}
+{% block nav_line_upload %}active{% endblock %}
+
+{% block extra_css %}
+.upload-wrap {
+    max-width: 620px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.info-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 18px 20px;
+}
+.info-card h4 {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px;
+}
+.info-card ul { margin-left: 18px; }
+.info-card li { font-size: 13px; color: var(--text); margin: 5px 0; line-height: 1.5; }
+.info-card a  { color: var(--accent); font-weight: 600; text-decoration: none; }
+.info-card a:hover { text-decoration: underline; }
+
+.drop-zone {
+    background: var(--panel-bg);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 48px 32px;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: default;
+}
+.drop-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(59,130,246,0.05);
+}
+.drop-icon { font-size: 40px; margin-bottom: 14px; opacity: 0.5; }
+.drop-zone h3 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.drop-zone p  { font-size: 13px; color: var(--text-muted); margin-bottom: 18px; }
+.file-btns { display: flex; justify-content: center; gap: 10px; }
+.file-pick {
+    display: inline-block; padding: 9px 18px;
+    background: var(--accent); color: white;
+    border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 600;
+    transition: background 0.15s;
+}
+.file-pick:hover { background: #2563eb; }
+.file-input { display: none; }
+
+.file-info-box {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; margin-top: 12px;
+    display: none;
+}
+.file-row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+.file-row-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.file-row-size { font-size: 12px; color: var(--text-muted); }
+
+.submit-row { text-align: center; margin-top: 4px; }
+
+.analysis-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+}
+.analysis-card h4 {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px;
+}
+.analysis-items { display: flex; flex-direction: column; gap: 8px; }
+.analysis-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    font-size: 13px; color: var(--text); line-height: 1.5;
+}
+.analysis-item::before {
+    content: '→'; color: var(--accent); font-weight: 700;
+    flex-shrink: 0; margin-top: 1px;
+}
+{% endblock %}
+
+{% block content %}
+<div class="upload-wrap">
+
+    <div class="info-card">
+        <h4>File yang Diperlukan</h4>
+        <ul>
+            <li><strong>.cfg</strong> — file konfigurasi COMTRADE</li>
+            <li><strong>.dat</strong> — file data (nama sama dengan .cfg)</li>
+        </ul>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:10px;">
+            Atau gunakan
+            <a href="{{ url_for('browse') }}">Pilih Rekaman</a>
+            untuk memilih langsung dari folder tanpa mengunggah.
+        </p>
+    </div>
+
+    <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data" data-loading-msg="Menganalisis file COMTRADE...">
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-icon" style="font-size:40px;opacity:0.4;">&#x2B06;</div>
+            <h3>Drag &amp; Drop Files Here</h3>
+            <p>atau pilih file secara manual</p>
+            <div class="file-btns">
+                <label for="cfg_file" class="file-pick">Select .cfg</label>
+                <input type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" class="file-input" required>
+                <label for="dat_file" class="file-pick">Select .dat</label>
+                <input type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" class="file-input" required>
+            </div>
+        </div>
+
+        <div class="file-info-box" id="fileInfo">
+            <div id="cfgRow" class="file-row" style="display:none;">
+                <span style="font-size:16px;">CFG</span>
+                <div>
+                    <div class="file-row-name" id="cfgName"></div>
+                    <div class="file-row-size" id="cfgSize"></div>
+                </div>
+            </div>
+            <div id="datRow" class="file-row" style="display:none;">
+                <span style="font-size:16px;">DAT</span>
+                <div>
+                    <div class="file-row-name" id="datName"></div>
+                    <div class="file-row-size" id="datSize"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="submit-row" style="margin-top:16px;">
+            <button type="submit" class="btn btn-primary" id="analyzeBtn" disabled style="padding:11px 32px; font-size:15px;">
+                Analisis Gangguan
+            </button>
+        </div>
+    </form>
+
+    <div class="analysis-card">
+        <h4>Yang Dianalisis Sistem</h4>
+        <div class="analysis-items">
+            <div class="analysis-item"><strong>Konfirmasi transien (Layer 0)</strong> — AR berhasil dengan arus nyata langsung dikategorikan transien</div>
+            <div class="analysis-item"><strong>Aturan deterministik (Layer 1)</strong> — perubahan fasa saat AR, trip 3-fasa gagal reclose</div>
+            <div class="analysis-item"><strong>Classifier ML (Layer 2)</strong> — pola di/dt, arus puncak, rasio i0/i1</div>
+            <div class="analysis-item"><strong>Estimasi penyebab</strong> — PETIR / Layang / Hewan / Benda Asing / Pohon / Konduktor</div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const cfgInput  = document.getElementById('cfg_file');
+const datInput  = document.getElementById('dat_file');
+const analyzeBtn= document.getElementById('analyzeBtn');
+const fileInfo  = document.getElementById('fileInfo');
+const dropZone  = document.getElementById('dropZone');
+
+function fmt(b) {
+    const k=1024, s=['B','KB','MB'];
+    const i=Math.floor(Math.log(b)/Math.log(k));
+    return (b/Math.pow(k,i)).toFixed(1)+' '+s[i];
+}
+function update() {
+    const c=cfgInput.files[0], d=datInput.files[0];
+    fileInfo.style.display = (c || d) ? 'block' : 'none';
+    document.getElementById('cfgRow').style.display = c ? 'flex' : 'none';
+    document.getElementById('datRow').style.display = d ? 'flex' : 'none';
+    if (c) {
+        document.getElementById('cfgName').textContent=c.name;
+        document.getElementById('cfgSize').textContent=fmt(c.size);
+    }
+    if (d) {
+        document.getElementById('datName').textContent=d.name;
+        document.getElementById('datSize').textContent=fmt(d.size);
+    }
+    analyzeBtn.disabled=!(c&&d);
+}
+cfgInput.addEventListener('change', update);
+datInput.addEventListener('change', update);
+
+dropZone.addEventListener('dragover', e=>{e.preventDefault(); dropZone.classList.add('dragover');});
+dropZone.addEventListener('dragleave', ()=>dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e=>{
+    e.preventDefault(); dropZone.classList.remove('dragover');
+    for (let f of e.dataTransfer.files) {
+        const dt=new DataTransfer(); dt.items.add(f);
+        if (f.name.toLowerCase().endsWith('.cfg')) { cfgInput.files=dt.files; }
+        if (f.name.toLowerCase().endsWith('.dat')) { datInput.files=dt.files; }
+    }
+    update();
+});
+document.getElementById('uploadForm').addEventListener('submit',()=>{
+    analyzeBtn.disabled=true;
+    analyzeBtn.textContent='Menganalisis...';
+});
+</script>
+{% endblock %}

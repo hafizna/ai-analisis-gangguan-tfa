@@ -1,8 +1,8 @@
 """
 Multi-class Fault Cause Classifier
 ====================================
-Trains a Random Forest on labeled_features.csv to classify the physical
-cause of transmission line faults into 7 categories:
+Trains a LightGBM classifier on labeled_features.csv to classify the
+physical cause of transmission line faults into 7 categories:
 
     PETIR       — lightning (direct strike or induced overvoltage)
     LAYANG      — kite (layang-layang)
@@ -14,20 +14,31 @@ cause of transmission line faults into 7 categories:
 
 Design rationale
 ----------------
+Promoted from pipeline-lgbm after 3-way CV showed LightGBM outperforms
+Random Forest on the metrics that matter for imbalanced multi-class:
+
+    F1 macro    0.407 (LGBM) vs 0.352 (RF)   — primary metric
+    F1 weighted 0.757 (LGBM) vs 0.738 (RF)
+    Accuracy    0.778 (LGBM) vs 0.800 (RF)   — less relevant here
+
 Previous design was a binary PETIR vs rest tree — only viable with the
-old tiny dataset (83 rows, 84% PETIR).  With the expanded dataset
-(~450+ rows across 7 classes), a multi-class Random Forest is used:
+old tiny dataset (83 rows, 84% PETIR). With the expanded dataset
+(~450+ rows across 7 classes), LightGBM is now used as the main Tier 2
+multiclass model while Random Forest remains the comparison baseline.
 
   - Tier 1 deterministic rules are still applied first (rules.py) for
     high-confidence KONDUKTOR and failed-reclose cases.
   - Tier 2 (this model) handles the remaining ambiguous events.
-  - RandomForest with class_weight='balanced_subsample' to compensate
-    for class imbalance.
+  - LightGBM with class_weight='balanced' handles imbalance natively
+    (no SMOTE needed).
   - Features cover waveform physics (di/dt, peak current, THD, inception
     angle), fault context (duration, ground ratio, zone, reclose), and
     protection metadata (trip type, phase count).
   - Stratified 5-fold cross-validation with per-class F1 report.
   - Model is saved as pipeline/models/fault_classifier.pkl (joblib/pickle).
+
+For ongoing RF vs LGBM comparison as data grows, run compare_models.py
+from the project root — it always benchmarks RF as a standalone baseline.
 
 Run from the pipeline/ directory:
     python models/train.py
@@ -40,7 +51,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+from lightgbm import LGBMClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_score, cross_validate
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
@@ -213,14 +224,15 @@ def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
 
     print(f"Training on {len(X_tr)} rows across {len(trainable)} classes: {trainable}\n")
 
-    clf = RandomForestClassifier(
-        n_estimators=300,
-        max_depth=None,           # grow full trees — forest ensemble handles variance
-        min_samples_leaf=2,
-        max_features="sqrt",
-        class_weight="balanced_subsample",
+    clf = LGBMClassifier(
+        n_estimators=500,
+        learning_rate=0.05,
+        max_depth=6,
+        num_leaves=31,
+        class_weight="balanced",  # handles imbalance natively — no SMOTE needed
         random_state=42,
         n_jobs=-1,
+        verbose=-1,
     )
 
     # Stratified CV — adapt n_splits to smallest class size
@@ -275,7 +287,7 @@ def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
         "classes": list(getattr(clf, "classes_", trainable)),
         "all_classes": ALL_CLASSES,
         "class_counts": dict(class_counts),
-        "model_type": "multiclass_random_forest",
+        "model_type": "multiclass_lightgbm",
     }
     with open(model_out, "wb") as f:
         pickle.dump(payload, f)

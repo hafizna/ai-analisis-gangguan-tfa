@@ -36,6 +36,36 @@ except Exception:
 
 warnings.filterwarnings("ignore")
 
+TRANSFORMER_RELAY_ROLES = [
+    ("AUTO", "Auto detect dari file"),
+    ("87T", "87T / Differential"),
+    ("OCR_HV", "OCR HV"),
+    ("OCR_LV", "OCR LV / Incomer"),
+    ("REF", "REF"),
+    ("GFR_HV", "GFR HV"),
+    ("SBEF", "SBEF"),
+    ("FEEDER", "Feeder / Outgoing"),
+    ("OTHER", "Relay lain"),
+]
+
+TRANSFORMER_ANALYSIS_GOALS = [
+    ("EVENT_MEANING", "Interpretasi event lokal"),
+    ("FAULT_ORIGIN", "Menentukan origin fault"),
+    ("PROTECTION_REVIEW", "Review selektivitas / proteksi"),
+    ("ROOT_CAUSE", "Investigasi sebab akhir"),
+]
+
+MULTICLASS_MODEL_TYPES = {"multiclass_random_forest", "multiclass_lightgbm"}
+MULTICLASS_LABEL_MAP = {
+    "PETIR": "PETIR",
+    "LAYANG": "LAYANG-LAYANG",
+    "POHON": "POHON / VEGETASI",
+    "HEWAN": "HEWAN / BINATANG",
+    "BENDA_ASING": "BENDA ASING",
+    "KONDUKTOR": "KONDUKTOR / TOWER",
+    "PERALATAN": "PERALATAN / PROTEKSI",
+}
+
 # Bootstrap path so we can import pipeline modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -85,6 +115,32 @@ def _json_safe(obj):
         except Exception:
             pass
     return str(obj)
+
+
+def _choice_label(options, value: str, fallback: str) -> str:
+    for key, label in options:
+        if key == value:
+            return label
+    return fallback
+
+
+def _transformer_role_label(value: str) -> str:
+    return _choice_label(TRANSFORMER_RELAY_ROLES, value, value or "Relay tidak diketahui")
+
+
+def _transformer_goal_label(value: str) -> str:
+    return _choice_label(TRANSFORMER_ANALYSIS_GOALS, value, value or "Tujuan tidak diketahui")
+
+
+def _save_uploaded_pair(cfg_file, dat_file, ts: str, prefix: str = "") -> tuple[Path, Path]:
+    slot = f"{prefix}_" if prefix else ""
+    cfg_name = secure_filename(f"{ts}_{slot}{cfg_file.filename}")
+    dat_name = secure_filename(f"{ts}_{slot}{dat_file.filename}")
+    cfg_path = UPLOAD_DIR / cfg_name
+    dat_path = UPLOAD_DIR / dat_name
+    cfg_file.save(cfg_path)
+    dat_file.save(dat_path)
+    return cfg_path, dat_path
 
 
 def _save_analysis_to_store(analysis: dict) -> str:
@@ -146,6 +202,17 @@ def _to_bool_or_none(val):
 
 def _normalize_label(val: str) -> str:
     return re.sub(r"\s+", " ", (val or "").strip().upper())
+
+
+def _top_cause_name(result) -> str:
+    cause_pcts = getattr(result, "cause_pcts", None) or []
+    if isinstance(cause_pcts, list) and cause_pcts:
+        try:
+            top = max(cause_pcts, key=lambda item: _f(item.get("pct"), 0.0))
+            return _s(top.get("name"), "")
+        except Exception:
+            return ""
+    return ""
 
 
 def _top_predicted_cause_from_analysis(analysis: dict) -> str:
@@ -676,24 +743,18 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         proba      = clf.predict_proba(X)[0]
 
         proba_classes = list(getattr(clf, "classes_", classes))
-        if model_type == "multiclass_random_forest" and proba_classes:
+        if model_type in MULTICLASS_MODEL_TYPES and proba_classes:
             from models.predict import _label_recommendation
-            _label_id_map = {
-                "PETIR": "PETIR", "LAYANG": "LAYANG-LAYANG",
-                "POHON": "POHON / VEGETASI", "HEWAN": "HEWAN / BINATANG",
-                "BENDA_ASING": "BENDA ASING", "KONDUKTOR": "KONDUKTOR / TOWER",
-                "PERALATAN": "PERALATAN / PROTEKSI",
-            }
-            label_id = _label_id_map.get(pred_raw, pred_raw)
+            label_id = MULTICLASS_LABEL_MAP.get(pred_raw, pred_raw)
             reclose_ok = _to_bool_or_none(row.get("reclose_successful"))
             reclose_note = "  AR berhasil — transien terkonfirmasi." if (
                 reclose_ok is True and row["peak_fault_current_a"] > 200) else ""
             updated["label"] = label_id
             updated["confidence"] = float(proba.max())
             updated["tier"] = 2
-            updated["rule_name"] = "multiclass_random_forest"
+            updated["rule_name"] = model_type
             updated["cause_pcts"] = [
-                {"name": _label_id_map.get(c, c), "pct": round(float(p) * 100, 1)}
+                {"name": MULTICLASS_LABEL_MAP.get(c, c), "pct": round(float(p) * 100, 1)}
                 for c, p in sorted(zip(proba_classes, proba), key=lambda x: -x[1])
             ]
             updated["recommendation"] = _label_recommendation(pred_raw)
@@ -1125,6 +1186,184 @@ def _render_not_supported(filename: str, error_msg: str, soe: list = None, cfg_p
                            reason_detail=detail,
                            tips=tips,
                            soe=soe or [])
+
+
+def _build_analysis_payload(result, original_filename: str, ts: str, cfg_path: str) -> dict:
+    feats = result.features
+    cfg_ratios = _extract_cfg_ratios(str(cfg_path))
+    ratio_defaults = _resolve_ratio_defaults(
+        cfg_ratios,
+        feats.get("voltage_kv"),
+        feats.get("peak_fault_current_a"),
+        event_type=getattr(result, "event_type", "LINE"),
+    )
+    ct_ratio_src = ratio_defaults["ct_ratio_source"]
+    vt_ratio_src = ratio_defaults["vt_ratio_source"]
+    ct_p_display = ratio_defaults["ct_primary"]
+    ct_s_display = ratio_defaults["ct_secondary"]
+    vt_p_display = ratio_defaults["vt_primary"]
+    vt_s_display = ratio_defaults["vt_secondary"]
+    ct_p_base = ratio_defaults["ct_base_primary"]
+    ct_s_base = ratio_defaults["ct_base_secondary"]
+    vt_p_base = ratio_defaults["vt_base_primary"]
+    vt_s_base = ratio_defaults["vt_base_secondary"]
+
+    analysis_payload = {
+        "original_filename": original_filename,
+        "timestamp": ts,
+        "label":          result.label,
+        "confidence":     _f(result.confidence),
+        "tier":           int(result.tier),
+        "rule_name":      result.rule_name,
+        "evidence":       result.evidence,
+        "recommendation": result.recommendation,
+        "description":    result.description or "",
+        "cause_pcts":     result.cause_pcts or [],
+        "soe":            result.soe or [],
+        "di_dt_max":      _f(feats.get("di_dt_max")),
+        "thd_percent":    _f(feats.get("thd_percent")),
+        "inception_angle_degrees": _f(feats.get("inception_angle_degrees"), -1),
+        "station_name":         _s(feats.get("station_name")),
+        "relay_model":          _s(feats.get("relay_model")),
+        "zone_operated":        _s(feats.get("zone_operated")),
+        "trip_type":            _s(feats.get("trip_type")),
+        "faulted_phases":       _s(feats.get("faulted_phases")),
+        "fault_type":           _s(feats.get("fault_type")),
+        "fault_duration_ms":    _f(feats.get("fault_duration_ms")),
+        "fault_inception_ms":   _f(feats.get("fault_inception_ms")),
+        "record_duration_ms":   _f(feats.get("record_duration_ms")),
+        "fault_count":          int(feats.get("fault_count") or 0),
+        "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
+        "peak_fault_phase":     _s(feats.get("peak_fault_phase")),
+        "i0_i1_ratio":          _f(feats.get("i0_i1_ratio")),
+        "i0_magnitude_a":       _f(feats.get("i0_magnitude_a")),
+        "i1_magnitude_a":       _f(feats.get("i1_magnitude_a")),
+        "i2_magnitude_a":       _f(feats.get("i2_magnitude_a")),
+        "voltage_sag_depth_pu": _f(feats.get("voltage_sag_depth_pu")),
+        "voltage_sag_phase":    _s(feats.get("voltage_sag_phase")),
+        "v_prefault_v":         _f(feats.get("v_prefault_v")),
+        "v_fault_v":            _f(feats.get("v_fault_v")),
+        "z_magnitude_ohms":     _f(feats.get("z_magnitude_ohms")),
+        "z_angle_degrees":      _f(feats.get("z_angle_degrees")),
+        "r_x_ratio":            _f(feats.get("r_x_ratio")),
+        "reclose_successful":   _s(feats.get("reclose_successful")),
+        "reclose_time_ms":      _f(feats.get("reclose_time_ms")),
+        "voltage_kv":           str(int(_nearest_supported_voltage_kv(vt_p_base / 1000.0))) if (vt_ratio_src == "cfg" and vt_p_base > 1000.0) else (_s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui"),
+        "scaling_ok":           _f(feats.get("peak_fault_current_a", 0)) >= 200.0,
+        "ct_primary": ct_p_display,
+        "ct_secondary": ct_s_display,
+        "vt_primary": vt_p_display,
+        "vt_secondary": vt_s_display,
+        "ct_primary_default": ct_p_display,
+        "ct_secondary_default": ct_s_display,
+        "vt_primary_default": vt_p_display,
+        "vt_secondary_default": vt_s_display,
+        "ratio_base_ct_primary": ct_p_base,
+        "ratio_base_ct_secondary": ct_s_base,
+        "ratio_base_vt_primary": vt_p_base,
+        "ratio_base_vt_secondary": vt_s_base,
+        "ratio_override_active": False,
+        "cfg_ct_primary": _f(cfg_ratios.get("cfg_ct_primary"), 1.0),
+        "cfg_ct_secondary": _f(cfg_ratios.get("cfg_ct_secondary"), 1.0),
+        "cfg_vt_primary": _f(cfg_ratios.get("cfg_vt_primary"), 1.0),
+        "cfg_vt_secondary": _f(cfg_ratios.get("cfg_vt_secondary"), 1.0),
+        "cfg_ct_known": bool(cfg_ratios.get("cfg_ct_known")),
+        "cfg_vt_known": bool(cfg_ratios.get("cfg_vt_known")),
+        "parser_ct_multiplier": _f(cfg_ratios.get("parser_ct_multiplier"), 0.0),
+        "parser_vt_multiplier": _f(cfg_ratios.get("parser_vt_multiplier"), 0.0),
+        "ct_ratio_source": ct_ratio_src,
+        "vt_ratio_source": vt_ratio_src,
+        "ct_ratio_known":  bool(cfg_ratios.get("cfg_ct_known")),
+        "vt_ratio_known":  bool(cfg_ratios.get("cfg_vt_known")),
+        "ratio_base_values": {
+            "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
+            "i0_magnitude_a": _f(feats.get("i0_magnitude_a")),
+            "i1_magnitude_a": _f(feats.get("i1_magnitude_a")),
+            "i2_magnitude_a": _f(feats.get("i2_magnitude_a")),
+            "v_prefault_v": _f(feats.get("v_prefault_v")),
+            "v_fault_v": _f(feats.get("v_fault_v")),
+            "z_magnitude_ohms": _f(feats.get("z_magnitude_ohms")),
+            "orig_ct_p": ct_p_base,
+            "orig_ct_s": ct_s_base,
+            "orig_vt_p": vt_p_base,
+            "orig_vt_s": vt_s_base,
+        },
+    }
+    _inject_transformer_fields(result, analysis_payload)
+    analysis_payload["waveform_data"] = _build_waveform_payload(
+        str(cfg_path),
+        analysis_payload["fault_inception_ms"],
+        analysis_payload["fault_duration_ms"],
+    )
+    analysis_payload["waveform_b64"] = _generate_waveform_plot(
+        str(cfg_path),
+        analysis_payload["fault_inception_ms"],
+        analysis_payload["fault_duration_ms"],
+    )
+    return analysis_payload
+
+
+def _apply_transformer_intake_context(payload: dict, relay_role: str, analysis_goal: str,
+                                      intake_mode: str, supporting_relays: list[dict]) -> None:
+    role_label = _transformer_role_label(relay_role)
+    goal_label = _transformer_goal_label(analysis_goal)
+    context_only = payload.get("event_type") != "TRANSFORMER"
+
+    payload["intake_domain"] = "TRANSFORMER"
+    payload["transformer_intake_mode"] = intake_mode
+    payload["transformer_intake_mode_label"] = "Coordinated multi-relay" if intake_mode == "COORDINATED" else "Quick local analysis"
+    payload["transformer_relay_role"] = relay_role
+    payload["transformer_relay_role_label"] = role_label
+    payload["transformer_analysis_goal"] = analysis_goal
+    payload["transformer_analysis_goal_label"] = goal_label
+    payload["supporting_relays"] = supporting_relays
+    payload["transformer_context_only"] = context_only
+    payload["transformer_context_title"] = f"ANALISIS RELAY {role_label.upper()}"
+    payload["transformer_primary_result_label"] = payload.get("label")
+    payload["transformer_primary_confidence"] = payload.get("confidence")
+
+    role_notes = {
+        "OCR_LV": (
+            "Rekaman OCR LV terutama berguna untuk membaca operasi proteksi sisi distribusi atau incomer. "
+            "File ini sendiri tidak cukup untuk membuktikan internal transformer fault."
+        ),
+        "OCR_HV": (
+            "Rekaman OCR HV paling berguna untuk menilai backup operation, selektivitas, dan apakah sisi HV ikut trip secara wajar."
+        ),
+        "REF": (
+            "REF lebih relevan untuk ground fault dekat zona trafo/NGR. Gunakan bersama GFR HV atau SBEF bila origin masih meragukan."
+        ),
+        "GFR_HV": (
+            "GFR HV membantu membaca jalur gangguan tanah dan koordinasi sisi HV. Kesimpulan final tetap lebih kuat bila disandingkan dengan REF atau relay sisi LV."
+        ),
+        "SBEF": (
+            "SBEF berguna untuk kasus ground fault sensitif dan isu NGR. Interpretasi terbaik memerlukan urutan trip dengan REF/GFR HV."
+        ),
+        "FEEDER": (
+            "Relay feeder/outgoing biasanya paling kuat untuk mengonfirmasi apakah gangguan berasal dari downstream/distribusi."
+        ),
+        "87T": (
+            "87T memberi bukti lokal paling kuat untuk membedakan inrush, through-fault, atau indikasi internal transformer fault."
+        ),
+    }
+    payload["transformer_context_note"] = role_notes.get(
+        relay_role,
+        "File ini dibaca sebagai satu potong evidence dalam event trafo. Gunakan bersama relay lain bila tujuan analisis adalah origin fault atau review selektivitas."
+    )
+
+    next_files = {
+        "OCR_LV": ["87T", "OCR HV", "REF / SBEF bila ground fault"],
+        "OCR_HV": ["87T", "OCR LV / incomer", "Outgoing / feeder relay"],
+        "REF": ["GFR HV", "SBEF", "87T"],
+        "GFR_HV": ["REF", "SBEF", "OCR LV / feeder"],
+        "SBEF": ["REF", "GFR HV", "87T"],
+        "FEEDER": ["OCR LV / incomer", "87T bila trafo ikut trip", "OCR HV bila ada backup trip"],
+        "87T": ["OCR HV", "OCR LV / incomer", "REF / SBEF bila earth fault"],
+    }
+    payload["transformer_next_files"] = next_files.get(relay_role, ["87T", "OCR HV", "OCR LV / incomer"])
+
+    if context_only:
+        payload["event_type"] = "TRANSFORMER_CONTEXT"
 
 
 def _generate_waveform_plot(cfg_path: str, inception_ms: float, duration_ms: float) -> str:
@@ -1805,7 +2044,12 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
 
 @app.route("/")
 def index():
-    return render_template("index.html", fault_categories=FAULT_CATEGORIES)
+    return render_template("index.html")
+
+
+@app.route("/line/upload")
+def line_upload():
+    return render_template("line_upload.html", fault_categories=FAULT_CATEGORIES)
 
 
 @app.route("/upload", methods=["POST"])
@@ -1817,13 +2061,7 @@ def upload_files():
         return jsonify({"error": "Both .cfg and .dat files are required"}), 400
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    cfg_name = secure_filename(f"{ts}_{cfg_file.filename}")
-    dat_name = secure_filename(f"{ts}_{dat_file.filename}")
-
-    cfg_path = UPLOAD_DIR / cfg_name
-    dat_path = UPLOAD_DIR / dat_name
-    cfg_file.save(cfg_path)
-    dat_file.save(dat_path)
+    cfg_path, _ = _save_uploaded_pair(cfg_file, dat_file, ts)
 
     try:
         result = classify_file(str(cfg_path))
@@ -1832,123 +2070,107 @@ def upload_files():
     except Exception as e:
         return _render_not_supported(cfg_file.filename, f"Pipeline error: {e}", cfg_path=str(cfg_path))
 
-    feats = result.features
-    cfg_ratios = _extract_cfg_ratios(str(cfg_path))
-    ratio_defaults = _resolve_ratio_defaults(
-        cfg_ratios,
-        feats.get("voltage_kv"),
-        feats.get("peak_fault_current_a"),
-        event_type=getattr(result, "event_type", "LINE"),
-    )
-    ct_ratio_src = ratio_defaults["ct_ratio_source"]
-    vt_ratio_src = ratio_defaults["vt_ratio_source"]
-    ct_p_display = ratio_defaults["ct_primary"]
-    ct_s_display = ratio_defaults["ct_secondary"]
-    vt_p_display = ratio_defaults["vt_primary"]
-    vt_s_display = ratio_defaults["vt_secondary"]
-    ct_p_base = ratio_defaults["ct_base_primary"]
-    ct_s_base = ratio_defaults["ct_base_secondary"]
-    vt_p_base = ratio_defaults["vt_base_primary"]
-    vt_s_base = ratio_defaults["vt_base_secondary"]
-
-    analysis_payload = {
-        "original_filename": cfg_file.filename,
-        "timestamp": ts,
-        "label":          result.label,
-        "confidence":     _f(result.confidence),
-        "tier":           int(result.tier),
-        "rule_name":      result.rule_name,
-        "evidence":       result.evidence,
-        "recommendation": result.recommendation,
-        "description":    result.description or "",
-        "cause_pcts":     result.cause_pcts or [],
-        "soe":            result.soe or [],
-        "di_dt_max":      _f(feats.get("di_dt_max")),
-        "thd_percent":    _f(feats.get("thd_percent")),
-        "inception_angle_degrees": _f(feats.get("inception_angle_degrees"), -1),
-        # key features for display
-        "station_name":         _s(feats.get("station_name")),
-        "relay_model":          _s(feats.get("relay_model")),
-        "zone_operated":        _s(feats.get("zone_operated")),
-        "trip_type":            _s(feats.get("trip_type")),
-        "faulted_phases":       _s(feats.get("faulted_phases")),
-        "fault_type":           _s(feats.get("fault_type")),
-        "fault_duration_ms":    _f(feats.get("fault_duration_ms")),
-        "fault_inception_ms":   _f(feats.get("fault_inception_ms")),
-        "record_duration_ms":   _f(feats.get("record_duration_ms")),
-        "fault_count":          int(feats.get("fault_count") or 0),
-        "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
-        "peak_fault_phase":     _s(feats.get("peak_fault_phase")),
-        "i0_i1_ratio":          _f(feats.get("i0_i1_ratio")),
-        "i0_magnitude_a":       _f(feats.get("i0_magnitude_a")),
-        "i1_magnitude_a":       _f(feats.get("i1_magnitude_a")),
-        "i2_magnitude_a":       _f(feats.get("i2_magnitude_a")),
-        "voltage_sag_depth_pu": _f(feats.get("voltage_sag_depth_pu")),
-        "voltage_sag_phase":    _s(feats.get("voltage_sag_phase")),
-        "v_prefault_v":         _f(feats.get("v_prefault_v")),
-        "v_fault_v":            _f(feats.get("v_fault_v")),
-        "z_magnitude_ohms":     _f(feats.get("z_magnitude_ohms")),
-        "z_angle_degrees":      _f(feats.get("z_angle_degrees")),
-        "r_x_ratio":            _f(feats.get("r_x_ratio")),
-        "reclose_successful":   _s(feats.get("reclose_successful")),
-        "reclose_time_ms":      _f(feats.get("reclose_time_ms")),
-        "voltage_kv":           str(int(_nearest_supported_voltage_kv(vt_p_base / 1000.0))) if (vt_ratio_src == "cfg" and vt_p_base > 1000.0) else (_s(feats.get("voltage_kv")) if feats.get("voltage_kv") else "Tidak diketahui"),
-        "scaling_ok":           _f(feats.get("peak_fault_current_a", 0)) >= 200.0,
-        "ct_primary": ct_p_display,
-        "ct_secondary": ct_s_display,
-        "vt_primary": vt_p_display,
-        "vt_secondary": vt_s_display,
-        "ct_primary_default": ct_p_display,
-        "ct_secondary_default": ct_s_display,
-        "vt_primary_default": vt_p_display,
-        "vt_secondary_default": vt_s_display,
-        "ratio_base_ct_primary": ct_p_base,
-        "ratio_base_ct_secondary": ct_s_base,
-        "ratio_base_vt_primary": vt_p_base,
-        "ratio_base_vt_secondary": vt_s_base,
-        "ratio_override_active": False,
-        "cfg_ct_primary": _f(cfg_ratios.get("cfg_ct_primary"), 1.0),
-        "cfg_ct_secondary": _f(cfg_ratios.get("cfg_ct_secondary"), 1.0),
-        "cfg_vt_primary": _f(cfg_ratios.get("cfg_vt_primary"), 1.0),
-        "cfg_vt_secondary": _f(cfg_ratios.get("cfg_vt_secondary"), 1.0),
-        "cfg_ct_known": bool(cfg_ratios.get("cfg_ct_known")),
-        "cfg_vt_known": bool(cfg_ratios.get("cfg_vt_known")),
-        "parser_ct_multiplier": _f(cfg_ratios.get("parser_ct_multiplier"), 0.0),
-        "parser_vt_multiplier": _f(cfg_ratios.get("parser_vt_multiplier"), 0.0),
-        "ct_ratio_source": ct_ratio_src,
-        "vt_ratio_source": vt_ratio_src,
-        "ct_ratio_known":  bool(cfg_ratios.get("cfg_ct_known")),
-        "vt_ratio_known":  bool(cfg_ratios.get("cfg_vt_known")),
-        "ratio_base_values": {
-            "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
-            "i0_magnitude_a": _f(feats.get("i0_magnitude_a")),
-            "i1_magnitude_a": _f(feats.get("i1_magnitude_a")),
-            "i2_magnitude_a": _f(feats.get("i2_magnitude_a")),
-            "v_prefault_v": _f(feats.get("v_prefault_v")),
-            "v_fault_v": _f(feats.get("v_fault_v")),
-            "z_magnitude_ohms": _f(feats.get("z_magnitude_ohms")),
-            "orig_ct_p": ct_p_base,
-            "orig_ct_s": ct_s_base,
-            "orig_vt_p": vt_p_base,
-            "orig_vt_s": vt_s_base,
-        },
-    }
-    # Phase 2: add transformer-specific fields if applicable.
-    # Without this, uploaded 87T records fall back to the generic line-fault results page.
-    _inject_transformer_fields(result, analysis_payload)
-    analysis_payload["waveform_data"] = _build_waveform_payload(
-        str(cfg_path),
-        analysis_payload["fault_inception_ms"],
-        analysis_payload["fault_duration_ms"],
-    )
-    analysis_payload["waveform_b64"] = _generate_waveform_plot(
-        str(cfg_path),
-        analysis_payload["fault_inception_ms"],
-        analysis_payload["fault_duration_ms"],
-    )
+    analysis_payload = _build_analysis_payload(result, cfg_file.filename, ts, cfg_path)
+    analysis_payload["intake_domain"] = "LINE"
     _clear_analysis_store()
     _save_analysis_to_store(analysis_payload)
 
+    return redirect(url_for("results"))
+
+
+@app.route("/transformer/upload", methods=["GET", "POST"])
+def transformer_upload():
+    if request.method == "GET":
+        return render_template(
+            "transformer_upload.html",
+            relay_roles=TRANSFORMER_RELAY_ROLES,
+            analysis_goals=TRANSFORMER_ANALYSIS_GOALS,
+            form_error="",
+        )
+
+    cfg_file = request.files.get("cfg_file")
+    dat_file = request.files.get("dat_file")
+    intake_mode = (request.form.get("intake_mode") or "QUICK").upper()
+    relay_role = (request.form.get("relay_role") or "AUTO").upper()
+    analysis_goal = (request.form.get("analysis_goal") or "EVENT_MEANING").upper()
+
+    if not cfg_file or not dat_file:
+        return render_template(
+            "transformer_upload.html",
+            relay_roles=TRANSFORMER_RELAY_ROLES,
+            analysis_goals=TRANSFORMER_ANALYSIS_GOALS,
+            form_error="File primer .cfg dan .dat wajib diisi.",
+        ), 400
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cfg_path, _ = _save_uploaded_pair(cfg_file, dat_file, ts, prefix="primary")
+
+    supporting_relays = []
+    for idx in range(1, 4):
+        support_cfg = request.files.get(f"support_cfg_{idx}")
+        support_dat = request.files.get(f"support_dat_{idx}")
+        support_role = (request.form.get(f"support_role_{idx}") or "").upper()
+        has_cfg = bool(support_cfg and support_cfg.filename)
+        has_dat = bool(support_dat and support_dat.filename)
+        if not (has_cfg or has_dat or support_role):
+            continue
+        if has_cfg != has_dat:
+            return render_template(
+                "transformer_upload.html",
+                relay_roles=TRANSFORMER_RELAY_ROLES,
+                analysis_goals=TRANSFORMER_ANALYSIS_GOALS,
+                form_error=f"Supporting relay #{idx} harus berisi pasangan .cfg dan .dat lengkap.",
+            ), 400
+        support_cfg_path, _ = _save_uploaded_pair(support_cfg, support_dat, ts, prefix=f"support{idx}")
+        supporting_relays.append({
+            "role": support_role or "OTHER",
+            "role_label": _transformer_role_label(support_role or "OTHER"),
+            "cfg_name": support_cfg.filename,
+            "cfg_path": str(support_cfg_path),
+        })
+
+    try:
+        result = classify_file(str(cfg_path))
+    except ValueError as e:
+        return _render_not_supported(cfg_file.filename, str(e), cfg_path=str(cfg_path))
+    except Exception as e:
+        return _render_not_supported(cfg_file.filename, f"Pipeline error: {e}", cfg_path=str(cfg_path))
+
+    analysis_payload = _build_analysis_payload(result, cfg_file.filename, ts, cfg_path)
+    _apply_transformer_intake_context(
+        analysis_payload,
+        relay_role=relay_role,
+        analysis_goal=analysis_goal,
+        intake_mode=intake_mode,
+        supporting_relays=supporting_relays,
+    )
+
+    # ── COORDINATED mode: analyse supporting relays and fuse evidence ────────
+    if intake_mode == "COORDINATED" and supporting_relays:
+        support_evidence = []
+        for sr in supporting_relays:
+            ev = _analyse_supporting_relay(sr["cfg_path"], sr["role"])
+            # carry the display name through
+            ev["cfg_name"] = sr["cfg_name"]
+            support_evidence.append(ev)
+
+        fused = _fuse_multi_relay_evidence(analysis_payload, support_evidence)
+
+        # Overwrite the primary payload's layered fields with fused values
+        analysis_payload["fault_origin"]                  = fused["fault_origin"]
+        analysis_payload["fault_origin_reason"]           = fused["fault_origin_reason"]
+        analysis_payload["protection_assessment"]         = fused["protection_assessment"]
+        analysis_payload["protection_assessment_reason"]  = fused["protection_assessment_reason"]
+        analysis_payload["fusion_summary"]                = fused["fusion_summary"]
+        analysis_payload["fusion_conflicts"]              = fused["fusion_conflicts"]
+        analysis_payload["is_coordinated"]                = True
+    else:
+        analysis_payload["fusion_summary"]   = []
+        analysis_payload["fusion_conflicts"] = []
+        analysis_payload["is_coordinated"]   = False
+
+    _clear_analysis_store()
+    _save_analysis_to_store(analysis_payload)
     return redirect(url_for("results"))
 
 
@@ -1958,7 +2180,7 @@ def results():
     if not analysis:
         return redirect(url_for("index"))
     # Phase 2: route transformer events to dedicated template
-    if analysis.get("event_type") == "TRANSFORMER":
+    if analysis.get("event_type") in {"TRANSFORMER", "TRANSFORMER_CONTEXT"}:
         return render_template(
             "transformer_results.html",
             analysis=analysis,
@@ -2578,6 +2800,12 @@ def _inject_transformer_fields(result, payload: dict) -> None:
     payload['limited_data']          = bool(xr.limited_data) if xr else False
     payload['relay_family']          = _s(tf.get('relay_family'), 'UNKNOWN')
 
+    # Layered output (README: Arah Berikutnya #1)
+    payload['fault_origin']              = xr.fault_origin if xr else 'UNKNOWN'
+    payload['fault_origin_reason']       = xr.fault_origin_reason if xr else ''
+    payload['protection_assessment']     = xr.protection_assessment if xr else 'EVIDENCE_KURANG'
+    payload['protection_assessment_reason'] = xr.protection_assessment_reason if xr else ''
+
     # Harmonic features
     payload['h2_ratio_a_pct']        = _f(tf.get('h2_ratio_a_pct'))
     payload['h2_ratio_b_pct']        = _f(tf.get('h2_ratio_b_pct'))
@@ -2636,6 +2864,335 @@ def _inject_transformer_fields(result, payload: dict) -> None:
 
     # Warnings
     payload['warnings'] = list(getattr(xr, 'warnings', [])) if xr else []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-relay evidence fusion (COORDINATED mode)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Priority order for fault_origin — higher index = stronger evidence
+_ORIGIN_STRENGTH = {
+    'UNKNOWN':             0,
+    'EVIDENCE_KURANG':     0,   # alias used by protection_assessment
+    'PROTEKSI_PERALATAN':  1,
+    'EXTERNAL_TRANSMISI':  2,
+    'EXTERNAL_DISTRIBUSI': 3,
+    'INTERNAL_TRAFO':      4,
+}
+
+# Priority order for protection_assessment
+_PA_STRENGTH = {
+    'EVIDENCE_KURANG': 0,
+    'BENAR':           1,
+    'TIDAK_SELEKTIF':  2,
+}
+
+# Which relay roles are most authoritative for each question
+_ORIGIN_AUTHORITY = {
+    # role → weight for determining fault_origin (0–3)
+    '87T':     3,
+    'REF':     2,
+    'GFR_HV':  2,
+    'SBEF':    2,
+    'OCR_HV':  1,
+    'OCR_LV':  2,  # strong for external-distribution claim
+    'FEEDER':  3,  # feeder trip = strongest external-distribution signal
+    'OTHER':   0,
+    'AUTO':    1,
+}
+
+_PA_AUTHORITY = {
+    '87T':     3,
+    'OCR_HV':  2,
+    'OCR_LV':  2,
+    'FEEDER':  2,
+    'REF':     1,
+    'GFR_HV':  1,
+    'SBEF':    1,
+    'OTHER':   0,
+    'AUTO':    1,
+}
+
+
+def _analyse_supporting_relay(cfg_path: str, role: str) -> dict:
+    """
+    Run classify_file on a supporting relay file and return a slim evidence dict:
+      {role, role_label, event_class, fault_origin, protection_assessment,
+       confidence, limited_data, evidence, fault_origin_reason,
+       protection_assessment_reason}
+    Returns a fallback dict if classification fails.
+    """
+    role_label = _transformer_role_label(role)
+    fallback = {
+        'role': role, 'role_label': role_label,
+        'event_class': 'UNKNOWN', 'confidence': 0.0,
+        'fault_origin': 'UNKNOWN', 'fault_origin_reason': '',
+        'protection_assessment': 'EVIDENCE_KURANG',
+        'protection_assessment_reason': 'File tidak dapat dianalisis.',
+        'limited_data': True, 'evidence': '',
+    }
+    try:
+        result = classify_file(cfg_path)
+    except Exception as e:
+        fallback['protection_assessment_reason'] = f'Error: {e}'
+        return fallback
+
+    xr = getattr(result, 'transformer_result', None)
+
+    if xr is None:
+        return _derive_supporting_line_evidence(result, role, role_label)
+
+    return {
+        'role':  role,
+        'role_label': role_label,
+        'event_class': xr.event_class,
+        'confidence':  xr.confidence,
+        'fault_origin': xr.fault_origin,
+        'fault_origin_reason': xr.fault_origin_reason,
+        'protection_assessment': xr.protection_assessment,
+        'protection_assessment_reason': xr.protection_assessment_reason,
+        'limited_data': xr.limited_data,
+        'evidence': xr.evidence if isinstance(xr.evidence, str) else '',
+    }
+
+
+def _derive_supporting_line_evidence(result, role: str, role_label: str) -> dict:
+    """Convert a non-87T classification result into conservative transformer-side evidence."""
+    label = _s(getattr(result, "label", ""), "")
+    event_class = _top_cause_name(result) or label or "UNKNOWN"
+    label_norm = _normalize_label(label)
+    event_norm = _normalize_label(event_class)
+    features = getattr(result, "features", None) or {}
+    confidence = max(_f(getattr(result, "confidence", 0.0), 0.0), 0.0)
+    fault_type = _normalize_label(_s(features.get("fault_type"), ""))
+    ground_indicated = (
+        fault_type in {"SLG", "DLG"} or
+        _f(features.get("i0_i1_ratio"), 0.0) >= 0.25 or
+        _f(features.get("i0_magnitude_a"), 0.0) > 0.0
+    )
+
+    evidence_bits = []
+    if label:
+        evidence_bits.append(f"Prediksi lokal {label}")
+    if role in {"OCR_LV", "FEEDER"} and ground_indicated:
+        evidence_bits.append("indikasi earth fault/downstream terlihat pada relay sisi LV")
+    elif role in {"REF", "GFR_HV", "SBEF"} and ground_indicated:
+        evidence_bits.append("relay earth-fault ikut merekam event")
+    elif role == "OCR_HV":
+        evidence_bits.append("relay OCR HV ikut melihat gangguan sebagai evidence koordinasi")
+    evidence = ". ".join(evidence_bits).strip()
+
+    if "PERALATAN" in label_norm or "PERALATAN" in event_norm:
+        return {
+            'role': role,
+            'role_label': role_label,
+            'event_class': event_class,
+            'confidence': confidence,
+            'fault_origin': 'PROTEKSI_PERALATAN',
+            'fault_origin_reason': (
+                f"[{role_label}] Rekaman ini lebih mengarah ke isu peralatan/proteksi "
+                f"daripada external fault murni."
+            ),
+            'protection_assessment': 'TIDAK_SELEKTIF',
+            'protection_assessment_reason': (
+                f"[{role_label}] Indikasi {event_class} membuat operasi relay perlu "
+                "direview sebagai potensi gangguan peralatan/proteksi."
+            ),
+            'limited_data': False,
+            'evidence': evidence,
+        }
+
+    if role in {'FEEDER', 'OCR_LV'}:
+        return {
+            'role': role,
+            'role_label': role_label,
+            'event_class': event_class,
+            'confidence': confidence,
+            'fault_origin': 'EXTERNAL_DISTRIBUSI',
+            'fault_origin_reason': (
+                f"[{role_label}] Relay sisi hilir ikut melihat dan mengisolasi gangguan, "
+                "lebih konsisten dengan fault distribusi/downstream daripada internal trafo."
+            ),
+            'protection_assessment': 'BENAR',
+            'protection_assessment_reason': (
+                f"[{role_label}] Operasi relay hilir menjadi bukti kuat bahwa proteksi lokal "
+                "di sisi distribusi bekerja sebagai first-clearing layer."
+            ),
+            'limited_data': False,
+            'evidence': evidence,
+        }
+
+    if role in {'REF', 'GFR_HV', 'SBEF'}:
+        return {
+            'role': role,
+            'role_label': role_label,
+            'event_class': event_class,
+            'confidence': confidence,
+            'fault_origin': 'UNKNOWN',
+            'fault_origin_reason': (
+                f"[{role_label}] Relay ini memberi konteks jalur gangguan tanah, "
+                "tetapi origin final tetap perlu disandingkan dengan 87T atau relay pasangan."
+            ),
+            'protection_assessment': 'BENAR' if ground_indicated else 'EVIDENCE_KURANG',
+            'protection_assessment_reason': (
+                f"[{role_label}] Event terekam pada elemen earth-fault; evidence ini relevan "
+                "untuk koordinasi, tetapi belum cukup untuk memutuskan internal vs external sendirian."
+            ),
+            'limited_data': False,
+            'evidence': evidence,
+        }
+
+    if role == 'OCR_HV':
+        return {
+            'role': role,
+            'role_label': role_label,
+            'event_class': event_class,
+            'confidence': confidence,
+            'fault_origin': 'UNKNOWN',
+            'fault_origin_reason': (
+                f"[{role_label}] OCR HV memberi evidence koordinasi sisi atas, "
+                "namun satu file ini saja belum cukup untuk menegaskan origin akhir."
+            ),
+            'protection_assessment': 'EVIDENCE_KURANG',
+            'protection_assessment_reason': (
+                f"[{role_label}] Bandingkan dengan OCR LV/feeder atau 87T untuk menilai "
+                "apakah trip sisi HV memang diperlukan atau hanya backup."
+            ),
+            'limited_data': False,
+            'evidence': evidence,
+        }
+
+    return {
+        'role': role,
+        'role_label': role_label,
+        'event_class': event_class,
+        'confidence': confidence,
+        'fault_origin': 'UNKNOWN',
+        'fault_origin_reason': (
+            f"[{role_label}] File berhasil dibaca sebagai evidence lokal, tetapi peran relay ini "
+            "belum cukup spesifik untuk menentukan origin tanpa pasangan relay lain."
+        ),
+        'protection_assessment': 'EVIDENCE_KURANG',
+        'protection_assessment_reason': (
+            f"[{role_label}] Jadikan file ini sebagai supporting evidence, "
+            "bukan penentu final internal vs external sendirian."
+        ),
+        'limited_data': False,
+        'evidence': evidence,
+    }
+
+
+def _fuse_multi_relay_evidence(primary_payload: dict,
+                                support_evidence: list[dict]) -> dict:
+    """
+    Fuse evidence from the primary relay and all supporting relays.
+
+    Returns a dict of fused fields that overwrite the primary payload:
+      fault_origin, fault_origin_reason,
+      protection_assessment, protection_assessment_reason,
+      fusion_summary   (list of per-relay rows for the results table)
+      fusion_conflicts (list of conflict strings shown as warnings)
+    """
+    primary_role = (primary_payload.get('transformer_relay_role') or 'AUTO').upper()
+
+    # Build unified evidence list: primary first, then supporting
+    all_evidence = [{
+        'role':  primary_role,
+        'role_label': _transformer_role_label(primary_role),
+        'event_class': primary_payload.get('event_class', 'UNKNOWN'),
+        'confidence':  primary_payload.get('confidence', 0.0),
+        'fault_origin': primary_payload.get('fault_origin', 'UNKNOWN'),
+        'fault_origin_reason': primary_payload.get('fault_origin_reason', ''),
+        'protection_assessment': primary_payload.get('protection_assessment', 'EVIDENCE_KURANG'),
+        'protection_assessment_reason': primary_payload.get('protection_assessment_reason', ''),
+        'limited_data': primary_payload.get('limited_data', False),
+        'evidence': primary_payload.get('evidence', ''),
+        'is_primary': True,
+    }] + [{**e, 'is_primary': False} for e in support_evidence]
+
+    # ── Fault origin: pick highest-authority non-UNKNOWN origin ──────────────
+    best_origin = 'UNKNOWN'
+    best_origin_reason = 'Tidak ada relay yang memberikan indikasi origin yang cukup kuat.'
+    best_origin_weight = -1
+
+    for ev in all_evidence:
+        origin = ev.get('fault_origin', 'UNKNOWN')
+        if origin in ('UNKNOWN', ''):
+            continue
+        role_w = _ORIGIN_AUTHORITY.get(ev['role'], 0)
+        origin_s = _ORIGIN_STRENGTH.get(origin, 0)
+        weight = role_w * origin_s * max(ev.get('confidence', 0.0), 0.1)
+        if weight > best_origin_weight:
+            best_origin_weight = weight
+            best_origin = origin
+            best_origin_reason = (
+                f"[{ev['role_label']}] {ev.get('fault_origin_reason', '')} "
+                f"(confidence {ev['confidence']:.0%})"
+            )
+
+    # ── Override: if FEEDER or OCR_LV fired and is non-UNKNOWN,
+    #    that's strong external-distribution evidence regardless of primary ────
+    for ev in all_evidence:
+        if ev['role'] in ('FEEDER', 'OCR_LV') and \
+                ev.get('fault_origin') == 'EXTERNAL_DISTRIBUSI' and \
+                ev.get('confidence', 0) >= 0.40:
+            best_origin = 'EXTERNAL_DISTRIBUSI'
+            best_origin_reason = (
+                f"[{ev['role_label']}] Trip konfirmasikan gangguan sisi distribusi — "
+                f"override dari relay {ev['role_label']}. "
+                f"{ev.get('fault_origin_reason','')}"
+            )
+            break
+
+    # ── Protection assessment: use highest-authority non-EVIDENCE_KURANG ─────
+    best_pa = 'EVIDENCE_KURANG'
+    best_pa_reason = 'Belum ada relay yang memberikan penilaian selektivitas yang kuat.'
+    best_pa_weight = -1
+
+    for ev in all_evidence:
+        pa = ev.get('protection_assessment', 'EVIDENCE_KURANG')
+        if pa == 'EVIDENCE_KURANG':
+            continue
+        role_w = _PA_AUTHORITY.get(ev['role'], 0)
+        pa_s = _PA_STRENGTH.get(pa, 0)
+        weight = role_w * pa_s * max(ev.get('confidence', 0.0), 0.1)
+        if weight > best_pa_weight:
+            best_pa_weight = weight
+            best_pa = pa
+            best_pa_reason = (
+                f"[{ev['role_label']}] {ev.get('protection_assessment_reason', '')} "
+                f"(confidence {ev['confidence']:.0%})"
+            )
+
+    # ── Detect conflicts ──────────────────────────────────────────────────────
+    conflicts = []
+    origins_seen = set(ev.get('fault_origin', 'UNKNOWN')
+                       for ev in all_evidence
+                       if ev.get('fault_origin', 'UNKNOWN') not in ('UNKNOWN', ''))
+    if 'INTERNAL_TRAFO' in origins_seen and \
+            ('EXTERNAL_DISTRIBUSI' in origins_seen or 'EXTERNAL_TRANSMISI' in origins_seen):
+        conflicts.append(
+            "Konflik: satu relay menunjukkan gangguan INTERNAL, relay lain menunjukkan "
+            "EKSTERNAL. Perlu review manual sebelum kesimpulan final."
+        )
+
+    pa_seen = set(ev.get('protection_assessment', 'EVIDENCE_KURANG')
+                  for ev in all_evidence
+                  if ev.get('protection_assessment') not in ('EVIDENCE_KURANG', ''))
+    if 'BENAR' in pa_seen and 'TIDAK_SELEKTIF' in pa_seen:
+        conflicts.append(
+            "Konflik selektivitas: sebagian relay menunjukkan operasi benar, "
+            "sebagian lagi menunjukkan tidak selektif. Periksa urutan trip."
+        )
+
+    return {
+        'fault_origin': best_origin,
+        'fault_origin_reason': best_origin_reason.strip(),
+        'protection_assessment': best_pa,
+        'protection_assessment_reason': best_pa_reason.strip(),
+        'fusion_summary': all_evidence,
+        'fusion_conflicts': conflicts,
+    }
 
 
 def _save_xfmr_to_csv(row: dict) -> None:

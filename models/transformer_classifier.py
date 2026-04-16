@@ -85,13 +85,22 @@ class TransformerClassificationResult:
 
     # Primary classification
     event_class: str = "UNKNOWN"   # one of the 6 classes above
-    confidence: float = 0.0        # 0–1
+    confidence: float = 0.0        # 0-1
+
+    # Layered output (README: Arah Berikutnya #1)
+    fault_origin: str = "UNKNOWN"
+    # INTERNAL_TRAFO | EXTERNAL_DISTRIBUSI | EXTERNAL_TRANSMISI | PROTEKSI_PERALATAN | UNKNOWN
+    fault_origin_reason: str = ""
+
+    protection_assessment: str = "EVIDENCE_KURANG"
+    # BENAR | TIDAK_SELEKTIF | EVIDENCE_KURANG
+    protection_assessment_reason: str = ""
 
     # Evidence
     rule_name: str = ""
     evidence: str = ""
 
-    # Secondary: probability estimates per class (sum ≈ 1)
+    # Secondary: probability estimates per class (sum approx 1)
     class_probabilities: dict = field(default_factory=lambda: {
         'INRUSH':         0.0,
         'INTERNAL_FAULT': 0.0,
@@ -334,13 +343,120 @@ def classify_transformer_event(features) -> TransformerClassificationResult:
     # ─────────────────────────────────────────────────────────────────────────
     result.recommendation, result.action_required = _recommendation(result.event_class, result.confidence)
 
+    # ── Layered output: fault_origin + protection_assessment ─────────────────
+    result.fault_origin, result.fault_origin_reason, \
+        result.protection_assessment, result.protection_assessment_reason = \
+        _derive_layered_output(result.event_class, result.confidence,
+                               result.limited_data, features)
+
     # Log
     logger.info(
         f"Transformer classification: {result.event_class} "
         f"({result.confidence:.0%}) | H2={h2:.1f}% H5={h5:.1f}% "
-        f"DC={dc:.2f} slope={slp:.1f}%"
+        f"DC={dc:.2f} slope={slp:.1f}% | origin={result.fault_origin} "
+        f"protection={result.protection_assessment}"
     )
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Layered output derivation (README: Arah Berikutnya #1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _derive_layered_output(event_class: str, confidence: float,
+                            limited_data: bool, features) -> tuple:
+    """
+    Derive fault_origin and protection_assessment from event_class.
+
+    Returns (fault_origin, fault_origin_reason,
+             protection_assessment, protection_assessment_reason).
+
+    fault_origin:
+      INTERNAL_TRAFO        — fault/phenomenon inside the transformer
+      EXTERNAL_DISTRIBUSI   — external fault, distribution side
+      EXTERNAL_TRANSMISI    — external fault, transmission side
+      PROTEKSI_PERALATAN    — protection or CT/equipment issue
+      UNKNOWN               — cannot determine
+
+    protection_assessment:
+      BENAR                 — protection operated correctly
+      TIDAK_SELEKTIF        — non-selective (false or unnecessary trip)
+      EVIDENCE_KURANG       — insufficient evidence to assess
+    """
+    if limited_data or event_class == 'UNKNOWN' or confidence < 0.25:
+        return (
+            'UNKNOWN',
+            'Data tidak mencukupi untuk menentukan origin gangguan.',
+            'EVIDENCE_KURANG',
+            'Confidence rendah atau data terbatas — tidak dapat menilai selektivitas proteksi.',
+        )
+
+    if event_class == 'INRUSH':
+        return (
+            'INTERNAL_TRAFO',
+            'Inrush magnetisasi terjadi di dalam transformator saat energisasi. '
+            'Bukan gangguan — fenomena normal operasi.',
+            'BENAR',
+            'Relay mendeteksi second harmonic dengan benar. '
+            'Jika rele tidak trip, proteksi bekerja sesuai filosofi restraint harmonik.',
+        )
+
+    if event_class == 'INTERNAL_FAULT':
+        return (
+            'INTERNAL_TRAFO',
+            'Arus diferensial melebihi slope-1 tanpa kandungan harmonik tinggi, '
+            'konsisten dengan gangguan belitan atau inti transformator.',
+            'BENAR',
+            '87T bekerja sesuai fungsi — arus diferensial melebihi batas operate '
+            'dengan indikasi kuat gangguan internal.',
+        )
+
+    if event_class == 'THROUGH_FAULT':
+        # Through-fault origin: LV side is usually distribution, HV side is transmission.
+        # Without additional relay context we can only say "external" generically.
+        irstr = getattr(features, 'irstr_max_pu', None) or 0.0
+        if irstr > 2.0:
+            origin = 'EXTERNAL_DISTRIBUSI'
+            origin_reason = (
+                f'Arus restraint sangat tinggi ({irstr:.1f} pu) konsisten dengan '
+                'through-fault dari gangguan distribusi sisi LV.'
+            )
+        else:
+            origin = 'EXTERNAL_TRANSMISI'
+            origin_reason = (
+                f'Arus restraint {irstr:.1f} pu — through-fault kemungkinan '
+                'dari sisi transmisi atau bus. Konfirmasi dengan relay feeder/OCR.'
+            )
+        return (
+            origin,
+            origin_reason,
+            'BENAR',
+            'Rele diferensial berhasil restraint — tidak trip saat through-fault. '
+            'Perlu verifikasi saturasi CT pada arus tinggi.',
+        )
+
+    if event_class == 'OVEREXCITATION':
+        return (
+            'INTERNAL_TRAFO',
+            'Kondisi V/Hz berlebih (harmonic ke-5 tinggi) — sumber di sistem '
+            'tegangan atau AVR, berdampak pada inti transformator.',
+            'BENAR',
+            'Proteksi V/Hz atau IDMT bekerja sesuai kondisi overeksitasi. '
+            'Review setting AVR dan tap changer.',
+        )
+
+    if event_class == 'MAL_OPERATE':
+        return (
+            'PROTEKSI_PERALATAN',
+            'Indikasi saturasi CT akibat arus gangguan eksternal tinggi yang '
+            'menciptakan arus diferensial semu — bukan gangguan internal trafo.',
+            'TIDAK_SELEKTIF',
+            'Rele trip tidak selektif: gangguan bukan internal trafo tetapi rele '
+            '87T operate. Periksa rasio CT, setting slope, dan stabilitas diferensial.',
+        )
+
+    # Fallback
+    return ('UNKNOWN', '', 'EVIDENCE_KURANG', '')
 
 
 # ─────────────────────────────────────────────────────────────────────────────

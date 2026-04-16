@@ -198,10 +198,13 @@
             <div class="brand-name">TFA</div>
             <div class="brand-sub">Fault Analyzer</div>
         </div>
-        <div class="sidebar-section">Jaringan Transmisi</div>
+        <div class="sidebar-section">Mulai Analisis</div>
         <nav class="sidebar-nav">
             <a href="{{ url_for('index') }}"   class="nav-item {% block nav_upload %}{% endblock %}">
-                <span class="nav-icon">↑</span> Unggah File
+                <span class="nav-icon">⊕</span> Analisis Baru
+            </a>
+            <a href="{{ url_for('line_upload') }}" class="nav-item {% block nav_line_upload %}{% endblock %}">
+                <span class="nav-icon">↑</span> Input Saluran
             </a>
             <a href="{{ url_for('browse') }}"  class="nav-item {% block nav_browse %}{% endblock %}">
                 <span class="nav-icon">▣</span> Pilih Rekaman
@@ -213,8 +216,11 @@
                 <span class="nav-icon">↗</span> Tren Gangguan
             </a>
         </nav>
-        <div class="sidebar-section" style="margin-top:4px;">Transformator (Phase 2)</div>
+        <div class="sidebar-section" style="margin-top:4px;">Transformator</div>
         <nav class="sidebar-nav" style="padding-top:0;">
+            <a href="{{ url_for('transformer_upload') }}" class="nav-item {% block nav_transformer_upload %}{% endblock %}">
+                <span class="nav-icon" style="color:#8b5cf6;">↑</span> Input Trafo
+            </a>
             <a href="{{ url_for('transformer_history') }}" class="nav-item {% block nav_xfmr_history %}{% endblock %}">
                 <span class="nav-icon" style="color:#8b5cf6;">⬡</span> Riwayat 87T
             </a>
