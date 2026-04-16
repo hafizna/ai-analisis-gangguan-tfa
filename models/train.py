@@ -271,7 +271,7 @@ def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
     payload = {
         "clf": clf,
         "feature_cols": FEATURE_COLS,
-        "classes": trainable,
+        "classes": list(getattr(clf, "classes_", trainable)),
         "all_classes": ALL_CLASSES,
         "class_counts": dict(class_counts),
         "model_type": "multiclass_random_forest",

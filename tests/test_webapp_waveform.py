@@ -242,6 +242,77 @@ def test_recalculate_scales_relative_to_hidden_baseline_not_absolute(monkeypatch
     assert updated["ratio_override_active"] is True
 
 
+def test_recalculate_multiclass_uses_classifier_class_order_for_probability_labels(monkeypatch):
+    class DummyClf:
+        classes_ = np.array(["BENDA_ASING", "HEWAN", "KONDUKTOR", "LAYANG", "PETIR"], dtype=object)
+
+        def predict(self, X):
+            return np.array(["PETIR"], dtype=object)
+
+        def predict_proba(self, X):
+            return np.array([[0.09, 0.092, 0.691, 0.013, 0.114]], dtype=float)
+
+    analysis = {
+        "ct_primary": None,
+        "ct_secondary": None,
+        "vt_primary": None,
+        "vt_secondary": None,
+        "ct_primary_default": None,
+        "ct_secondary_default": None,
+        "vt_primary_default": None,
+        "vt_secondary_default": None,
+        "ratio_base_ct_primary": 2000.0,
+        "ratio_base_ct_secondary": 5.0,
+        "ratio_base_vt_primary": 150000.0,
+        "ratio_base_vt_secondary": 100.0,
+        "peak_fault_current_a": 2419.22,
+        "i0_magnitude_a": 719.93,
+        "i1_magnitude_a": 941.63,
+        "i2_magnitude_a": 697.80,
+        "v_prefault_v": 41.09,
+        "v_fault_v": 7.62,
+        "z_magnitude_ohms": 4.5009,
+        "fault_duration_ms": 80.0,
+        "fault_count": 1,
+        "i0_i1_ratio": 0.765,
+        "voltage_sag_depth_pu": 0.814,
+        "di_dt_max": 1000.0,
+        "reclose_successful": "",
+        "trip_type": "single_pole",
+        "faulted_phases": "C",
+        "fault_type": "SLG",
+        "reclose_time_ms": 0.0,
+        "thd_percent": 5.0,
+        "inception_angle_degrees": 90.0,
+        "label": "PETIR",
+        "confidence": 0.69,
+        "tier": 2,
+        "rule_name": "multiclass_random_forest",
+        "evidence": "",
+        "recommendation": "",
+        "description": "",
+        "cause_pcts": [],
+    }
+
+    monkeypatch.setattr(webapp_app, "apply_rules", lambda row: None)
+    monkeypatch.setattr(
+        webapp_app,
+        "_load_model",
+        lambda: {
+            "clf": DummyClf(),
+            "classes": ["PETIR", "LAYANG", "HEWAN", "BENDA_ASING", "KONDUKTOR"],
+            "model_type": "multiclass_random_forest",
+        },
+    )
+
+    updated = webapp_app._recalculate_analysis_with_ratio(analysis, 2000.0, 5.0, 150000.0, 100.0)
+
+    assert updated["label"] == "PETIR"
+    assert updated["cause_pcts"][0]["name"] == "KONDUKTOR / TOWER"
+    assert updated["cause_pcts"][0]["pct"] == 69.1
+    assert any(item["name"] == "PETIR" and item["pct"] == 11.4 for item in updated["cause_pcts"])
+
+
 def test_build_waveform_payload_does_not_force_active_line_when_payload_is_small(monkeypatch):
     time_axis = np.arange(0.0, 0.010, 0.001)
     record = SimpleNamespace(

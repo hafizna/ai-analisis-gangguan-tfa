@@ -641,7 +641,8 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         proba        = clf.predict_proba(X)[0]
 
         # ── Multi-class path (new fault_classifier.pkl) ───────────────────
-        if model_type == "multiclass_random_forest" and classes:
+        proba_classes = list(getattr(clf, "classes_", classes))
+        if model_type == "multiclass_random_forest" and proba_classes:
             confidence = float(proba.max())
             # cause_pcts uses "name" key for template compatibility
             _label_id_map = {
@@ -654,7 +655,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             }
             cause_pcts_ml = [
                 {"name": _label_id_map.get(cls, cls), "pct": round(float(p) * 100, 1)}
-                for cls, p in sorted(zip(classes, proba), key=lambda x: -x[1])
+                for cls, p in sorted(zip(proba_classes, proba), key=lambda x: -x[1])
             ]
             label_id = _label_id_map.get(pred, pred)
             reclose_note = "  AR berhasil — gangguan terkonfirmasi transien." if _reclose_confirmed else ""
