@@ -144,6 +144,7 @@ def determine_protection(record) -> ProtectionEvent:
     diff_operated = _check_differential_operate(status_names, status_dict)
     dist_operated, dist_zones, dist_phases = _check_distance_operate(status_names, status_dict)
     ef_operated = _check_directional_ef_operate(status_names, status_dict)
+    oc_operated, oc_phases = _check_overcurrent_operate(status_names, status_dict)
 
     # Determine primary protection
     # 87T takes priority — if transformer-specific signals found, route to Phase 2 classifier
@@ -178,6 +179,19 @@ def determine_protection(record) -> ProtectionEvent:
         # Directional EF → classifiable = False
         classifiable = False
         skip_reason = "67N directional earth fault only"
+
+    elif oc_operated:
+        primary_protection = ProtectionType.OVERCURRENT
+        operated_phases = oc_phases
+        confidence = 0.85
+
+        # OCR / 50/51 files still carry valid fault waveforms, but zone info is absent.
+        classifiable = True
+        skip_reason = None
+        warnings.append(
+            "Proteksi diidentifikasi sebagai OCR / 50/51 dari status pickup/trip; "
+            "analisis penyebab tetap berbasis gelombang karena tidak ada logika zona rele jarak."
+        )
 
     else:
         # Last resort: check for generic trip signals (Siemens group indicator, DFR outputs, etc.)
@@ -461,7 +475,6 @@ def _check_distance_operate(status_names: List[str], status_dict: dict) -> tuple
             '21Q', '21D.',              # PCS900: "21Q1.Op", "21D.Op" (distance operate)
             'DZ1', 'DZ2', 'DZ3',       # PCS900: "DZ1R", "DZ1S", "DZ1T" (distance zone 1)
             'DIS.PICKUP', 'DIS. ',      # ABB REL: "Dis.Pickup L1", "Dis. forward"
-            'RELAY TRIP', 'RELAY PICKUP',  # ABB REL: "Relay TRIP L2"
             'ZM1', 'ZM2', 'ZM3',       # ABB REL: "ZM1_TRIP", "ZM1_TRL1" (zone management)
             'F21',                      # Qualitrol/external DFR: "L1_F21_REC" (function 21 = distance)
             'LINE PICKUP',              # GE D60: "LINE PICKUP OP" (line distance pickup)
@@ -529,6 +542,42 @@ def _check_directional_ef_operate(status_names: List[str], status_dict: dict) ->
                 return True
 
     return False
+
+
+def _check_overcurrent_operate(status_names: List[str], status_dict: dict) -> tuple:
+    """
+    Check if OCR / 50-51 overcurrent elements operated.
+
+    Returns:
+        (operated: bool, phases: List[str])
+    """
+    phases = []
+    operated = False
+
+    oc_keywords = [
+        'O/C', 'OVERCURRENT', 'I>', 'I>>', 'IP ', 'IPU', 'IP TRIP',
+        'OCR', '50', '51',
+    ]
+    operate_keywords = ['PICKUP', 'PICKED UP', 'TRIP', 'PU']
+    exclude_keywords = ['87', 'DIFF', 'DIST', 'ZONE', '21', '67N', 'DEF']
+
+    for name in status_names:
+        variants = _name_variants(name)
+        if any(k in v for v in variants for k in exclude_keywords):
+            continue
+        has_oc = any(k in v for v in variants for k in oc_keywords)
+        has_operate = any(k in v for v in variants for k in operate_keywords)
+        if not (has_oc and has_operate):
+            continue
+
+        samples = status_dict.get(name, [])
+        if len(samples) > 0 and samples.sum() > 0:
+            operated = True
+            ph = _extract_phase_from_name(_normalize_status_name(name))
+            if ph:
+                phases.append(ph)
+
+    return operated, list(set(phases))
 
 
 def _check_generic_trip_fallback(status_names: List[str], status_dict: dict) -> tuple:

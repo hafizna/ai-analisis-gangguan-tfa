@@ -246,11 +246,20 @@ def _generic_pattern_match(raw_upper: str, measurement: str) -> tuple:
 
     # Neutral/residual patterns first, but token-aware (prevents LINE -> IN mistakes).
     if measurement == "voltage":
-        if has_token("VN", "V0", "3V0", "VG", "UE", "U0", "UN") or has_substr("V_N", "V_RES", "RESVOL"):
+        if has_token("VN", "V0", "3V0", "VG", "UE", "U0", "UN", "UEN") or has_substr("V_N", "V_RES", "RESVOL"):
             return ("VN", "N")
     if measurement == "current":
         if has_token("IN", "I0", "3I0", "IG", "IE") or has_substr("I_N", "I_RES", "RESCUR"):
             return ("IN", "N")
+
+    # Common Siemens OCR / feeder line-line voltages.
+    if measurement == "voltage":
+        if has_token("UL12", "VL12", "U12", "V12", "ULAB", "VAB"):
+            return ("VAB", None)
+        if has_token("UL23", "VL23", "U23", "V23", "ULBC", "VBC"):
+            return ("VBC", None)
+        if has_token("UL31", "VL31", "U31", "V31", "ULCA", "VCA"):
+            return ("VCA", None)
 
     # Explicit CT/VT R/S/T naming used in several PLN records.
     if measurement == "voltage":

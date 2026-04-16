@@ -19,6 +19,8 @@ _TRANSIENT_LABEL_MAP = [
     ("pohon", "POHON"),
     ("tower roboh", "KONDUKTOR"),
     ("konduktor", "KONDUKTOR"),
+    ("alat isolator", "PERALATAN"),
+    ("isolator", "PERALATAN"),
     ("kerusakan peralatan", "PERALATAN"),
     ("gangguan peralatan", "PERALATAN"),
     ("pilot wire", "PERALATAN"),

@@ -27,6 +27,10 @@ class DistanceFeatures:
     z_angle_degrees: Optional[float]      # Impedance angle
     voltage_sag_depth_pu: float           # Min voltage during fault (per-unit)
     voltage_sag_phase: str                # Which phase had deepest sag
+    voltage_phase_ratio_spread_pu: float  # Spread of per-phase fault/prefault voltage ratios
+    healthy_phase_voltage_ratio: float    # Highest phase fault/prefault voltage ratio
+    v2_v1_ratio: float                    # Negative-sequence / positive-sequence voltage ratio
+    voltage_thd_max_percent: float        # Max voltage THD across phases in early fault window
 
     # === CURRENT FEATURES (universal) ===
     di_dt_max: float                      # Max |dI/dt| in first cycle after inception (A/s)
@@ -159,6 +163,14 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
         voltage_sag_depth, voltage_sag_phase = _calculate_voltage_sag(
             va, vb, vc, inception_idx, sampling_rate, system_freq
         )
+        (
+            voltage_phase_ratio_spread,
+            healthy_phase_voltage_ratio,
+            v2_v1_ratio,
+            voltage_thd_max_percent,
+        ) = _calculate_voltage_profile_features(
+            va, vb, vc, inception_idx, sampling_rate, system_freq
+        )
 
         # Calculate dI/dt features
         di_dt_max, di_dt_phase = _calculate_di_dt(
@@ -218,6 +230,10 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
             z_angle_degrees=z_angle,
             voltage_sag_depth_pu=voltage_sag_depth,
             voltage_sag_phase=voltage_sag_phase,
+            voltage_phase_ratio_spread_pu=voltage_phase_ratio_spread,
+            healthy_phase_voltage_ratio=healthy_phase_voltage_ratio,
+            v2_v1_ratio=v2_v1_ratio,
+            voltage_thd_max_percent=voltage_thd_max_percent,
             # Current
             di_dt_max=di_dt_max,
             di_dt_phase=di_dt_phase,
@@ -573,6 +589,88 @@ def _calculate_voltage_sag(va, vb, vc, inception_idx, sampling_rate, system_freq
         return 0.0, 'A'
 
 
+def _calculate_windowed_thd(samples, sampling_rate, system_freq):
+    """Calculate THD for an arbitrary waveform window."""
+
+    N = len(samples)
+    if N < 4:
+        return 0.0
+
+    fft_vals = fft(samples)
+    freqs = fftfreq(N, 1 / sampling_rate)
+    fund_idx = np.argmin(np.abs(freqs - system_freq))
+    fund_mag = np.abs(fft_vals[fund_idx])
+
+    harmonic_sum_sq = np.sum(np.abs(fft_vals[2:N // 2]) ** 2) - fund_mag ** 2
+    if harmonic_sum_sq < 0:
+        harmonic_sum_sq = 0.0
+
+    if fund_mag <= 0:
+        return 0.0
+
+    return min(float(np.sqrt(harmonic_sum_sq) / fund_mag * 100.0), 100.0)
+
+
+def _calculate_voltage_profile_features(va, vb, vc, inception_idx, sampling_rate, system_freq):
+    """
+    Summarize early-fault voltage asymmetry / distortion.
+
+    These features help separate balanced transient faults from suspicious
+    measurement/equipment cases where one phase remains healthy, negative-
+    sequence voltage rises, or harmonic distortion appears in the voltage set.
+    """
+
+    try:
+        samples_per_cycle = int(sampling_rate / system_freq)
+        prefault_start = max(0, inception_idx - 2 * samples_per_cycle)
+        prefault_end = inception_idx
+        fault_start = inception_idx
+        fault_end = min(inception_idx + 2 * samples_per_cycle, len(va.samples))
+
+        if prefault_end <= prefault_start or fault_end <= fault_start:
+            return 0.0, 0.0, 0.0, 0.0
+
+        prefault_rms = {}
+        fault_rms = {}
+        fault_ratio = {}
+        voltage_thds = []
+        channels = {"A": va, "B": vb, "C": vc}
+
+        for phase, ch in channels.items():
+            pre = np.asarray(ch.samples[prefault_start:prefault_end], dtype=float)
+            flt = np.asarray(ch.samples[fault_start:fault_end], dtype=float)
+            if len(pre) == 0 or len(flt) == 0:
+                return 0.0, 0.0, 0.0, 0.0
+
+            prefault_rms[phase] = float(np.sqrt(np.mean(pre ** 2)))
+            fault_rms[phase] = float(np.sqrt(np.mean(flt ** 2)))
+            fault_ratio[phase] = (
+                fault_rms[phase] / prefault_rms[phase] if prefault_rms[phase] > 0 else 0.0
+            )
+            voltage_thds.append(_calculate_windowed_thd(flt, sampling_rate, system_freq))
+
+        ratio_values = list(fault_ratio.values())
+        phase_ratio_spread = float(max(ratio_values) - min(ratio_values))
+        healthy_phase_ratio = float(max(ratio_values))
+
+        ws = inception_idx
+        we = min(inception_idx + samples_per_cycle, len(va.samples))
+        v_a = _calculate_phasor(va.samples[ws:we], system_freq, sampling_rate)
+        v_b = _calculate_phasor(vb.samples[ws:we], system_freq, sampling_rate)
+        v_c = _calculate_phasor(vc.samples[ws:we], system_freq, sampling_rate)
+
+        a = np.exp(2j * np.pi / 3)
+        v1 = (v_a + a * v_b + a**2 * v_c) / 3
+        v2 = (v_a + a**2 * v_b + a * v_c) / 3
+        v2_v1_ratio = float(np.abs(v2) / np.abs(v1)) if np.abs(v1) > 0.1 else 0.0
+
+        return phase_ratio_spread, healthy_phase_ratio, v2_v1_ratio, float(max(voltage_thds))
+
+    except Exception as e:
+        logger.error(f"Voltage profile feature calculation failed: {e}")
+        return 0.0, 0.0, 0.0, 0.0
+
+
 def _calculate_di_dt(ia, ib, ic, inception_idx, sampling_rate, system_freq):
     """Calculate maximum dI/dt in first cycle after inception."""
 
@@ -684,28 +782,7 @@ def _calculate_thd(ia, ib, ic, inception_idx, sampling_rate, system_freq, faulte
         else:
             samples = ic.samples[window_start:window_end]
 
-        # FFT
-        N = len(samples)
-        fft_vals = fft(samples)
-        freqs = fftfreq(N, 1/sampling_rate)
-
-        # Find fundamental frequency bin
-        fund_idx = np.argmin(np.abs(freqs - system_freq))
-        fund_mag = np.abs(fft_vals[fund_idx])
-
-        # Calculate harmonic content (excluding DC and fundamental)
-        harmonic_sum_sq = np.sum(np.abs(fft_vals[2:N//2])**2) - fund_mag**2
-
-        # Clamp to zero if negative (numerical errors)
-        if harmonic_sum_sq < 0:
-            harmonic_sum_sq = 0.0
-
-        if fund_mag > 0:
-            thd = np.sqrt(harmonic_sum_sq) / fund_mag * 100
-        else:
-            thd = 0.0
-
-        return min(thd, 100.0)  # Cap at 100%
+        return _calculate_windowed_thd(samples, sampling_rate, system_freq)
 
     except Exception as e:
         logger.error(f"THD calculation failed: {e}")

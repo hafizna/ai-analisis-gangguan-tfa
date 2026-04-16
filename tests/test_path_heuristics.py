@@ -95,3 +95,14 @@ def test_equipment_keywords_are_mapped_to_peralatan_label():
     assert infer_path_kind(path) == "TRANSIENT"
     assert infer_path_tag(path) == "PERALATAN"
     assert infer_suspected_label(path) == "DIDUGA PERALATAN"
+
+
+def test_isolator_keyword_is_mapped_to_peralatan_label():
+    path = (
+        r"C:\data\raw_data\UPT PURWOKERTO\2025\08. AGUSTUS"
+        r"\TRIP SUTT KSGHN-LMNIS ALAT ISOLATOR\DISTANCE\FR000037.cfg"
+    )
+
+    assert infer_path_kind(path) == "TRANSIENT"
+    assert infer_path_tag(path) == "PERALATAN"
+    assert infer_suspected_label(path) == "DIDUGA PERALATAN"

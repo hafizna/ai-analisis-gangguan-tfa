@@ -86,6 +86,17 @@ class TestChannelNormalization:
         assert result['phase'] == "A"
         assert result['canonical_name'] == "IDIFF_A"
 
+    def test_siemens_ocr_voltage_channels(self):
+        result = normalize_channel_name("uEn", "V", "SIEMENS")
+        assert result['canonical_name'] == "VN"
+        assert result['phase'] == "N"
+        assert result['measurement'] == "voltage"
+
+        result = normalize_channel_name("uL23", "V", "SIEMENS")
+        assert result['canonical_name'] == "VBC"
+        assert result['phase'] is None
+        assert result['measurement'] == "voltage"
+
 
 class TestManufacturerDetection:
     """Test manufacturer detection from relay model."""
@@ -202,6 +213,30 @@ def test_line_diff_real_file_does_not_route_to_87t():
 
     prot = determine_protection(record)
     assert prot.primary_protection == ProtectionType.DIFFERENTIAL
+
+
+def test_ocr_statuses_route_to_overcurrent():
+    class Status:
+        def __init__(self, name, samples):
+            self.name = name
+            self.samples = np.array(samples, dtype=int)
+
+    class Record:
+        def __init__(self):
+            self.status_channels = [
+                Status("O/C Ph L2 PU", [0, 1, 1, 0]),
+                Status("O/C Ph L3 PU", [0, 1, 1, 0]),
+                Status("Overcurrent PU", [0, 1, 1, 0]),
+                Status("Relay PICKUP", [0, 1, 1, 0]),
+            ]
+            self.rec_dev_id = "7SJ622"
+            self.station_name = "KESUGIHAN OCR"
+
+    prot = determine_protection(Record())
+
+    assert prot.primary_protection == ProtectionType.OVERCURRENT
+    assert prot.classifiable is True
+    assert set(prot.operated_phases) == {"B", "C"}
 
 
 def test_line_diff_real_file_falls_back_to_line_analysis():

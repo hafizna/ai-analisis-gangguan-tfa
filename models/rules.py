@@ -38,6 +38,13 @@ def apply_rules(row: dict) -> Optional[RuleResult]:
     trip_type        = str(row.get("trip_type", ""))
     zone             = str(row.get("zone_operated", ""))
     peak_i           = float(row.get("peak_fault_current_a", 0) or 0)
+    fault_type       = str(row.get("fault_type", "") or "").upper()
+    soe_hint         = str(row.get("soe_faulted_phases", "") or "")
+    soe_source       = str(row.get("soe_phase_hint_source", "") or "")
+    soe_mismatch     = bool(row.get("soe_phase_mismatch", False))
+    v_ratio_spread   = float(row.get("voltage_phase_ratio_spread_pu", 0) or 0)
+    healthy_v_ratio  = float(row.get("healthy_phase_voltage_ratio", 0) or 0)
+    v2_v1_ratio      = float(row.get("v2_v1_ratio", 0) or 0)
 
     # ------------------------------------------------------------------
     # Rule 1 - KONDUKTOR: Fault On Reclose with phase change
@@ -66,6 +73,34 @@ def apply_rules(row: dict) -> Optional[RuleResult]:
                 f"dur={duration_ms:.0f}ms - perubahan fasa saat AR, "
                 "diduga kerusakan mekanik pada konduktor/tower. "
                 "Verifikasi dengan rekaman AR dan catatan operasi."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Rule 1b - SOE / waveform phase mismatch
+    #   If digital SOE explicitly selects a two-phase loop (L12/L23/L31)
+    #   but waveform extraction says 3PH and the voltages are strongly
+    #   asymmetric, treat PETIR as unsafe. This pattern often points to
+    #   measurement/protection/equipment-origin anomalies or at least a
+    #   waveform phase interpretation issue that needs manual review.
+    # ------------------------------------------------------------------
+    if (
+        soe_mismatch
+        and fault_type == "3PH"
+        and duration_ms > 20
+        and peak_i > 200
+        and (v_ratio_spread >= 0.15 or healthy_v_ratio >= 0.92 or v2_v1_ratio >= 0.15)
+    ):
+        return RuleResult(
+            label="PERALATAN / PROTEKSI",
+            confidence=0.78,
+            rule_name="soe_waveform_phase_mismatch",
+            evidence=(
+                f"SOE memilih loop {soe_hint} ({soe_source}), tetapi ekstraksi waveform "
+                f"membaca {fault_type}. Asimetri tegangan tinggi "
+                f"(spread={v_ratio_spread:.2f}, healthy_phase={healthy_v_ratio:.2f}, "
+                f"V2/V1={v2_v1_ratio:.2f}) — indikasi anomali pengukuran/proteksi/peralatan; "
+                "jangan terima label PETIR tanpa verifikasi manual."
             ),
         )
 
