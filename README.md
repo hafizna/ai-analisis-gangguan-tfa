@@ -206,3 +206,5 @@ pipeline/
 | Batch extraction pipeline | Selesai | ZIP/RAR via 7-Zip, skip duplikat, error log |
 | Kurasi data stakeholder | Berlanjut | Isi `correct`/`notes` di labeled_features.csv |
 | Data kelas POHON | Kurang | Perlu minimal 10+ rekaman berlabel POHON untuk training |
+
+Panduan labeling ringkas tersedia di [LABELING_GUIDELINES.md](LABELING_GUIDELINES.md).
