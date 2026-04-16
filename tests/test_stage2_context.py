@@ -17,7 +17,12 @@ from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.protection_router import determine_protection, ProtectionType
+from core.protection_router import (
+    determine_protection,
+    ProtectionType,
+    _check_auto_reclose_attempted,
+    _check_auto_reclose_successful,
+)
 from core.transformer_channel_mapper import (
     detect_transformer_relay_family,
     map_transformer_channels,
@@ -167,6 +172,18 @@ class TestProtectionRouterGeneral:
         )
         prot = determine_protection(record)
         assert prot.primary_protection == ProtectionType.DIFFERENTIAL
+
+    def test_pcs900_successful_reclose_bit_is_recognized(self):
+        import numpy as np
+
+        status_dict = {
+            "CB1.79.Inprog": np.array([0, 1, 1, 1, 0, 0]),
+            "CB1.79.Succ_Rcls": np.array([0, 0, 0, 1, 1, 0]),
+            "CB1.79.Fail_Rcls": np.array([0, 0, 0, 0, 0, 0]),
+        }
+        status_names = list(status_dict.keys())
+        assert _check_auto_reclose_attempted(status_names, status_dict) is True
+        assert _check_auto_reclose_successful(status_names, status_dict) is True
 
 
 # ---------------------------------------------------------------------------

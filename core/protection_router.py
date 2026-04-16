@@ -697,12 +697,12 @@ def _check_auto_reclose_attempted(status_names: List[str], status_dict: dict) ->
 
     import numpy as _np
     ar_keywords = [
-        'RECLOSE', 'CLOSURE', 'A/R', 'AR ',
+        'RECLOSE', 'CLOSURE', 'A R', 'AR ',
         'AR INPROG', 'INPROGRESS',          # External DFR: "AR INPROGRESS UNGARAN 1"
         '1P TRIP INIT', '3P TRIP INIT',     # NARI: "1P Trip Init AR"
         'AR 1POLE', '1POLE IN PROG',        # IED: "AR 1pole in prog"
-        'A/R OPRT',                          # External DFR: "A/R OPRT WTS2"
-        'CB1.79.INPROG', '.79.INPROG',      # PCS900: "CB1.79.Inprog"
+        'A R OPRT',                          # External DFR: "A/R OPRT WTS2"
+        '79 INPROG', 'CB1 79 INPROG',       # PCS900: "CB1.79.Inprog"
         'AR CLOSE CMD', 'LINE CLOSURE',      # ABB REL: "AR CLOSE Cmd.", "Line closure"
         '1POLE OPEN', '1POLE OPEN L',       # ABB REL: "1pole open L2"
         '1-POLE OPEN',                      # Siemens 7SA: "CB1:Circuit break.:Position 1-pole phsA:open"
@@ -748,22 +748,22 @@ def _check_auto_reclose_successful(status_names: List[str], status_dict: dict) -
     """
     # Explicit success channels
     success_keywords = [
-        'AR SUCC', 'RECLOSE SUCC', 'A/R SUCC',   # NARI: "AR Succ"
-        'CB CLOSE', 'BO.*CLOSE', 'CLOSE CMD',      # IED: "BO14 CB CLOSE"
-        'SYN MEET', 'VOL MEET',                    # NARI: sync/voltage check met before reclose
-        'SUCC_RCLS', '.79.SUCC',                   # PCS900: "CB1.79.Succ_Rcls"
+        'AR SUCC', 'RECLOSE SUCC', 'A R SUCC',     # normalized variants
+        'CB CLOSE', 'BO CLOSE', 'CLOSE CMD',
+        'SYN MEET', 'VOL MEET',
+        'SUCC RCLS', '79 SUCC',                    # PCS900: "CB1.79.Succ_Rcls"
     ]
     # Explicit failure channels
     # NOTE: PERM_TRP intentionally excluded — in NR PCS900, "CB1.79.Perm_Trp1P/3P"
     # means "permission to trip" (mode flag), NOT a failed reclose. The correct
     # PCS900 failure channel is CB1.79.Fail_Rcls, covered by FAIL_RCLS below.
     failure_keywords = [
-        'AR FAIL', 'AR LOCKOUT', 'AR FINAL',       # NARI: "AR Fail", "AR Lockout", "AR Final Trip"
-        '79 FINAL', 'FINAL TRIP',                  # External DFR: "79 FINAL TRIP UNGARAN 1"
-        'TOR', 'TRIP ON RECLOSE',                  # Alstom: trip-on-reclose
-        'FAIL_RCLS', '.79.FAIL',                   # PCS900: "CB1.79.Fail_Rcls"
-        'SOTF/TOR',                                 # Seen in Rawalo case
-        'LOCKOUT',                                  # Generic lockout = AR exhausted
+        'AR FAIL', 'AR LOCKOUT', 'AR FINAL',
+        '79 FINAL', 'FINAL TRIP',
+        'TOR', 'TRIP ON RECLOSE',
+        'FAIL RCLS', '79 FAIL',                    # PCS900: "CB1.79.Fail_Rcls"
+        'SOTF TOR',
+        'LOCKOUT',
     ]
 
     import numpy as _np
