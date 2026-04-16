@@ -205,11 +205,13 @@ LABEL_MAP = [
 
     # Animals — all species grouped into HEWAN
     ("hewan",         "HEWAN"),
+    ("binatang",      "HEWAN"),     # generic animal (UPT Semarang & others use this)
     ("ular",          "HEWAN"),     # snake
     ("babi",          "HEWAN"),     # pig / wild boar
     ("tikus",         "HEWAN"),     # rat / rodent
     ("burung",        "HEWAN"),     # bird
     ("biawak",        "HEWAN"),     # monitor lizard
+    ("kukang",        "HEWAN"),     # slow loris
     ("monyet",        "HEWAN"),     # monkey
 
     # Foreign object (non-living, non-kite)
