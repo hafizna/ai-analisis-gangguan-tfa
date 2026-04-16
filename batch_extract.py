@@ -2,7 +2,9 @@
 Ekstraksi Fitur Batch
 =====================
 Mencari semua file COMTRADE berlabel di raw_data/, menjalankan pipeline
-analisis gangguan, dan menulis fitur ke data/features/labeled_features.csv.
+analisis gangguan, dan menulis fitur ke:
+  - data/features/labeled_features.csv
+  - data/features/labeled_features_87l.csv
 
 Label is inferred from the folder name (PETIR, LAYANG, POHON, HEWAN,
 KONDUKTOR, BENDA_ASING).  Files in 'olah' or '_extracted' sub-folders
@@ -44,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from core.comtrade_parser import parse_comtrade
 from core.protection_router import determine_protection
 from core.fault_detector import detect_fault
-from core.feature_extractor import extract_distance_features
+from core.feature_extractor import extract_distance_features, extract_differential_features
 
 RAW_DATA = Path(__file__).parent.parent / "raw_data"
 
@@ -164,6 +166,7 @@ def extract_archives(root: Path) -> None:
 
 OUT_DIR  = Path(__file__).parent / "data" / "features"
 OUT_CSV  = OUT_DIR / "labeled_features.csv"
+OUT_CSV_87L = OUT_DIR / "labeled_features_87l.csv"
 ERR_CSV  = OUT_DIR / "extraction_errors.csv"
 
 # ---------------------------------------------------------------------------
@@ -335,6 +338,60 @@ def flatten_features(feat, label, cfg_path, prot, fault):
     return d
 
 
+def flatten_differential_features(feat, label, cfg_path, prot, fault, record):
+    """Convert DifferentialFeatures to a flat dict for the 87L feature CSV."""
+    d = {}
+    d["label"]        = label
+    d["cfg_path"]     = str(cfg_path)
+    d["station_name"] = feat.station_name
+    d["relay_model"]  = feat.relay_model
+    d["voltage_kv"]   = feat.voltage_kv
+
+    d["protection_type"]  = prot.primary_protection.name
+    d["zone_operated"]    = ""
+    d["trip_type"]        = prot.trip_type
+    d["faulted_phases"]   = "+".join(feat.faulted_phases) if feat.faulted_phases else ""
+    d["fault_type"]       = feat.fault_type
+    d["is_ground_fault"]  = feat.is_ground_fault
+
+    d["reclose_attempted"]  = feat.reclose_attempted
+    d["reclose_successful"] = feat.reclose_successful
+    d["reclose_time_ms"]    = None
+    d["fault_count"]        = len(getattr(fault, "reclose_events", []) or []) + 1
+
+    d["fault_duration_ms"]  = fault.duration_ms
+    d["fault_inception_ms"] = round(fault.inception_time * 1000, 2)
+
+    d["di_dt_max"]               = feat.di_dt_max
+    d["di_dt_phase"]             = feat.di_dt_phase
+    d["peak_fault_current_a"]    = feat.peak_fault_current_a
+    d["peak_fault_phase"]        = ""
+    d["i0_i1_ratio"]             = feat.i0_i1_ratio
+    d["thd_percent"]             = feat.thd_percent
+    d["inception_angle_degrees"] = feat.inception_angle_degrees
+    d["voltage_sag_depth_pu"]    = None
+    d["voltage_sag_phase"]       = ""
+
+    d["r_x_ratio"]        = None
+    d["z_magnitude_ohms"] = None
+    d["z_angle_degrees"]  = None
+
+    d["sampling_rate_hz"]   = feat.sampling_rate_hz
+    d["record_duration_ms"] = ((record.time[-1] - record.time[0]) * 1000.0) if getattr(record, "time", None) else None
+    d["teleprotection_rx"]  = prot.permission_received
+    d["comms_failure"]      = prot.comms_failure
+
+    d["scaling_ok"]  = feat.peak_fault_current_a >= 200.0
+    d["duration_ok"] = fault.duration_ms >= 5.0
+
+    d["idiff_max_percent"]      = feat.idiff_max_percent
+    d["irestraint_max_percent"] = feat.irestraint_max_percent
+    d["idiff_rise_rate"]        = feat.idiff_rise_rate
+    d["classification_status"]  = feat.classification_status
+
+    return d
+
+
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -351,6 +408,7 @@ def main():
     print()
 
     rows = []
+    rows_87l = []
     errors = []
 
     for i, (cfg_path, label) in enumerate(cfg_files):
@@ -372,23 +430,37 @@ def main():
                 errors.append({"cfg": str(cfg_path), "label": label, "reason": "no fault detected"})
                 continue
 
-            if prot.primary_protection.name != "DISTANCE":
-                print(f"SKIP (prot={prot.primary_protection.name})")
-                errors.append({"cfg": str(cfg_path), "label": label,
-                                "reason": f"protection={prot.primary_protection.name}"})
+            if prot.primary_protection.name == "DISTANCE":
+                feat = extract_distance_features(record, fault, prot)
+                if feat is None:
+                    print("SKIP (distance feature extraction failed)")
+                    errors.append({"cfg": str(cfg_path), "label": label, "reason": "extract_distance_features returned None"})
+                    continue
+
+                row = flatten_features(feat, label, cfg_path, prot, fault)
+                rows.append(row)
+                print(f"OK  dist z={row['zone_operated']} ph={row['faulted_phases']} "
+                      f"dur={row['fault_duration_ms']:.0f}ms "
+                      f"ar={row['reclose_successful']}")
                 continue
 
-            feat = extract_distance_features(record, fault, prot)
-            if feat is None:
-                print("SKIP (feature extraction failed)")
-                errors.append({"cfg": str(cfg_path), "label": label, "reason": "extract_distance_features returned None"})
+            if prot.primary_protection.name == "DIFFERENTIAL":
+                feat = extract_differential_features(record, fault, prot)
+                if feat is None:
+                    print("SKIP (87L feature extraction failed)")
+                    errors.append({"cfg": str(cfg_path), "label": label, "reason": "extract_differential_features returned None"})
+                    continue
+
+                row = flatten_differential_features(feat, label, cfg_path, prot, fault, record)
+                rows_87l.append(row)
+                print(f"OK  87L ph={row['faulted_phases']} dur={row['fault_duration_ms']:.0f}ms "
+                      f"ar={row['reclose_successful']}")
                 continue
 
-            row = flatten_features(feat, label, cfg_path, prot, fault)
-            rows.append(row)
-            print(f"OK  z={row['zone_operated']} ph={row['faulted_phases']} "
-                  f"dur={row['fault_duration_ms']:.0f}ms "
-                  f"ar={row['reclose_successful']}")
+            print(f"SKIP (prot={prot.primary_protection.name})")
+            errors.append({"cfg": str(cfg_path), "label": label,
+                            "reason": f"protection={prot.primary_protection.name}"})
+            continue
 
         except Exception as e:
             msg = str(e)[:120]
@@ -405,6 +477,14 @@ def main():
             writer.writerows(rows)
         print(f"\nWrote {len(rows)} rows -> {OUT_CSV}")
 
+    if rows_87l:
+        fieldnames_87l = list(rows_87l[0].keys())
+        with open(OUT_CSV_87L, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames_87l)
+            writer.writeheader()
+            writer.writerows(rows_87l)
+        print(f"Wrote {len(rows_87l)} rows -> {OUT_CSV_87L}")
+
     # Write errors CSV
     if errors:
         with open(ERR_CSV, "w", newline="", encoding="utf-8") as f:
@@ -417,14 +497,16 @@ def main():
     # Summary by label
     from collections import Counter
     success_labels = Counter(r["label"] for r in rows)
+    success_labels_87l = Counter(r["label"] for r in rows_87l)
     print("\n=== EXTRACTION SUMMARY ===")
-    print(f"{'Label':<15} {'Success':>8} {'Input':>8} {'Rate':>8}")
-    print("-" * 45)
+    print(f"{'Label':<15} {'DIST':>8} {'87L':>8} {'Input':>8} {'Rate':>8}")
+    print("-" * 57)
     for label in sorted(label_counts):
         s = success_labels.get(label, 0)
+        s87 = success_labels_87l.get(label, 0)
         t = label_counts[label]
-        print(f"{label:<15} {s:>8} {t:>8} {s/t*100:>7.0f}%")
-    print(f"\nTotal: {len(rows)} extracted / {len(cfg_files)} attempted")
+        print(f"{label:<15} {s:>8} {s87:>8} {t:>8} {(s + s87)/t*100:>7.0f}%")
+    print(f"\nTotal: {len(rows)} distance rows + {len(rows_87l)} 87L rows / {len(cfg_files)} attempted")
 
 
 if __name__ == "__main__":

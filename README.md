@@ -81,7 +81,7 @@ Bila file berasal dari DFR eksternal (Qualitrol, Toshiba standalone) tanpa sinya
 | `models/transformer_classifier.py` | Klasifikasi event trafo berbasis pengetahuan |
 | `models/fault_classifier.pkl` | Model terlatih aktif (jumlah kelas mengikuti data trainable) |
 | `webapp/app.py` | Flask app: upload, browse, history, API |
-| `batch_extract.py` | Ekstraksi fitur batch dari seluruh raw_data/ |
+| `batch_extract.py` | Ekstraksi fitur batch dari seluruh raw_data/ termasuk corpus kandidat 87L |
 | `extract_all.py` | Ekstraksi arsip ZIP/RAR menggunakan 7-Zip |
 
 ---
@@ -108,6 +108,7 @@ python extract_all.py
 ```bash
 python batch_extract.py
 # output: data/features/labeled_features.csv
+#         data/features/labeled_features_87l.csv
 #         data/features/extraction_errors.csv
 ```
 
@@ -204,6 +205,7 @@ pipeline/
 | Multi-class fault classifier | Selesai | 5-class RF, accuracy 82.9%. POHON butuh data lebih |
 | Transformer differential support | Selesai | H2/H5/slope/DC offset, 6 kelas event |
 | Web app & browse | Selesai | Upload, browse raw_data, history |
-| Batch extraction pipeline | Selesai | ZIP/RAR via 7-Zip, skip duplikat, error log |
-| Kurasi data stakeholder | Berlanjut | Isi `correct`/`notes` di labeled_features.csv |
+| Batch extraction pipeline | Selesai | ZIP/RAR via 7-Zip, skip duplikat, error log, simpan corpus 87L |
+| Line differential (87L) dataset lane | Selesai | Rekaman berlabel 87L tidak lagi dibuang saat ekstraksi |
+| Kurasi data stakeholder | Berlanjut | Isi `correct`/`notes` di `labeled_features.csv` dan kurasi corpus `labeled_features_87l.csv` |
 | Data kelas POHON | Kurang | Perlu minimal 10+ rekaman berlabel POHON untuk training |
