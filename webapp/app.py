@@ -675,7 +675,8 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         pred_raw   = clf.predict(X)[0]
         proba      = clf.predict_proba(X)[0]
 
-        if model_type == "multiclass_random_forest" and classes:
+        proba_classes = list(getattr(clf, "classes_", classes))
+        if model_type == "multiclass_random_forest" and proba_classes:
             from models.predict import _label_recommendation
             _label_id_map = {
                 "PETIR": "PETIR", "LAYANG": "LAYANG-LAYANG",
@@ -692,7 +693,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
             updated["rule_name"] = "multiclass_random_forest"
             updated["cause_pcts"] = [
                 {"name": _label_id_map.get(c, c), "pct": round(float(p) * 100, 1)}
-                for c, p in sorted(zip(classes, proba), key=lambda x: -x[1])
+                for c, p in sorted(zip(proba_classes, proba), key=lambda x: -x[1])
             ]
             updated["recommendation"] = _label_recommendation(pred_raw)
             updated["evidence"] = f"ML multi-kelas: {pred_raw} ({updated['confidence']:.0%}).{reclose_note} Dihitung ulang dengan rasio CT/VT."
