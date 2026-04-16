@@ -221,6 +221,16 @@ LABEL_MAP = [
     # Conductor / structural failure
     ("tower roboh",   "KONDUKTOR"),
     ("konduktor",     "KONDUKTOR"),
+
+    # Equipment / protection / telecom-origin cases
+    ("kerusakan peralatan", "PERALATAN"),
+    ("gangguan peralatan",  "PERALATAN"),
+    ("pilot wire",          "PERALATAN"),
+    ("pilotwire",           "PERALATAN"),
+    ("teleprotection",      "PERALATAN"),
+    ("teleproteksi",        "PERALATAN"),
+    ("plcc",                "PERALATAN"),
+    ("peralatan",           "PERALATAN"),
 ]
 
 # Sub-folder fragments to skip (processed copies, analysis outputs)

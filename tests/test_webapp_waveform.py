@@ -313,6 +313,76 @@ def test_recalculate_multiclass_uses_classifier_class_order_for_probability_labe
     assert any(item["name"] == "PETIR" and item["pct"] == 11.4 for item in updated["cause_pcts"])
 
 
+def test_recalculate_multiclass_maps_peralatan_prediction_label(monkeypatch):
+    class DummyClf:
+        classes_ = np.array(["PERALATAN", "PETIR"], dtype=object)
+
+        def predict(self, X):
+            return np.array(["PERALATAN"], dtype=object)
+
+        def predict_proba(self, X):
+            return np.array([[0.78, 0.22]], dtype=float)
+
+    analysis = {
+        "ct_primary": None,
+        "ct_secondary": None,
+        "vt_primary": None,
+        "vt_secondary": None,
+        "ct_primary_default": None,
+        "ct_secondary_default": None,
+        "vt_primary_default": None,
+        "vt_secondary_default": None,
+        "ratio_base_ct_primary": 2000.0,
+        "ratio_base_ct_secondary": 5.0,
+        "ratio_base_vt_primary": 150000.0,
+        "ratio_base_vt_secondary": 100.0,
+        "peak_fault_current_a": 850.0,
+        "i0_magnitude_a": 110.0,
+        "i1_magnitude_a": 300.0,
+        "i2_magnitude_a": 90.0,
+        "v_prefault_v": 41.09,
+        "v_fault_v": 28.0,
+        "z_magnitude_ohms": 8.2,
+        "fault_duration_ms": 140.0,
+        "fault_count": 1,
+        "i0_i1_ratio": 0.36,
+        "voltage_sag_depth_pu": 0.32,
+        "di_dt_max": 120.0,
+        "reclose_successful": "",
+        "trip_type": "three_pole",
+        "faulted_phases": "ABC",
+        "fault_type": "3PH",
+        "reclose_time_ms": 0.0,
+        "thd_percent": 1.5,
+        "inception_angle_degrees": 30.0,
+        "label": "PERALATAN",
+        "confidence": 0.78,
+        "tier": 2,
+        "rule_name": "multiclass_random_forest",
+        "evidence": "",
+        "recommendation": "",
+        "description": "",
+        "cause_pcts": [],
+    }
+
+    monkeypatch.setattr(webapp_app, "apply_rules", lambda row: None)
+    monkeypatch.setattr(
+        webapp_app,
+        "_load_model",
+        lambda: {
+            "clf": DummyClf(),
+            "classes": ["PERALATAN", "PETIR"],
+            "model_type": "multiclass_random_forest",
+        },
+    )
+
+    updated = webapp_app._recalculate_analysis_with_ratio(analysis, 2000.0, 5.0, 150000.0, 100.0)
+
+    assert updated["label"] == "PERALATAN / PROTEKSI"
+    assert updated["cause_pcts"][0]["name"] == "PERALATAN / PROTEKSI"
+    assert updated["cause_pcts"][0]["pct"] == 78.0
+
+
 def test_build_waveform_payload_does_not_force_active_line_when_payload_is_small(monkeypatch):
     time_axis = np.arange(0.0, 0.010, 0.001)
     record = SimpleNamespace(

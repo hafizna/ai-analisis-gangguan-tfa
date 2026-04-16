@@ -88,7 +88,7 @@ INPUT: fault event terdeteksi
         ▼
 Layer 1a: fault_on_reclose_phase_change
   Syarat: fault_count 2–20, fasa berbeda antar kejadian, dur >80ms, AR tidak berhasil
-  → KONDUKTOR / KERUSAKAN PERALATAN (85%)
+  → KONDUKTOR / TOWER (85%)
         │ tidak cocok
         ▼
 Layer 1b: three_pole_failed_reclose
@@ -102,7 +102,7 @@ Layer 1c: explicit_failed_reclose
         │ tidak cocok
         ▼
 Layer 2: Multi-class RandomForest (13 fitur)
-  Kelas: PETIR, LAYANG-LAYANG, POHON, HEWAN, BENDA ASING, KONDUKTOR
+  Kelas: PETIR, LAYANG-LAYANG, POHON, HEWAN, BENDA ASING, KONDUKTOR, PERALATAN / PROTEKSI
   → label + confidence + probabilitas tiap kelas
         │ model tidak tersedia
         ▼

@@ -58,13 +58,13 @@ def apply_rules(row: dict) -> Optional[RuleResult]:
     if (fault_count >= 2 and fault_count <= 20 and multi_phase_for
             and duration_ms > 80 and not reclose_succeeded):
         return RuleResult(
-            label="KONDUKTOR / KERUSAKAN PERALATAN",
+            label="KONDUKTOR / TOWER",
             confidence=0.85,
             rule_name="fault_on_reclose_phase_change",
             evidence=(
                 f"fault_count={fault_count}, fasa={faulted_phases}, "
                 f"dur={duration_ms:.0f}ms - perubahan fasa saat AR, "
-                "diduga kerusakan mekanik (konduktor/tower). "
+                "diduga kerusakan mekanik pada konduktor/tower. "
                 "Verifikasi dengan rekaman AR dan catatan operasi."
             ),
         )

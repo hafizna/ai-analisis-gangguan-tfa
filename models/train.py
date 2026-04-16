@@ -2,7 +2,7 @@
 Multi-class Fault Cause Classifier
 ====================================
 Trains a Random Forest on labeled_features.csv to classify the physical
-cause of transmission line faults into 6 categories:
+cause of transmission line faults into 7 categories:
 
     PETIR       — lightning (direct strike or induced overvoltage)
     LAYANG      — kite (layang-layang)
@@ -10,12 +10,13 @@ cause of transmission line faults into 6 categories:
     HEWAN       — animal (ular, binatang, burung, babi, tikus, etc.)
     BENDA_ASING — non-living foreign object (aluminium foil, terpal, etc.)
     KONDUKTOR   — conductor / tower structural failure
+    PERALATAN   — equipment / protection / telecom-origin failure
 
 Design rationale
 ----------------
 Previous design was a binary PETIR vs rest tree — only viable with the
 old tiny dataset (83 rows, 84% PETIR).  With the expanded dataset
-(~450+ rows across 6 classes), a multi-class Random Forest is used:
+(~450+ rows across 7 classes), a multi-class Random Forest is used:
 
   - Tier 1 deterministic rules are still applied first (rules.py) for
     high-confidence KONDUKTOR and failed-reclose cases.
@@ -51,7 +52,7 @@ MODEL_OUT    = Path(__file__).parent / "fault_classifier.pkl"
 # Keep old binary model path so existing webapp code still loads during transition
 MODEL_OUT_LEGACY = Path(__file__).parent / "petir_tree.pkl"
 
-ALL_CLASSES = ["PETIR", "LAYANG", "POHON", "HEWAN", "BENDA_ASING", "KONDUKTOR"]
+ALL_CLASSES = ["PETIR", "LAYANG", "POHON", "HEWAN", "BENDA_ASING", "KONDUKTOR", "PERALATAN"]
 
 # ── Feature set ──────────────────────────────────────────────────────────────
 # Each feature maps a physical phenomenon to a discriminating signal:

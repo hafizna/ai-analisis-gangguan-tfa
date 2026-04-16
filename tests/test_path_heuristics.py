@@ -84,3 +84,14 @@ def test_status_data_and_suspected_label_for_unknown_case():
 
     assert infer_status_data(path) == "UNKNOWN"
     assert infer_suspected_label(path) == "DIDUGA UNKNOWN"
+
+
+def test_equipment_keywords_are_mapped_to_peralatan_label():
+    path = (
+        r"C:\data\raw_data\UPT SEMARANG\2025\08. AGUSTUS"
+        r"\Gangguan Pilot Wire PLCC\teleprotection\FILE.CFG"
+    )
+
+    assert infer_path_kind(path) == "TRANSIENT"
+    assert infer_path_tag(path) == "PERALATAN"
+    assert infer_suspected_label(path) == "DIDUGA PERALATAN"
