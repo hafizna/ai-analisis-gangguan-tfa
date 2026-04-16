@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Input Transformer — TFA{% endblock %}
+{% block topbar_title %}Input Analisis Trafo{% endblock %}
+{% block topbar_sub %}Quick local analysis atau coordinated multi-relay{% endblock %}
+{% block nav_transformer_upload %}active{% endblock %}
+
+{% block extra_css %}
+.page-shell { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.hero-card, .panel, .support-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+}
+.hero-card {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 18px;
+    background: linear-gradient(135deg, var(--panel-bg), var(--card-bg));
+}
+.hero-title { font-size: 26px; font-weight: 800; color: var(--text); line-height: 1.15; margin-bottom: 10px; }
+.hero-sub { font-size: 14px; color: var(--text-muted); line-height: 1.7; }
+.pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.pill {
+    padding: 5px 10px; border-radius: 999px;
+    background: rgba(139,92,246,0.12); color: #7c3aed;
+    font-size: 11px; font-weight: 700; letter-spacing: .04em;
+}
+.mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mini-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.mini-label { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+.mini-text { font-size: 13px; color: var(--text); line-height: 1.6; }
+.mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.mode-tile {
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    background: var(--card-bg);
+}
+.mode-tile.active { border-color: #8b5cf6; background: rgba(139,92,246,0.08); }
+.mode-title { font-size: 15px; font-weight: 800; color: var(--text); margin-bottom: 6px; }
+.mode-desc { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.field label, .section-label {
+    display: block; margin-bottom: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
+}
+.field select, .field input[type="file"] {
+    width: 100%; padding: 10px 12px;
+    border-radius: 10px; border: 1px solid var(--border);
+    background: var(--card-bg); color: var(--text);
+}
+.upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.upload-box {
+    background: var(--card-bg); border: 1px dashed var(--border);
+    border-radius: 12px; padding: 16px;
+}
+.hint { font-size: 12px; color: var(--text-muted); line-height: 1.7; }
+.alert {
+    background: rgba(239,68,68,0.1); color: #ef4444;
+    border: 1px solid rgba(239,68,68,0.25); border-radius: 10px;
+    padding: 12px 14px; font-size: 13px; font-weight: 600;
+}
+.support-shell { display: none; }
+.support-shell.show { display: block; }
+.support-stack { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.support-card { padding: 16px; }
+.support-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 10px; }
+.support-head strong { font-size: 14px; color: var(--text); }
+.support-note { font-size: 12px; color: var(--text-muted); }
+.action-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
+@media (max-width: 900px) {
+    .hero-card, .mode-grid, .form-grid, .upload-grid, .mini-grid { grid-template-columns: 1fr; }
+}
+{% endblock %}
+
+{% block content %}
+<div class="page-shell">
+    <div class="hero-card">
+        <div>
+            <div class="hero-title">Mulai dari relay yang Anda punya, lalu tambah evidence bila perlu.</div>
+            <div class="hero-sub">
+                Halaman ini memisahkan <strong>quick local analysis</strong> dari <strong>coordinated multi-relay analysis</strong>.
+                Jika file pertama adalah <strong>OCR LV</strong>, sistem akan membacanya sebagai bukti lokal sisi distribusi,
+                bukan langsung sebagai final cause transformer fault.
+            </div>
+            <div class="pill-row">
+                <span class="pill">87T</span>
+                <span class="pill">OCR HV</span>
+                <span class="pill">OCR LV</span>
+                <span class="pill">REF</span>
+                <span class="pill">GFR HV</span>
+                <span class="pill">SBEF</span>
+            </div>
+        </div>
+        <div class="mini-grid">
+            <div class="mini-box">
+                <div class="mini-label">Quick Analysis</div>
+                <div class="mini-text">Untuk screening cepat dari satu relay: event meaning, local interpretation, dan next files yang disarankan.</div>
+            </div>
+            <div class="mini-box">
+                <div class="mini-label">Coordinated Analysis</div>
+                <div class="mini-text">Untuk review selectivity, origin fault, dan kasus yang butuh pembacaan lintas relay.</div>
+            </div>
+        </div>
+    </div>
+
+    {% if form_error %}
+    <div class="alert">{{ form_error }}</div>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('transformer_upload') }}" enctype="multipart/form-data" data-loading-msg="Menganalisis evidence transformer...">
+        <input type="hidden" name="intake_mode" id="intakeModeInput" value="QUICK">
+
+        <div class="panel">
+            <div class="section-label">Pilih Workflow</div>
+            <div class="mode-grid">
+                <div class="mode-tile active" data-mode="QUICK">
+                    <div class="mode-title">Quick local analysis</div>
+                    <div class="mode-desc">Satu relay dulu. Cocok untuk OCR LV/HV, 87T, REF, atau feeder relay saat ingin first-look cepat.</div>
+                </div>
+                <div class="mode-tile" data-mode="COORDINATED">
+                    <div class="mode-title">Coordinated multi-relay analysis</div>
+                    <div class="mode-desc">Unggah relay primer dan file pendukung untuk origin fault atau review selektivitas.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="section-label">Konteks Analisis</div>
+            <div class="form-grid">
+                <div class="field">
+                    <label for="relay_role">Relay awal</label>
+                    <select id="relay_role" name="relay_role">
+                        {% for value, label in relay_roles %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="analysis_goal">Tujuan analisis</label>
+                    <select id="analysis_goal" name="analysis_goal">
+                        {% for value, label in analysis_goals %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Catatan workflow</label>
+                    <div class="hint" id="modeHint">
+                        Mulai dari satu file primer. Sistem akan menempatkan hasil sebagai evidence lokal dan menyarankan relay berikutnya bila perlu.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="section-label">File Primer</div>
+            <div class="upload-grid">
+                <div class="upload-box">
+                    <div class="section-label" style="margin-bottom:8px;">Primary .cfg</div>
+                    <input type="file" name="cfg_file" accept=".cfg,.CFG" required>
+                </div>
+                <div class="upload-box">
+                    <div class="section-label" style="margin-bottom:8px;">Primary .dat</div>
+                    <input type="file" name="dat_file" accept=".dat,.DAT" required>
+                </div>
+            </div>
+            <div class="hint" style="margin-top:10px;">
+                File primer adalah relay yang paling dulu ingin Anda baca. Bila file ini hanya OCR LV, hasil akan diposisikan sebagai partial evidence untuk event trafo.
+            </div>
+        </div>
+
+        <div class="support-shell" id="supportShell">
+            <div class="section-label">Supporting Relays</div>
+            <div class="support-stack">
+                {% for idx in [1, 2, 3] %}
+                <div class="support-card">
+                    <div class="support-head">
+                        <strong>Supporting relay #{{ idx }}</strong>
+                        <span class="support-note">Opsional, tapi isi lengkap bila dipakai</span>
+                    </div>
+                    <div class="form-grid">
+                        <div class="field">
+                            <label for="support_role_{{ idx }}">Peran relay</label>
+                            <select id="support_role_{{ idx }}" name="support_role_{{ idx }}">
+                                <option value="">Tidak digunakan</option>
+                                {% for value, label in relay_roles %}
+                                <option value="{{ value }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="support_cfg_{{ idx }}">Supporting .cfg</label>
+                            <input type="file" id="support_cfg_{{ idx }}" name="support_cfg_{{ idx }}" accept=".cfg,.CFG">
+                        </div>
+                        <div class="field">
+                            <label for="support_dat_{{ idx }}">Supporting .dat</label>
+                            <input type="file" id="support_dat_{{ idx }}" name="support_dat_{{ idx }}" accept=".dat,.DAT">
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="action-row">
+            <a href="{{ url_for('line_upload') }}" class="btn btn-outline">Gunakan Input Saluran</a>
+            <button type="submit" class="btn btn-primary">Analisis Evidence Trafo</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const modeTiles = document.querySelectorAll('.mode-tile');
+const intakeModeInput = document.getElementById('intakeModeInput');
+const supportShell = document.getElementById('supportShell');
+const modeHint = document.getElementById('modeHint');
+
+function applyMode(mode) {
+    intakeModeInput.value = mode;
+    modeTiles.forEach(tile => tile.classList.toggle('active', tile.dataset.mode === mode));
+    const coordinated = mode === 'COORDINATED';
+    supportShell.classList.toggle('show', coordinated);
+    modeHint.textContent = coordinated
+        ? 'Gunakan mode ini bila Anda ingin menilai origin fault, selektivitas, atau butuh lintas relay.'
+        : 'Mulai dari satu file primer. Sistem akan menempatkan hasil sebagai evidence lokal dan menyarankan relay berikutnya bila perlu.';
+}
+
+modeTiles.forEach(tile => {
+    tile.addEventListener('click', () => applyMode(tile.dataset.mode));
+});
+</script>
+{% endblock %}

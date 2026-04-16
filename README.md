@@ -8,8 +8,7 @@ Update terakhir: April 2026
 
 ## Ringkasan Sistem
 
-Pipeline ini menerima rekaman COMTRADE dari rele jarak, rele diferensial trafo, dan
-DFR eksternal (Qualitrol, Toshiba, dll), lalu mengklasifikasikan penyebab fisik gangguan ke
+Pipeline ini berperan sebagai alat bantu respon awal sebelum tim lapangan tiba — probabilistik untuk gangguan penghantar (prediksi penyebab fisik), dan evidence-based triage untuk gangguan trafo (interpretasi sinyal lokal + pemetaan evidence yang masih dibutuhkan). lalu untuk gangguan penghantar akan diklasifikasikan penyebab fisik gangguan ke
 dalam 6 kelas:
 
 | Kelas | Deskripsi |
@@ -153,6 +152,231 @@ python models/predict.py path/to/file.cfg
 - `TEGANGAN LEBIH / OVEREKSITASI`
 - `KEMUNGKINAN MALOPERATE`
 - `PERLU INVESTIGASI`
+
+---
+
+## Arah Berikutnya Sebelum Data Tambahan Datang
+
+Beberapa pekerjaan penting masih bisa dikerjakan **tanpa menunggu data baru**:
+
+1. Rapikan filosofi keputusan trafo menjadi output bertingkat, bukan satu label tunggal.
+   Pisahkan:
+   - `event_class` = inrush / through-fault / internal / overexcitation / maloperate / unknown
+   - `fault_origin` = internal trafo / eksternal distribusi / eksternal transmisi / proteksi-peralatan / unknown
+   - `protection_assessment` = proteksi benar / proteksi tidak selektif / evidence belum cukup
+
+2. Tambahkan skema evidence multi-relay.
+   Untuk kasus trafo, file satu relay sering tidak cukup. Pipeline perlu siap menyimpan evidence dari:
+   - 87T / REF / GFR HV / SBEF / OCR incomer
+   - relay sisi distribusi / outgoing feeder / incoming breaker
+   - status PMT, LOR/lockout, close failure, auto transfer, dll.
+
+3. Ubah UX dari "langsung penyebab akhir" menjadi "kesimpulan + alasan".
+   Tampilkan:
+   - apa yang terlihat dari rekaman lokal
+   - apa yang belum terlihat
+   - asumsi apa yang dipakai
+   - data tambahan apa yang dibutuhkan untuk konfirmasi
+
+4. Kumpulkan corpus terpisah untuk domain yang berbeda.
+   - `labeled_features.csv` untuk line-distance / generic line events
+   - `labeled_features_87l.csv` untuk line differential
+   - corpus kurasi trafo untuk kasus 87T dan koordinasi eksternal-internal
+
+5. Tambahkan state "unknown / insufficient evidence" secara eksplisit.
+   Ini penting untuk rekaman chopped, rekaman satu sisi saja, atau kasus di mana root cause tidak bisa dipastikan hanya dari satu COMTRADE.
+
+---
+
+## Filosofi Analisa Gangguan Trafo
+
+Untuk trafo PLN, filosofi identifikasi penyebab **tidak bisa disamakan** dengan line classifier multi-kelas biasa.
+
+Pada praktik operasi, banyak kejadian trafo sebenarnya berasal dari **faktor eksternal**:
+- fault sisi distribusi
+- fault eksternal di feeder atau downstream
+- gangguan sistem di luar trafo
+- issue proteksi/peralatan bantu
+
+Artinya, bila tidak ada indikasi kuat kerusakan internal trafo, asumsi kerja yang lebih aman adalah:
+
+`trip trafo belum tentu = fault internal trafo`
+
+Karena itu, pendekatan yang lebih tepat adalah **hierarchical evidence-based reasoning**, bukan langsung memaksa satu label sebab fisik dari waveform lokal saja.
+
+### Prinsip Utama
+
+1. Tentukan dulu **apa yang dilakukan proteksi**, bukan langsung "apa penyebab finalnya".
+2. Bedakan antara:
+   - **event type** yang terlihat di relay lokal
+   - **lokasi/origin gangguan**
+   - **root cause fisik**
+3. Bila evidence internal trafo lemah, lebih aman memberi hasil:
+   - `kemungkinan external through-fault`
+   - `kemungkinan fault distribusi`
+   - `kemungkinan issue proteksi/peralatan`
+   daripada memaksa `internal fault`.
+
+### Urutan Analisa Yang Disarankan
+
+#### Layer 1 — Event interpretation lokal
+
+Pertanyaan pertama:
+- apakah ini inrush?
+- apakah ini through-fault eksternal?
+- apakah ada indikasi internal differential operate yang meyakinkan?
+- apakah ini overexcitation?
+- apakah justru maloperate / abnormal protection behavior?
+
+Di layer ini, fitur ilmiah yang sudah ada tetap berguna:
+- harmonics (H2/H5)
+- differential vs restraint
+- slope / operate region
+- I0 / sequence behavior
+- waveform current magnitude dan timing
+
+Tetapi output layer ini sebaiknya dibaca sebagai:
+
+`apa arti event ini di relay lokal`
+
+bukan langsung:
+
+`apa root cause final di lapangan`
+
+#### Layer 2 — Fault origin / selectivity assessment
+
+Setelah event lokal dibaca, pertanyaan berikutnya:
+- apakah gangguan berasal dari internal trafo?
+- apakah gangguan berasal dari sisi distribusi?
+- apakah gangguan berasal dari jaringan eksternal dan trafo hanya ikut trip?
+- apakah PMT / relay / communication / auxiliary system yang bermasalah?
+
+Di sini evidence dari **relay lain** menjadi sangat penting:
+- incomer trip atau tidak
+- feeder/outgoing berhasil isolasi atau tidak
+- HV side trip sebagai backup atau primary
+- REF, GFR HV, SBEF, OCR, BF, lockout, LBB
+- urutan waktu trip antar relay
+- status breaker open/close dan dead time
+
+Contoh filosofi operasi:
+- Jika fault ada di sisi distribusi dan incomer/downstream berhasil mengisolasi fault, maka dari sudut pandang proteksi, kejadian itu lebih tepat dianggap **distribution fault**, bukan internal trafo.
+- Jika NGR putus, maka pembacaan 87T saja tidak cukup; perlu melihat urutan **REF -> GFR HV -> SBEF** dan device lain yang relevan.
+
+### Fault Localization vs Root Cause
+
+Untuk domain trafo, perlu dibedakan dengan tegas antara:
+
+- **fault localization / origin determination**
+- **root cause identification**
+
+Jika localization sudah cukup jelas dari relay coordination, maka pipeline **tidak perlu** memakai model ML besar untuk memutuskan origin fault.
+
+Contoh:
+- hanya `OCR LV` yang bekerja dan downstream/incomer berhasil mengisolasi fault
+- `87T` tidak menunjukkan indikasi internal yang kuat
+- HV side tidak trip atau hanya pickup sebagai backup
+
+Dalam situasi seperti ini, kesimpulan engineering yang paling penting sebenarnya sudah bisa diperoleh dari logika proteksi:
+
+`kejadian ini kemungkinan besar berasal dari sisi distribusi / eksternal`
+
+bukan dari model ML.
+
+Artinya:
+- **relay coordination** adalah sumber kebenaran utama untuk localization
+- **ML** hanya dipakai bila ada pertanyaan yang memang belum dijawab jelas oleh koordinasi relay
+
+Sub-problem yang masih cocok dibantu ML:
+- membedakan `inrush` vs `internal fault` vs `through-fault` dari waveform lokal
+- memberi anomaly score untuk kemungkinan maloperate
+- membantu ranking hipotesis saat evidence relay tidak lengkap
+
+Sub-problem yang sebaiknya **tidak** diserahkan ke model besar:
+- menentukan origin fault padahal sequence relay sudah jelas
+- mengalahkan kesimpulan selectivity yang sudah kuat dari relay working order
+- memaksa root cause final dari satu file lokal saja
+
+#### Layer 3 — Root cause family
+
+Baru setelah dua layer di atas cukup jelas, pipeline boleh memberi family penyebab:
+- `INTERNAL_TRANSFORMER`
+- `EXTERNAL_DISTRIBUTION`
+- `EXTERNAL_TRANSMISSION`
+- `PERALATAN / PROTEKSI`
+- `EXTERNAL_OBJECT_NEAR_TRAFO` (mis. ular/burung pada bushing, CT conductor, jumper, dll.)
+- `UNKNOWN`
+
+Ini lebih realistis untuk domain trafo dibanding memaksa semua kasus ke label fisik yang sangat spesifik sejak awal.
+
+### Apa Yang Perlu Dilihat Untuk Kasus Trafo
+
+Checklist evidence yang ideal:
+
+- 87T differential operate / restraint / slope
+- harmonic content (H2/H5)
+- REF / restricted earth fault
+- GFR HV / OCR HV / SBEF / NGR-related indication
+- incomer dan outgoing/distribution relay
+- breaker status, lockout, close fail, breaker fail
+- bus / feeder voltage collapse pattern
+- SOE urutan trip antar bay
+- hasil inspeksi lapangan
+- catatan operator / gangguan distribusi / laporan patrol
+
+### Saran Arsitektur Umum
+
+Untuk domain trafo, pendekatan terbaik kemungkinan bukan satu model ML besar, tetapi:
+
+1. **Rule-based evidence fusion** untuk menentukan event meaning dan fault origin.
+2. **ML hanya untuk sub-problem yang stabil**, misalnya:
+   - inrush vs internal fault vs overexcitation
+   - local waveform anomaly scoring
+   - ranking kemungkinan external-object signature jika nanti datanya cukup
+3. **Uncertainty-aware output**.
+   Pipeline harus boleh menjawab:
+   - `indikasi external through-fault, butuh evidence relay distribusi`
+   - `indikasi internal fault lemah`
+   - `kemungkinan proteksi/peralatan`
+   - `belum cukup evidence`
+
+Dengan kata lain, untuk trafo:
+- bila relay coordination sudah menjawab localization, ikuti hasil itu
+- bila waveform lokal masih perlu diinterpretasi, gunakan rule + ML kecil pada layer event meaning
+- bila evidence belum cukup, tampilkan `unknown / need more relays`, bukan pseudo-precision
+
+### Implikasi Untuk Labeling Data Trafo
+
+Sebelum data internal-fault trafo memadai, jangan buru-buru membuat taxonomy fisik yang terlalu halus.
+
+Lebih aman mulai dari umbrella categories:
+- `EXTERNAL_DISTRIBUTION`
+- `EXTERNAL_SYSTEM`
+- `INTERNAL_TRANSFORMER`
+- `PERALATAN / PROTEKSI`
+- `MALOPERATE / UNCONFIRMED`
+
+Kasus seperti ular pada bushing, burung di CT conductor, atau benda asing di area terminal trafo bisa diletakkan dulu sebagai:
+
+`EXTERNAL_OBJECT_NEAR_TRAFO`
+
+atau sementara masuk:
+
+`EXTERNAL_SYSTEM`
+
+lalu dipecah lagi setelah datanya cukup.
+
+### Kesimpulan Praktis
+
+Untuk trafo, pertanyaan utamanya sebaiknya berubah dari:
+
+`apa penyebab finalnya dari waveform ini?`
+
+menjadi:
+
+`apa yang bisa dipastikan dari relay lokal, apa yang paling mungkin sebagai origin fault, dan evidence tambahan apa yang masih dibutuhkan?`
+
+Itu lebih dekat dengan praktik engineering PLN, lebih jujur terhadap keterbatasan data, dan lebih scalable untuk kasus-kasus kompleks.
 
 ---
 

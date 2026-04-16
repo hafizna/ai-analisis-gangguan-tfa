@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Analisis Trafo 87T — {{ analysis.station_name }}{% endblock %}
-{% block topbar_title %}Analisis Proteksi Trafo (87T){% endblock %}
+{% block title %}{% if analysis.transformer_context_only %}Analisis Evidence Trafo — {{ analysis.station_name }}{% else %}Analisis Trafo 87T — {{ analysis.station_name }}{% endif %}{% endblock %}
+{% block topbar_title %}{% if analysis.transformer_context_only %}Analisis Evidence Trafo{% else %}Analisis Proteksi Trafo (87T){% endif %}{% endblock %}
 {% block topbar_sub %}{{ analysis.station_name }} — {{ analysis.original_filename }}{% endblock %}
 {% block nav_upload %}{% endblock %}
 
@@ -68,6 +68,37 @@
 .ev-maloperate   { background: rgba(249,115,22,0.15); color: #f97316; }
 .ev-unknown      { background: rgba(100,116,139,0.15);color: #94a3b8; }
 
+/* ── Layered output (Arah Berikutnya #1) ─────────────────────── */
+.layer-stack { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.layer-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: rgba(255,255,255,0.03); border: 1px solid #1e293b;
+    border-radius: 8px; padding: 9px 12px;
+}
+.layer-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.layer-body { flex: 1; min-width: 0; }
+.layer-label { font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #475569; margin-bottom: 2px; }
+.layer-value { font-size: 12px; font-weight: 700; }
+.layer-reason { font-size: 11px; color: #64748b; line-height: 1.5; margin-top: 3px; }
+.lv-internal   { color: #ef4444; }
+.lv-ext-dist   { color: #60a5fa; }
+.lv-ext-trans  { color: #38bdf8; }
+.lv-equipment  { color: #f97316; }
+.lv-unknown    { color: #94a3b8; }
+.pa-benar      { color: #10b981; }
+.pa-tidak      { color: #ef4444; }
+.pa-kurang     { color: #f59e0b; }
+
+/* ── Reasoning box (conclusion + reasoning UX) ───────────────── */
+.reasoning-block {
+    background: rgba(255,255,255,0.02); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; margin-top: 8px;
+}
+.reasoning-row { margin-bottom: 10px; }
+.reasoning-row:last-child { margin-bottom: 0; }
+.reasoning-head { font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #475569; margin-bottom: 4px; }
+.reasoning-text { font-size: 12px; color: #94a3b8; line-height: 1.6; }
+
 .action-banner {
     background: rgba(239,68,68,0.12);
     border: 1px solid rgba(239,68,68,0.3);
@@ -123,6 +154,23 @@
 .prob-bar-wrap { flex: 1; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
 .prob-bar-fill { height: 100%; border-radius: 3px; background: #8b5cf6; transition: width 0.6s ease; }
 .prob-pct { font-size: 12px; color: #94a3b8; width: 46px; text-align: right; flex-shrink: 0; }
+
+/* ── Multi-relay evidence table ─────────────────────────────── */
+.fusion-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fusion-table th { text-align: left; padding: 6px 10px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.fusion-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.fusion-table tr:last-child td { border-bottom: none; }
+.fusion-table tr.primary-row td { background: rgba(139,92,246,0.06); }
+.fusion-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.fb-internal  { background: rgba(239,68,68,0.15);   color: #ef4444; }
+.fb-ext-dist  { background: rgba(59,130,246,0.15);  color: #60a5fa; }
+.fb-ext-trans { background: rgba(56,189,248,0.15);  color: #38bdf8; }
+.fb-equipment { background: rgba(249,115,22,0.15);  color: #f97316; }
+.fb-unknown   { background: rgba(100,116,139,0.15); color: #94a3b8; }
+.fb-benar     { background: rgba(16,185,129,0.15);  color: #10b981; }
+.fb-tidak     { background: rgba(239,68,68,0.15);   color: #ef4444; }
+.fb-kurang    { background: rgba(245,158,11,0.15);  color: #f59e0b; }
+.conflict-banner { display: flex; gap: 8px; align-items: flex-start; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #f59e0b; margin-bottom: 8px; }
 
 /* ── Description ─────────────────────────────────────────────── */
 .desc-block {
@@ -228,6 +276,7 @@
 {% endblock %}
 
 {% block content %}
+{% set is_transformer_context = analysis.transformer_context_only %}
 <div class="xfmr-layout">
 
   <!-- ════════════════════ LEFT PANEL ════════════════════ -->
@@ -235,13 +284,13 @@
 
     <!-- Event classification card -->
     <div class="x-card-dark">
-      <div class="event-eyebrow">KLASIFIKASI EVENT 87T</div>
-      <div class="event-label">{{ analysis.label }}</div>
-      <div class="event-sub">{{ analysis.station_name }} &mdash; {{ analysis.relay_family or 'Unknown relay' }}</div>
+      <div class="event-eyebrow">{% if is_transformer_context %}ANALISIS EVIDENCE TRAFO{% else %}KLASIFIKASI EVENT 87T{% endif %}</div>
+      <div class="event-label">{{ analysis.transformer_context_title if is_transformer_context else analysis.label }}</div>
+      <div class="event-sub">{{ analysis.station_name }} &mdash; {{ analysis.transformer_relay_role_label if is_transformer_context else (analysis.relay_family or 'Unknown relay') }}</div>
 
       <div class="conf-bar-wrap">
         <div class="conf-bar-label">
-          <span>Tingkat keyakinan</span>
+          <span>{% if is_transformer_context %}Kepercayaan analisis file primer{% else %}Tingkat keyakinan{% endif %}</span>
           <span>{{ "%.0f"|format(analysis.confidence * 100) }}%</span>
         </div>
         <div class="conf-bar">
@@ -267,14 +316,117 @@
       </div>
       {% endif %}
 
-      <div style="margin-top:16px; padding-top:14px; border-top:1px solid #1e293b;">
+      <!-- Layered output: 3-layer conclusion stack -->
+      {% set fo = analysis.fault_origin or 'UNKNOWN' %}
+      {% set pa = analysis.protection_assessment or 'EVIDENCE_KURANG' %}
+      <div class="layer-stack">
+
+        <div class="layer-row">
+          <div class="layer-icon">🔍</div>
+          <div class="layer-body">
+            <div class="layer-label">Event Class (relay lokal)</div>
+            <div class="layer-value
+              {% if ec == 'INRUSH' %}ev-inrush
+              {% elif ec == 'INTERNAL_FAULT' %}lv-internal
+              {% elif ec == 'THROUGH_FAULT' %}lv-ext-dist
+              {% elif ec == 'OVEREXCITATION' %}ev-overexcit
+              {% elif ec == 'MAL_OPERATE' %}lv-equipment
+              {% else %}lv-unknown{% endif %}">
+              {{ ec | replace('_',' ') }}
+            </div>
+            <div class="layer-reason">Terlihat dari rekaman COMTRADE relay ini.</div>
+          </div>
+        </div>
+
+        <div class="layer-row">
+          <div class="layer-icon">📍</div>
+          <div class="layer-body">
+            <div class="layer-label">Fault Origin (asal gangguan)</div>
+            <div class="layer-value
+              {% if fo == 'INTERNAL_TRAFO' %}lv-internal
+              {% elif fo == 'EXTERNAL_DISTRIBUSI' %}lv-ext-dist
+              {% elif fo == 'EXTERNAL_TRANSMISI' %}lv-ext-trans
+              {% elif fo == 'PROTEKSI_PERALATAN' %}lv-equipment
+              {% else %}lv-unknown{% endif %}">
+              {{ fo | replace('_',' ') }}
+            </div>
+            {% if analysis.fault_origin_reason %}
+            <div class="layer-reason">{{ analysis.fault_origin_reason }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="layer-row">
+          <div class="layer-icon">🛡</div>
+          <div class="layer-body">
+            <div class="layer-label">Protection Assessment</div>
+            <div class="layer-value
+              {% if pa == 'BENAR' %}pa-benar
+              {% elif pa == 'TIDAK_SELEKTIF' %}pa-tidak
+              {% else %}pa-kurang{% endif %}">
+              {% if pa == 'BENAR' %}Proteksi Benar
+              {% elif pa == 'TIDAK_SELEKTIF' %}Tidak Selektif
+              {% else %}Evidence Belum Cukup{% endif %}
+            </div>
+            {% if analysis.protection_assessment_reason %}
+            <div class="layer-reason">{{ analysis.protection_assessment_reason }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid #1e293b;">
         <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#334155; margin-bottom:8px;">Rekomendasi</div>
         <div style="font-size:12px; color:#94a3b8; line-height:1.6;">{{ analysis.recommendation }}</div>
       </div>
     </div>
 
+    {% if analysis.intake_domain == 'TRANSFORMER' %}
+    <div class="x-card">
+      <div class="x-section-label">Konteks Input</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:12px;">
+        <div><strong style="color:var(--text);">Workflow:</strong><br><span style="color:var(--text-muted);">{{ analysis.transformer_intake_mode_label }}</span></div>
+        <div><strong style="color:var(--text);">Tujuan:</strong><br><span style="color:var(--text-muted);">{{ analysis.transformer_analysis_goal_label }}</span></div>
+        <div style="grid-column:1 / -1;"><strong style="color:var(--text);">Relay awal:</strong><br><span style="color:var(--text-muted);">{{ analysis.transformer_relay_role_label }}</span></div>
+      </div>
+      <div style="margin-top:12px; font-size:12px; color:var(--text-muted); line-height:1.7;">{{ analysis.transformer_context_note }}</div>
+      {% if analysis.transformer_next_files %}
+      <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:6px;">
+        {% for item in analysis.transformer_next_files %}
+        <span style="background:rgba(59,130,246,0.12); color:#3b82f6; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700;">{{ item }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if analysis.supporting_relays %}
+    <div class="x-card">
+      <div class="x-section-label">Supporting Relays</div>
+      {% for item in analysis.supporting_relays %}
+      <div style="padding:10px 0; {% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
+        <div style="font-size:12px; font-weight:700; color:var(--text);">{{ item.role_label }}</div>
+        <div style="font-size:11px; color:var(--text-muted);">{{ item.cfg_name }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if is_transformer_context %}
+    <div class="x-card">
+      <div class="x-section-label">Interpretasi File Primer</div>
+      <div style="font-size:13px; color:var(--text); line-height:1.7;">
+        Hasil analisis file primer saat ini dibaca sebagai <strong>{{ analysis.transformer_primary_result_label }}</strong>
+        dengan keyakinan {{ "%.0f"|format((analysis.transformer_primary_confidence or 0) * 100) }}%.
+        Untuk event trafo, hasil ini dibaca sebagai evidence lokal dari relay {{ analysis.transformer_relay_role_label }},
+        bukan sebagai final cause transformer fault.
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Probability bars -->
-    {% if analysis.cause_pcts %}
+    {% if analysis.cause_pcts and not is_transformer_context %}
     <div class="x-card">
       <div class="x-section-label">Probabilitas Event Class</div>
       {% for item in analysis.cause_pcts %}
@@ -290,6 +442,7 @@
     {% endif %}
 
     <!-- Channel coverage -->
+    {% if not is_transformer_context %}
     <div class="x-card">
       <div class="x-section-label">Ketersediaan Channel</div>
       {% set ch_items = [
@@ -312,8 +465,10 @@
       </div>
       {% endif %}
     </div>
+    {% endif %}
 
     <!-- Confirm form -->
+    {% if not is_transformer_context %}
     <div class="confirm-card">
       <div class="x-section-label">Konfirmasi Hasil</div>
       <form method="POST" action="{{ url_for('confirm_transformer') }}" data-no-loading>
@@ -333,12 +488,23 @@
       <a href="{{ url_for('report') }}" target="_blank" class="btn btn-outline" style="width:100%;margin-top:8px;text-align:center;">🖨 Cetak Laporan</a>
       <a href="{{ url_for('index') }}" class="btn btn-outline" style="width:100%;margin-top:8px;text-align:center;">Analisis File Baru</a>
     </div>
+    {% else %}
+    <div class="confirm-card">
+      <div class="x-section-label">Langkah Berikutnya</div>
+      <div style="font-size:12px; color:var(--text-muted); line-height:1.7;">
+        Jika tujuan Anda adalah menentukan origin fault atau review selektivitas, tambahkan relay pendukung seperti 87T, OCR HV, REF, atau SBEF.
+      </div>
+      <a href="{{ url_for('transformer_upload') }}" class="btn btn-primary" style="width:100%;margin-top:12px;text-align:center;">Tambah Evidence Trafo</a>
+      <a href="{{ url_for('index') }}" class="btn btn-outline" style="width:100%;margin-top:8px;text-align:center;">Kembali ke Landing</a>
+    </div>
+    {% endif %}
 
   </div>
 
   <!-- ════════════════════ RIGHT PANEL ════════════════════ -->
   <div class="xfmr-right">
 
+    {% if not is_transformer_context %}
     <!-- Harmonic analysis -->
     <div class="x-card">
       <div class="x-section-label">Analisis Harmonik Arus Diferensial</div>
@@ -504,11 +670,156 @@
       </div>
     </div>
 
-    <!-- Narrative description -->
+    {% endif %}
+
+    <!-- Multi-relay evidence table (COORDINATED mode only) -->
+    {% if analysis.is_coordinated and analysis.fusion_summary %}
     <div class="x-card">
-      <div class="x-section-label">Narasi Analisis</div>
-      <div class="desc-block">{{ analysis.description or 'Deskripsi tidak tersedia.' }}</div>
+      <div class="x-section-label">Evidence Per Relay (Coordinated)</div>
+
+      {% if analysis.fusion_conflicts %}
+      {% for conflict in analysis.fusion_conflicts %}
+      <div class="conflict-banner"><span>⚠</span><span>{{ conflict }}</span></div>
+      {% endfor %}
+      {% endif %}
+
+      {% macro origin_badge(o) %}
+        <span class="fusion-badge
+          {% if o == 'INTERNAL_TRAFO' %}fb-internal
+          {% elif o == 'EXTERNAL_DISTRIBUSI' %}fb-ext-dist
+          {% elif o == 'EXTERNAL_TRANSMISI' %}fb-ext-trans
+          {% elif o == 'PROTEKSI_PERALATAN' %}fb-equipment
+          {% else %}fb-unknown{% endif %}">
+          {{ o | replace('_',' ') if o else '—' }}
+        </span>
+      {% endmacro %}
+
+      {% macro pa_badge(p) %}
+        <span class="fusion-badge
+          {% if p == 'BENAR' %}fb-benar
+          {% elif p == 'TIDAK_SELEKTIF' %}fb-tidak
+          {% else %}fb-kurang{% endif %}">
+          {% if p == 'BENAR' %}Benar
+          {% elif p == 'TIDAK_SELEKTIF' %}Tidak Selektif
+          {% else %}Kurang{% endif %}
+        </span>
+      {% endmacro %}
+
+      <table class="fusion-table">
+        <thead>
+          <tr>
+            <th>Relay</th>
+            <th>Event Class</th>
+            <th>Fault Origin</th>
+            <th>Proteksi</th>
+            <th style="text-align:right;">Conf.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in analysis.fusion_summary %}
+          <tr {% if row.is_primary %}class="primary-row"{% endif %}>
+            <td>
+              <span style="font-weight:700;color:var(--text);">{{ row.role_label }}</span>
+              {% if row.is_primary %}<br><span style="font-size:10px;color:#6d28d9;">primer</span>{% endif %}
+              {% if row.get('cfg_name') %}<br><span style="font-size:10px;color:var(--text-muted);">{{ row.cfg_name }}</span>{% endif %}
+            </td>
+            <td>
+              <span style="font-size:12px;font-weight:600;color:var(--text);">{{ (row.event_class or '—') | replace('_',' ') }}</span>
+              {% if row.limited_data %}<br><span style="font-size:10px;color:#f59e0b;">data terbatas</span>{% endif %}
+            </td>
+            <td>{{ origin_badge(row.fault_origin) }}
+              {% if row.fault_origin_reason %}
+              <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4;">{{ row.fault_origin_reason | truncate(80) }}</div>
+              {% endif %}
+            </td>
+            <td>{{ pa_badge(row.protection_assessment) }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;font-size:12px;">
+              {{ "%.0f"|format((row.confidence or 0) * 100) }}%
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div style="margin-top:10px;font-size:11px;color:#475569;line-height:1.6;">
+        Origin dan assessment di atas di-<em>fuse</em> berdasarkan bobot otoritas relay.
+        Hasil akhir ditampilkan di panel kiri.
+      </div>
     </div>
+    {% endif %}
+
+    <!-- Conclusion + Reasoning (README: Arah Berikutnya #3) -->
+    <div class="x-card">
+      <div class="x-section-label">Kesimpulan &amp; Alasan</div>
+
+      {% set ec = analysis.event_class or 'UNKNOWN' %}
+      {% set fo = analysis.fault_origin or 'UNKNOWN' %}
+      {% set pa = analysis.protection_assessment or 'EVIDENCE_KURANG' %}
+
+      <div class="reasoning-block">
+
+        <div class="reasoning-row">
+          <div class="reasoning-head">Yang terlihat dari rekaman ini</div>
+          <div class="reasoning-text">
+            {% if analysis.evidence %}
+              {{ analysis.evidence }}
+            {% elif analysis.description %}
+              {{ analysis.description | truncate(300) }}
+            {% else %}
+              Tidak ada detail evidence tersedia.
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="reasoning-row">
+          <div class="reasoning-head">Yang belum terlihat / asumsi yang dipakai</div>
+          <div class="reasoning-text">
+            {% if ec == 'INRUSH' %}
+              Tidak ada konfirmasi dari relay sisi lain. Diasumsikan energisasi normal karena H2 tinggi dan DC offset kuat. Rekaman satu sisi tidak dapat mengonfirmasi apakah ada gangguan di jaringan lain pada saat bersamaan.
+            {% elif ec == 'INTERNAL_FAULT' %}
+              Diasumsikan fault benar-benar internal — belum dikonfirmasi dengan DGA atau inspeksi fisik. Tidak ada rekaman relay sisi LV atau OCR HV untuk koordinasi.
+            {% elif ec == 'THROUGH_FAULT' %}
+              Origin exact (distribusi atau transmisi) belum dapat ditentukan dari rekaman 87T saja. Relay feeder atau OCR LV diperlukan untuk konfirmasi arah gangguan.
+            {% elif ec == 'OVEREXCITATION' %}
+              Penyebab V/Hz (AVR, tap changer, atau sistem luar) belum dapat dikonfirmasi dari rekaman lokal saja.
+            {% elif ec == 'MAL_OPERATE' %}
+              Penyebab saturasi CT belum dikonfirmasi — perlu rekaman arus HV/LV detail dan data rasio CT aktual.
+            {% else %}
+              Evidence tidak mencukupi untuk menentukan apakah ada gangguan, dan di mana lokasinya. Data harmonic atau differential tidak tersedia atau lemah.
+            {% endif %}
+            {% if analysis.limited_data %}
+              <span style="color:#f59e0b;"> ⚠ Beberapa channel tidak tersedia dalam file ini.</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="reasoning-row">
+          <div class="reasoning-head">Data tambahan untuk konfirmasi</div>
+          <div class="reasoning-text">
+            {% if analysis.transformer_next_files %}
+              Rekaman dari: {{ analysis.transformer_next_files | join(', ') }}.
+            {% elif ec == 'INTERNAL_FAULT' %}
+              DGA, turns-ratio test, IR test, rekaman OCR HV.
+            {% elif ec == 'THROUGH_FAULT' %}
+              Rekaman relay feeder / OCR LV / incomer, status PMT sisi distribusi.
+            {% elif ec == 'MAL_OPERATE' %}
+              Rekaman OCR HV, rasio CT aktual, setting slope 87T, arus gangguan maksimum sistem.
+            {% else %}
+              Rekaman relay 87T, REF, GFR HV, OCR HV, OCR LV.
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Narrative description (full detail) -->
+    {% if analysis.description %}
+    <div class="x-card">
+      <div class="x-section-label">Narasi Lengkap</div>
+      <div class="desc-block">{{ analysis.description }}</div>
+    </div>
+    {% endif %}
 
     <!-- Evidence / rule detail -->
     {% if analysis.evidence %}

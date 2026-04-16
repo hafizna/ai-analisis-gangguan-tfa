@@ -1,203 +1,146 @@
 {% extends "base.html" %}
-{% block title %}Unggah File — TFA{% endblock %}
-{% block topbar_title %}Unggah File COMTRADE{% endblock %}
-{% block topbar_sub %}Klasifikasi penyebab gangguan berbasis AI{% endblock %}
+{% block title %}Mulai Analisis — TFA{% endblock %}
+{% block topbar_title %}Pilih Jalur Analisis{% endblock %}
+{% block topbar_sub %}Bedakan gangguan saluran dan gangguan trafo sejak awal{% endblock %}
 {% block nav_upload %}active{% endblock %}
 
 {% block extra_css %}
-.upload-wrap {
-    max-width: 620px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+.landing-shell { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.landing-hero {
+    background: linear-gradient(135deg, #0f172a, #1e3a8a 55%, #0f172a);
+    color: #e2e8f0;
+    border-radius: 20px;
+    padding: 28px 30px;
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 18px;
 }
-.info-card {
+.landing-hero h1 { font-size: 32px; line-height: 1.08; margin-bottom: 12px; }
+.landing-hero p { font-size: 14px; color: #cbd5e1; line-height: 1.8; }
+.hero-tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.hero-tag {
+    padding: 5px 10px; border-radius: 999px;
+    background: rgba(255,255,255,0.08); color: #e2e8f0;
+    font-size: 11px; font-weight: 700; letter-spacing: .04em;
+}
+.hero-side {
+    background: rgba(15,23,42,0.42);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 18px;
+}
+.hero-side h3 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: #93c5fd; margin-bottom: 10px; }
+.hero-side ul { margin-left: 18px; color: #cbd5e1; line-height: 1.8; font-size: 13px; }
+.choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.choice-card {
     background: var(--panel-bg);
     border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 10px;
-    padding: 18px 20px;
+    border-radius: 18px;
+    padding: 22px;
+    display: flex; flex-direction: column; gap: 14px;
 }
-.info-card h4 {
-    font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px;
+.choice-card.line { border-top: 4px solid #3b82f6; }
+.choice-card.xfmr { border-top: 4px solid #8b5cf6; }
+.choice-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted); }
+.choice-title { font-size: 22px; font-weight: 800; color: var(--text); }
+.choice-copy { font-size: 14px; color: var(--text-muted); line-height: 1.8; }
+.bullet-list { display: flex; flex-direction: column; gap: 8px; }
+.bullet-item {
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: 13px; color: var(--text);
 }
-.info-card ul { margin-left: 18px; }
-.info-card li { font-size: 13px; color: var(--text); margin: 5px 0; line-height: 1.5; }
-.info-card a  { color: var(--accent); font-weight: 600; text-decoration: none; }
-.info-card a:hover { text-decoration: underline; }
-
-.drop-zone {
-    background: var(--panel-bg);
-    border: 2px dashed var(--border);
-    border-radius: 12px;
-    padding: 48px 32px;
-    text-align: center;
-    transition: all 0.2s;
-    cursor: default;
-}
-.drop-zone.dragover {
-    border-color: var(--accent);
-    background: rgba(59,130,246,0.05);
-}
-.drop-icon { font-size: 40px; margin-bottom: 14px; opacity: 0.5; }
-.drop-zone h3 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
-.drop-zone p  { font-size: 13px; color: var(--text-muted); margin-bottom: 18px; }
-.file-btns { display: flex; justify-content: center; gap: 10px; }
-.file-pick {
-    display: inline-block; padding: 9px 18px;
-    background: var(--accent); color: white;
-    border-radius: 8px; cursor: pointer;
-    font-size: 13px; font-weight: 600;
-    transition: background 0.15s;
-}
-.file-pick:hover { background: #2563eb; }
-.file-input { display: none; }
-
-.file-info-box {
-    background: var(--card-bg); border: 1px solid var(--border);
-    border-radius: 8px; padding: 14px 16px; margin-top: 12px;
-    display: none;
-}
-.file-row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
-.file-row-name { font-size: 13px; font-weight: 600; color: var(--text); }
-.file-row-size { font-size: 12px; color: var(--text-muted); }
-
-.submit-row { text-align: center; margin-top: 4px; }
-
-.analysis-card {
+.bullet-item::before { content: '•'; color: var(--accent); font-weight: 800; }
+.card-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: auto; }
+.notes-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.note-card {
     background: var(--panel-bg);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 18px 20px;
+    border-radius: 14px;
+    padding: 16px;
 }
-.analysis-card h4 {
-    font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px;
-}
-.analysis-items { display: flex; flex-direction: column; gap: 8px; }
-.analysis-item {
-    display: flex; align-items: flex-start; gap: 10px;
-    font-size: 13px; color: var(--text); line-height: 1.5;
-}
-.analysis-item::before {
-    content: '→'; color: var(--accent); font-weight: 700;
-    flex-shrink: 0; margin-top: 1px;
+.note-card h4 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
+.note-card p { font-size: 13px; line-height: 1.7; color: var(--text); }
+@media (max-width: 900px) {
+    .landing-hero, .choice-grid, .notes-grid { grid-template-columns: 1fr; }
 }
 {% endblock %}
 
 {% block content %}
-<div class="upload-wrap">
-
-    <div class="info-card">
-        <h4>File yang Diperlukan</h4>
-        <ul>
-            <li><strong>.cfg</strong> — file konfigurasi COMTRADE</li>
-            <li><strong>.dat</strong> — file data (nama sama dengan .cfg)</li>
-        </ul>
-        <p style="font-size:13px; color:var(--text-muted); margin-top:10px;">
-            Atau gunakan
-            <a href="{{ url_for('browse') }}">Pilih Rekaman</a>
-            untuk memilih langsung dari folder tanpa mengunggah.
-        </p>
-    </div>
-
-    <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data" data-loading-msg="Menganalisis file COMTRADE...">
-        <div class="drop-zone" id="dropZone">
-            <div class="drop-icon">📤</div>
-            <h3>Drag &amp; Drop Files Here</h3>
-            <p>or select files manually</p>
-            <div class="file-btns">
-                <label for="cfg_file" class="file-pick">Select .cfg</label>
-                <input type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" class="file-input" required>
-                <label for="dat_file" class="file-pick">Select .dat</label>
-                <input type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" class="file-input" required>
+<div class="landing-shell">
+    <section class="landing-hero">
+        <div>
+            <h1>Mulai dari domain gangguan yang benar, bukan dari satu upload box yang sama.</h1>
+            <p>
+                Saluran transmisi dan transformator punya filosofi analisis yang berbeda.
+                Pilih jalur yang sesuai supaya input, hasil, dan evidence yang diminta selaras dengan cara engineer membaca gangguan di lapangan.
+            </p>
+            <div class="hero-tag-row">
+                <span class="hero-tag">Distance / 21</span>
+                <span class="hero-tag">87L</span>
+                <span class="hero-tag">87T</span>
+                <span class="hero-tag">OCR HV / LV</span>
+                <span class="hero-tag">REF / GFR / SBEF</span>
             </div>
         </div>
+        <div class="hero-side">
+            <h3>Prinsip Kerja</h3>
+            <ul>
+                <li>Saluran: cepat ke pola arus-tegangan, AR, dan cause classification.</li>
+                <li>Trafo: mulai dari relay role, event meaning, lalu origin fault dan selectivity.</li>
+                <li>Jika evidence belum cukup, sistem seharusnya minta relay tambahan, bukan memaksa final cause.</li>
+            </ul>
+        </div>
+    </section>
 
-        <div class="file-info-box" id="fileInfo">
-            <div id="cfgRow" class="file-row" style="display:none;">
-                <span style="font-size:16px;">📄</span>
-                <div>
-                    <div class="file-row-name" id="cfgName"></div>
-                    <div class="file-row-size" id="cfgSize"></div>
-                </div>
+    <section class="choice-grid">
+        <article class="choice-card line">
+            <div class="choice-eyebrow">Jaringan Transmisi</div>
+            <div class="choice-title">Input Saluran</div>
+            <div class="choice-copy">
+                Dipakai untuk rele jarak, DFR saluran, dan analisis cepat penyebab seperti petir, layang-layang, hewan, benda asing, pohon, atau konduktor/tower.
             </div>
-            <div id="datRow" class="file-row" style="display:none;">
-                <span style="font-size:16px;">📊</span>
-                <div>
-                    <div class="file-row-name" id="datName"></div>
-                    <div class="file-row-size" id="datSize"></div>
-                </div>
+            <div class="bullet-list">
+                <div class="bullet-item">Satu pasangan file `.cfg + .dat`</div>
+                <div class="bullet-item">Cocok untuk distance relay, DFR eksternal, atau screening cepat gangguan saluran</div>
+                <div class="bullet-item">Hasil fokus ke transien/permanen dan cause ranking</div>
             </div>
-        </div>
+            <div class="card-actions">
+                <a href="{{ url_for('line_upload') }}" class="btn btn-primary">Masuk ke Input Saluran</a>
+                <a href="{{ url_for('browse') }}" class="btn btn-outline">Pilih dari Raw Data</a>
+            </div>
+        </article>
 
-        <div class="submit-row" style="margin-top:16px;">
-            <button type="submit" class="btn btn-primary" id="analyzeBtn" disabled style="padding:11px 32px; font-size:15px;">
-                Analisis Gangguan
-            </button>
-        </div>
-    </form>
+        <article class="choice-card xfmr">
+            <div class="choice-eyebrow">Transformator</div>
+            <div class="choice-title">Input Trafo</div>
+            <div class="choice-copy">
+                Dipakai untuk 87T dan juga relay pendukung seperti OCR HV, OCR LV, REF, GFR HV, atau SBEF. Sistem membedakan quick local analysis dan coordinated multi-relay analysis.
+            </div>
+            <div class="bullet-list">
+                <div class="bullet-item">Mulai dari relay yang tersedia sekarang</div>
+                <div class="bullet-item">Cocok untuk localization, selectivity review, dan event interpretation</div>
+                <div class="bullet-item">Jika file awal hanya OCR LV, hasil diposisikan sebagai partial evidence, bukan final transformer cause</div>
+            </div>
+            <div class="card-actions">
+                <a href="{{ url_for('transformer_upload') }}" class="btn btn-primary">Masuk ke Input Trafo</a>
+                <a href="{{ url_for('transformer_history') }}" class="btn btn-outline">Lihat Riwayat 87T</a>
+            </div>
+        </article>
+    </section>
 
-    <div class="analysis-card">
-        <h4>Yang Dianalisis Sistem</h4>
-        <div class="analysis-items">
-            <div class="analysis-item"><strong>Konfirmasi transien (Layer 0)</strong> — AR berhasil dengan arus nyata langsung dikategorikan transien</div>
-            <div class="analysis-item"><strong>Aturan deterministik (Layer 1)</strong> — perubahan fasa saat AR, trip 3-fasa gagal reclose</div>
-            <div class="analysis-item"><strong>Classifier ML (Layer 2)</strong> — pola di/dt, arus puncak, rasio i0/i1</div>
-            <div class="analysis-item"><strong>Estimasi penyebab (heuristik)</strong> — persentase kemungkinan PETIR / Layang / Hewan / Benda Asing / Pohon</div>
+    <section class="notes-grid">
+        <div class="note-card">
+            <h4>Kapan Pilih Saluran</h4>
+            <p>Jika fokus utamanya adalah penyebab gangguan penghantar, auto-reclose, waveform line current, dan klasifikasi petir/hewan/benda asing.</p>
         </div>
-    </div>
-
+        <div class="note-card">
+            <h4>Kapan Pilih Trafo</h4>
+            <p>Jika event melibatkan transformator, relay sisi HV/LV, 87T, atau Anda ingin menilai apakah origin fault sebenarnya internal, distribusi, atau hanya backup trip.</p>
+        </div>
+        <div class="note-card">
+            <h4>Kaidah Umum</h4>
+            <p>Untuk domain trafo, relay coordination tetap menjadi sumber kebenaran utama untuk localization. ML hanya membantu membaca waveform lokal ketika koordinasi belum menjawab cukup.</p>
+        </div>
+    </section>
 </div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-const cfgInput  = document.getElementById('cfg_file');
-const datInput  = document.getElementById('dat_file');
-const analyzeBtn= document.getElementById('analyzeBtn');
-const fileInfo  = document.getElementById('fileInfo');
-const dropZone  = document.getElementById('dropZone');
-
-function fmt(b) {
-    const k=1024, s=['B','KB','MB'];
-    const i=Math.floor(Math.log(b)/Math.log(k));
-    return (b/Math.pow(k,i)).toFixed(1)+' '+s[i];
-}
-function update() {
-    const c=cfgInput.files[0], d=datInput.files[0];
-    if (c||d) fileInfo.style.display='block';
-    if (c) {
-        document.getElementById('cfgRow').style.display='flex';
-        document.getElementById('cfgName').textContent=c.name;
-        document.getElementById('cfgSize').textContent=fmt(c.size);
-    }
-    if (d) {
-        document.getElementById('datRow').style.display='flex';
-        document.getElementById('datName').textContent=d.name;
-        document.getElementById('datSize').textContent=fmt(d.size);
-    }
-    analyzeBtn.disabled=!(c&&d);
-}
-cfgInput.addEventListener('change', update);
-datInput.addEventListener('change', update);
-
-dropZone.addEventListener('dragover', e=>{e.preventDefault(); dropZone.classList.add('dragover');});
-dropZone.addEventListener('dragleave', ()=>dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e=>{
-    e.preventDefault(); dropZone.classList.remove('dragover');
-    for (let f of e.dataTransfer.files) {
-        const dt=new DataTransfer(); dt.items.add(f);
-        if (f.name.toLowerCase().endsWith('.cfg')) { cfgInput.files=dt.files; }
-        if (f.name.toLowerCase().endsWith('.dat')) { datInput.files=dt.files; }
-    }
-    update();
-});
-document.getElementById('uploadForm').addEventListener('submit',()=>{
-    analyzeBtn.disabled=true;
-    analyzeBtn.textContent='Menganalisis...';
-});
-</script>
 {% endblock %}
