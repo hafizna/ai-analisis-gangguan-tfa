@@ -313,6 +313,119 @@ def test_recalculate_multiclass_uses_classifier_class_order_for_probability_labe
     assert any(item["name"] == "PETIR" and item["pct"] == 11.4 for item in updated["cause_pcts"])
 
 
+def test_recalculate_multiclass_supports_lightgbm_labels(monkeypatch):
+    class DummyClf:
+        classes_ = np.array(["PETIR", "LAYANG", "HEWAN", "BENDA_ASING", "KONDUKTOR", "PERALATAN"], dtype=object)
+
+        def predict(self, X):
+            return np.array(["PERALATAN"], dtype=object)
+
+        def predict_proba(self, X):
+            return np.array([[0.07, 0.05, 0.04, 0.06, 0.18, 0.60]], dtype=float)
+
+    analysis = {
+        "ct_primary": None,
+        "ct_secondary": None,
+        "vt_primary": None,
+        "vt_secondary": None,
+        "ct_primary_default": None,
+        "ct_secondary_default": None,
+        "vt_primary_default": None,
+        "vt_secondary_default": None,
+        "ratio_base_ct_primary": 2000.0,
+        "ratio_base_ct_secondary": 5.0,
+        "ratio_base_vt_primary": 150000.0,
+        "ratio_base_vt_secondary": 100.0,
+        "peak_fault_current_a": 2419.22,
+        "i0_magnitude_a": 719.93,
+        "i1_magnitude_a": 941.63,
+        "i2_magnitude_a": 697.80,
+        "v_prefault_v": 41.09,
+        "v_fault_v": 7.62,
+        "z_magnitude_ohms": 4.5009,
+        "fault_duration_ms": 80.0,
+        "fault_count": 1,
+        "i0_i1_ratio": 0.765,
+        "voltage_sag_depth_pu": 0.814,
+        "di_dt_max": 1000.0,
+        "reclose_successful": "",
+        "trip_type": "single_pole",
+        "faulted_phases": "C",
+        "fault_type": "SLG",
+        "reclose_time_ms": 0.0,
+        "thd_percent": 5.0,
+        "inception_angle_degrees": 90.0,
+        "label": "PERALATAN / PROTEKSI",
+        "confidence": 0.60,
+        "tier": 2,
+        "rule_name": "multiclass_lightgbm",
+        "evidence": "",
+        "recommendation": "",
+        "description": "",
+        "cause_pcts": [],
+    }
+
+    monkeypatch.setattr(webapp_app, "apply_rules", lambda row: None)
+    monkeypatch.setattr(
+        webapp_app,
+        "_load_model",
+        lambda: {
+            "clf": DummyClf(),
+            "classes": ["PETIR", "LAYANG", "HEWAN", "BENDA_ASING", "KONDUKTOR", "PERALATAN"],
+            "model_type": "multiclass_lightgbm",
+        },
+    )
+
+    updated = webapp_app._recalculate_analysis_with_ratio(analysis, 2000.0, 5.0, 150000.0, 100.0)
+
+    assert updated["label"] == "PERALATAN / PROTEKSI"
+    assert updated["rule_name"] == "multiclass_lightgbm"
+    assert updated["cause_pcts"][0]["name"] == "PERALATAN / PROTEKSI"
+    assert updated["cause_pcts"][0]["pct"] == 60.0
+
+
+def test_analyse_supporting_relay_infers_distribution_evidence_from_ocr_lv(monkeypatch):
+    monkeypatch.setattr(
+        webapp_app,
+        "classify_file",
+        lambda _: SimpleNamespace(
+            transformer_result=None,
+            label="PETIR",
+            confidence=0.82,
+            cause_pcts=[{"name": "PETIR", "pct": 60.0}],
+            features={"fault_type": "SLG", "i0_i1_ratio": 0.71},
+        ),
+    )
+
+    evidence = webapp_app._analyse_supporting_relay("dummy.cfg", "OCR_LV")
+
+    assert evidence["event_class"] == "PETIR"
+    assert evidence["fault_origin"] == "EXTERNAL_DISTRIBUSI"
+    assert evidence["protection_assessment"] == "BENAR"
+    assert evidence["limited_data"] is False
+    assert "OCR LV" in evidence["fault_origin_reason"]
+
+
+def test_analyse_supporting_relay_preserves_peralatan_signal(monkeypatch):
+    monkeypatch.setattr(
+        webapp_app,
+        "classify_file",
+        lambda _: SimpleNamespace(
+            transformer_result=None,
+            label="PERALATAN / PROTEKSI",
+            confidence=0.74,
+            cause_pcts=[{"name": "PERALATAN / PROTEKSI", "pct": 74.0}],
+            features={"fault_type": "SLG"},
+        ),
+    )
+
+    evidence = webapp_app._analyse_supporting_relay("dummy.cfg", "FEEDER")
+
+    assert evidence["event_class"] == "PERALATAN / PROTEKSI"
+    assert evidence["fault_origin"] == "PROTEKSI_PERALATAN"
+    assert evidence["protection_assessment"] == "TIDAK_SELEKTIF"
+
+
 def test_build_waveform_payload_does_not_force_active_line_when_payload_is_small(monkeypatch):
     time_axis = np.arange(0.0, 0.010, 0.001)
     record = SimpleNamespace(

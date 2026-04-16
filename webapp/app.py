@@ -55,6 +55,17 @@ TRANSFORMER_ANALYSIS_GOALS = [
     ("ROOT_CAUSE", "Investigasi sebab akhir"),
 ]
 
+MULTICLASS_MODEL_TYPES = {"multiclass_random_forest", "multiclass_lightgbm"}
+MULTICLASS_LABEL_MAP = {
+    "PETIR": "PETIR",
+    "LAYANG": "LAYANG-LAYANG",
+    "POHON": "POHON / VEGETASI",
+    "HEWAN": "HEWAN / BINATANG",
+    "BENDA_ASING": "BENDA ASING",
+    "KONDUKTOR": "KONDUKTOR / TOWER",
+    "PERALATAN": "PERALATAN / PROTEKSI",
+}
+
 # Bootstrap path so we can import pipeline modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -191,6 +202,17 @@ def _to_bool_or_none(val):
 
 def _normalize_label(val: str) -> str:
     return re.sub(r"\s+", " ", (val or "").strip().upper())
+
+
+def _top_cause_name(result) -> str:
+    cause_pcts = getattr(result, "cause_pcts", None) or []
+    if isinstance(cause_pcts, list) and cause_pcts:
+        try:
+            top = max(cause_pcts, key=lambda item: _f(item.get("pct"), 0.0))
+            return _s(top.get("name"), "")
+        except Exception:
+            return ""
+    return ""
 
 
 def _top_predicted_cause_from_analysis(analysis: dict) -> str:
@@ -721,23 +743,18 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         proba      = clf.predict_proba(X)[0]
 
         proba_classes = list(getattr(clf, "classes_", classes))
-        if model_type == "multiclass_random_forest" and proba_classes:
+        if model_type in MULTICLASS_MODEL_TYPES and proba_classes:
             from models.predict import _label_recommendation
-            _label_id_map = {
-                "PETIR": "PETIR", "LAYANG": "LAYANG-LAYANG",
-                "POHON": "POHON / VEGETASI", "HEWAN": "HEWAN / BINATANG",
-                "BENDA_ASING": "BENDA ASING", "KONDUKTOR": "KONDUKTOR / TOWER",
-            }
-            label_id = _label_id_map.get(pred_raw, pred_raw)
+            label_id = MULTICLASS_LABEL_MAP.get(pred_raw, pred_raw)
             reclose_ok = _to_bool_or_none(row.get("reclose_successful"))
             reclose_note = "  AR berhasil — transien terkonfirmasi." if (
                 reclose_ok is True and row["peak_fault_current_a"] > 200) else ""
             updated["label"] = label_id
             updated["confidence"] = float(proba.max())
             updated["tier"] = 2
-            updated["rule_name"] = "multiclass_random_forest"
+            updated["rule_name"] = model_type
             updated["cause_pcts"] = [
-                {"name": _label_id_map.get(c, c), "pct": round(float(p) * 100, 1)}
+                {"name": MULTICLASS_LABEL_MAP.get(c, c), "pct": round(float(p) * 100, 1)}
                 for c, p in sorted(zip(proba_classes, proba), key=lambda x: -x[1])
             ]
             updated["recommendation"] = _label_recommendation(pred_raw)
@@ -1020,7 +1037,8 @@ FAULT_CATEGORIES = [
     "LAYANG-LAYANG",
     "POHON",
     "HEWAN",
-    "KONDUKTOR / KERUSAKAN PERALATAN",
+    "KONDUKTOR / TOWER",
+    "PERALATAN / PROTEKSI",
     "BENDA ASING",
     "GANGGUAN PERMANEN",
     "LAIN-LAIN",
@@ -2920,10 +2938,9 @@ def _analyse_supporting_relay(cfg_path: str, role: str) -> dict:
         return fallback
 
     xr = getattr(result, 'transformer_result', None)
-    tf = getattr(result, 'transformer_features', None) or {}
 
     if xr is None:
-        return fallback
+        return _derive_supporting_line_evidence(result, role, role_label)
 
     return {
         'role':  role,
@@ -2936,6 +2953,132 @@ def _analyse_supporting_relay(cfg_path: str, role: str) -> dict:
         'protection_assessment_reason': xr.protection_assessment_reason,
         'limited_data': xr.limited_data,
         'evidence': xr.evidence if isinstance(xr.evidence, str) else '',
+    }
+
+
+def _derive_supporting_line_evidence(result, role: str, role_label: str) -> dict:
+    """Convert a non-87T classification result into conservative transformer-side evidence."""
+    label = _s(getattr(result, "label", ""), "")
+    event_class = _top_cause_name(result) or label or "UNKNOWN"
+    label_norm = _normalize_label(label)
+    event_norm = _normalize_label(event_class)
+    features = getattr(result, "features", None) or {}
+    confidence = max(_f(getattr(result, "confidence", 0.0), 0.0), 0.0)
+    fault_type = _normalize_label(_s(features.get("fault_type"), ""))
+    ground_indicated = (
+        fault_type in {"SLG", "DLG"} or
+        _f(features.get("i0_i1_ratio"), 0.0) >= 0.25 or
+        _f(features.get("i0_magnitude_a"), 0.0) > 0.0
+    )
+
+    evidence_bits = []
+    if label:
+        evidence_bits.append(f"Prediksi lokal {label}")
+    if role in {"OCR_LV", "FEEDER"} and ground_indicated:
+        evidence_bits.append("indikasi earth fault/downstream terlihat pada relay sisi LV")
+    elif role in {"REF", "GFR_HV", "SBEF"} and ground_indicated:
+        evidence_bits.append("relay earth-fault ikut merekam event")
+    elif role == "OCR_HV":
+        evidence_bits.append("relay OCR HV ikut melihat gangguan sebagai evidence koordinasi")
+    evidence = ". ".join(evidence_bits).strip()
+
+    if "PERALATAN" in label_norm or "PERALATAN" in event_norm:
+        return {
+            'role': role,
+            'role_label': role_label,
+            'event_class': event_class,
+            'confidence': confidence,
+            'fault_origin': 'PROTEKSI_PERALATAN',
+            'fault_origin_reason': (
+                f"[{role_label}] Rekaman ini lebih mengarah ke isu peralatan/proteksi "
+                f"daripada external fault murni."
+            ),
+            'protection_assessment': 'TIDAK_SELEKTIF',
+            'protection_assessment_reason': (
+                f"[{role_label}] Indikasi {event_class} membuat operasi relay perlu "
+                "direview sebagai potensi gangguan peralatan/proteksi."
+            ),
+            'limited_data': False,
+            'evidence': evidence,
+        }
+
+    if role in {'FEEDER', 'OCR_LV'}:
+        return {
+            'role': role,
+            'role_label': role_label,
+            'event_class': event_class,
+            'confidence': confidence,
+            'fault_origin': 'EXTERNAL_DISTRIBUSI',
+            'fault_origin_reason': (
+                f"[{role_label}] Relay sisi hilir ikut melihat dan mengisolasi gangguan, "
+                "lebih konsisten dengan fault distribusi/downstream daripada internal trafo."
+            ),
+            'protection_assessment': 'BENAR',
+            'protection_assessment_reason': (
+                f"[{role_label}] Operasi relay hilir menjadi bukti kuat bahwa proteksi lokal "
+                "di sisi distribusi bekerja sebagai first-clearing layer."
+            ),
+            'limited_data': False,
+            'evidence': evidence,
+        }
+
+    if role in {'REF', 'GFR_HV', 'SBEF'}:
+        return {
+            'role': role,
+            'role_label': role_label,
+            'event_class': event_class,
+            'confidence': confidence,
+            'fault_origin': 'UNKNOWN',
+            'fault_origin_reason': (
+                f"[{role_label}] Relay ini memberi konteks jalur gangguan tanah, "
+                "tetapi origin final tetap perlu disandingkan dengan 87T atau relay pasangan."
+            ),
+            'protection_assessment': 'BENAR' if ground_indicated else 'EVIDENCE_KURANG',
+            'protection_assessment_reason': (
+                f"[{role_label}] Event terekam pada elemen earth-fault; evidence ini relevan "
+                "untuk koordinasi, tetapi belum cukup untuk memutuskan internal vs external sendirian."
+            ),
+            'limited_data': False,
+            'evidence': evidence,
+        }
+
+    if role == 'OCR_HV':
+        return {
+            'role': role,
+            'role_label': role_label,
+            'event_class': event_class,
+            'confidence': confidence,
+            'fault_origin': 'UNKNOWN',
+            'fault_origin_reason': (
+                f"[{role_label}] OCR HV memberi evidence koordinasi sisi atas, "
+                "namun satu file ini saja belum cukup untuk menegaskan origin akhir."
+            ),
+            'protection_assessment': 'EVIDENCE_KURANG',
+            'protection_assessment_reason': (
+                f"[{role_label}] Bandingkan dengan OCR LV/feeder atau 87T untuk menilai "
+                "apakah trip sisi HV memang diperlukan atau hanya backup."
+            ),
+            'limited_data': False,
+            'evidence': evidence,
+        }
+
+    return {
+        'role': role,
+        'role_label': role_label,
+        'event_class': event_class,
+        'confidence': confidence,
+        'fault_origin': 'UNKNOWN',
+        'fault_origin_reason': (
+            f"[{role_label}] File berhasil dibaca sebagai evidence lokal, tetapi peran relay ini "
+            "belum cukup spesifik untuk menentukan origin tanpa pasangan relay lain."
+        ),
+        'protection_assessment': 'EVIDENCE_KURANG',
+        'protection_assessment_reason': (
+            f"[{role_label}] Jadikan file ini sebagai supporting evidence, "
+            "bukan penentu final internal vs external sendirian."
+        ),
+        'limited_data': False,
+        'evidence': evidence,
     }
 
 

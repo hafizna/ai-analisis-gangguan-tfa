@@ -109,6 +109,7 @@
         {% elif 'POHON' in lbl %}{% set bc = 'badge-transien' %}
         {% elif 'TRANSIEN' in lbl %}{% set bc = 'badge-transien' %}
         {% elif 'KONDUKTOR' in lbl %}{% set bc = 'badge-konduktor' %}
+        {% elif 'PERALATAN' in lbl or 'PROTEKSI' in lbl %}{% set bc = 'badge-permanen' %}
         {% elif 'PERMANEN' in lbl %}{% set bc = 'badge-permanen' %}
         {% else %}{% set bc = 'badge-other' %}{% endif %}
         <tr>

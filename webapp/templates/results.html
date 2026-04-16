@@ -533,7 +533,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     <!-- Cause likelihoods -->
     {% if analysis.cause_pcts %}
     <div class="r-card">
-        {% if analysis.tier == 2 and analysis.rule_name == 'multiclass_random_forest' %}
+        {% if analysis.tier == 2 and analysis.rule_name in ['multiclass_random_forest', 'multiclass_lightgbm'] %}
         <div class="r-section-label">Probabilitas Penyebab (Model ML)</div>
         {% else %}
         <div class="r-section-label">Estimasi Penyebab (Heuristik)</div>
