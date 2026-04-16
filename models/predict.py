@@ -238,6 +238,11 @@ _CAUSE_RECOMMENDATIONS = {
         "Lakukan inspeksi mekanik segera pada tower dan konduktor di zona operasi rele. "
         "Periksa kondisi joint, klem, armor rod, dan struktur tower. Pertimbangkan patroli helikopter."
     ),
+    "PERALATAN": (
+        "Periksa peralatan proteksi dan telekomunikasi terkait gangguan. "
+        "Verifikasi pilot wire / teleprotection / PLCC, rangkaian CT/VT/CVT, mekanisme PMT, "
+        "serta suplai DC dan rangkaian auxiliary sebelum memastikan penyebab."
+    ),
 }
 
 
@@ -598,7 +603,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
     rule_result: Optional[RuleResult] = apply_rules(row)
     if rule_result is not None:
         _tier1_recs = {
-            "KONDUKTOR / KERUSAKAN PERALATAN": (
+            "KONDUKTOR / TOWER": (
                 "Lakukan inspeksi mekanik pada tower dan konduktor di zona operasi rele. "
                 "Periksa kondisi joint, klem, dan struktur tower."
             ),
@@ -640,9 +645,9 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         pred         = clf.predict(X)[0]
         proba        = clf.predict_proba(X)[0]
 
-        # ── Multi-class path (new fault_classifier.pkl) ───────────────────
+        # ── Multi-class path (fault_classifier.pkl — RF or LightGBM) ────────
         proba_classes = list(getattr(clf, "classes_", classes))
-        if model_type == "multiclass_random_forest" and proba_classes:
+        if model_type in ("multiclass_random_forest", "multiclass_lightgbm") and proba_classes:
             confidence = float(proba.max())
             # cause_pcts uses "name" key for template compatibility
             _label_id_map = {
@@ -652,6 +657,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 "HEWAN":       "HEWAN / BINATANG",
                 "BENDA_ASING": "BENDA ASING",
                 "KONDUKTOR":   "KONDUKTOR / TOWER",
+                "PERALATAN":   "PERALATAN / PROTEKSI",
             }
             cause_pcts_ml = [
                 {"name": _label_id_map.get(cls, cls), "pct": round(float(p) * 100, 1)}
@@ -663,7 +669,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 label=label_id,
                 confidence=confidence,
                 tier=2,
-                rule_name="multiclass_random_forest",
+                rule_name=model_type,
                 evidence=(
                     f"Classifier ML: {pred} ({confidence:.0%}){reclose_note}  "
                     f"dur={row.get('fault_duration_ms', 0):.0f}ms  "

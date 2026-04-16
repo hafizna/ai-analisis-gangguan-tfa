@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-# Folder/path fragments used for the existing transient-cause discovery.
+# Folder/path fragments used for line-cause discovery during browse/search.
 _TRANSIENT_LABEL_MAP = [
     ("petir", "PETIR"),
     ("layang", "LAYANG-LAYANG"),
@@ -26,7 +26,15 @@ _TRANSIENT_LABEL_MAP = [
     ("monyet", "HEWAN"),
     ("benda asing", "BENDA ASING"),
     ("bfo", "BFO"),
-    ("peralatan", "PERALATAN"),
+    # Equipment / protection / telecom-origin cases
+    ("kerusakan peralatan", "PERALATAN"),
+    ("gangguan peralatan",  "PERALATAN"),
+    ("pilot wire",          "PERALATAN"),
+    ("pilotwire",           "PERALATAN"),
+    ("teleprotection",      "PERALATAN"),
+    ("teleproteksi",        "PERALATAN"),
+    ("plcc",                "PERALATAN"),
+    ("peralatan",           "PERALATAN"),
     ("lain", "LAIN-LAIN"),
 ]
 
