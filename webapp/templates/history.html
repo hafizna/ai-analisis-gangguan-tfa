@@ -43,6 +43,7 @@
 .badge-transien  { background: rgba(245,158,11,0.15); color: #f59e0b; }
 .badge-permanen  { background: rgba(239,68,68,0.15);  color: #ef4444; }
 .badge-konduktor { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.badge-peralatan { background: rgba(14,165,233,0.15); color: #0ea5e9; }
 .badge-other     { background: rgba(100,116,139,0.15);color: #94a3b8; }
 
 .correct-yes { color: #10b981; font-weight: 700; }
@@ -109,6 +110,7 @@
         {% elif 'POHON' in lbl %}{% set bc = 'badge-transien' %}
         {% elif 'TRANSIEN' in lbl %}{% set bc = 'badge-transien' %}
         {% elif 'KONDUKTOR' in lbl %}{% set bc = 'badge-konduktor' %}
+        {% elif 'PERALATAN' in lbl or 'PROTEKSI' in lbl %}{% set bc = 'badge-peralatan' %}
         {% elif 'PERMANEN' in lbl %}{% set bc = 'badge-permanen' %}
         {% else %}{% set bc = 'badge-other' %}{% endif %}
         <tr>

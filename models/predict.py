@@ -238,6 +238,10 @@ _CAUSE_RECOMMENDATIONS = {
         "Lakukan inspeksi mekanik segera pada tower dan konduktor di zona operasi rele. "
         "Periksa kondisi joint, klem, armor rod, dan struktur tower. Pertimbangkan patroli helikopter."
     ),
+    "PERALATAN": (
+        "Periksa peralatan proteksi dan telekomunikasi terkait gangguan. "
+        "Verifikasi pilot wire, teleprotection/PLCC, rangkaian CT/VT, PMT, serta suplai DC/aux sebelum memastikan penyebab."
+    ),
 }
 
 
@@ -598,7 +602,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
     rule_result: Optional[RuleResult] = apply_rules(row)
     if rule_result is not None:
         _tier1_recs = {
-            "KONDUKTOR / KERUSAKAN PERALATAN": (
+            "KONDUKTOR / TOWER": (
                 "Lakukan inspeksi mekanik pada tower dan konduktor di zona operasi rele. "
                 "Periksa kondisi joint, klem, dan struktur tower."
             ),
@@ -652,6 +656,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                 "HEWAN":       "HEWAN / BINATANG",
                 "BENDA_ASING": "BENDA ASING",
                 "KONDUKTOR":   "KONDUKTOR / TOWER",
+                "PERALATAN":   "PERALATAN / PROTEKSI",
             }
             cause_pcts_ml = [
                 {"name": _label_id_map.get(cls, cls), "pct": round(float(p) * 100, 1)}

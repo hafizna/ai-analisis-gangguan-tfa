@@ -652,7 +652,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         updated["evidence"] = f"{rule_result.evidence} | Analisa ulang dengan rasio CT/VT."
         updated["cause_pcts"] = _compute_cause_pcts(row)
         updated["recommendation"] = (
-            "Lakukan inspeksi lapangan sesuai indikasi gangguan permanen/peralatan."
+            "Lakukan inspeksi lapangan sesuai indikasi gangguan permanen atau kerusakan konduktor/tower."
             if "PERMANEN" in rule_result.label.upper() or "KONDUKTOR" in rule_result.label.upper()
             else updated.get("recommendation", "")
         )
@@ -682,6 +682,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
                 "PETIR": "PETIR", "LAYANG": "LAYANG-LAYANG",
                 "POHON": "POHON / VEGETASI", "HEWAN": "HEWAN / BINATANG",
                 "BENDA_ASING": "BENDA ASING", "KONDUKTOR": "KONDUKTOR / TOWER",
+                "PERALATAN": "PERALATAN / PROTEKSI",
             }
             label_id = _label_id_map.get(pred_raw, pred_raw)
             reclose_ok = _to_bool_or_none(row.get("reclose_successful"))
@@ -975,7 +976,8 @@ FAULT_CATEGORIES = [
     "LAYANG-LAYANG",
     "POHON",
     "HEWAN",
-    "KONDUKTOR / KERUSAKAN PERALATAN",
+    "KONDUKTOR / TOWER",
+    "PERALATAN / PROTEKSI",
     "BENDA ASING",
     "GANGGUAN PERMANEN",
     "LAIN-LAIN",
