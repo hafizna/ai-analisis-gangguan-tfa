@@ -2,7 +2,7 @@
 Multi-class Fault Cause Classifier
 ====================================
 Trains a LightGBM classifier on labeled_features.csv to classify the
-physical cause of transmission line faults into 6 categories:
+physical cause of transmission line faults into 7 categories:
 
     PETIR       — lightning (direct strike or induced overvoltage)
     LAYANG      — kite (layang-layang)
@@ -10,6 +10,7 @@ physical cause of transmission line faults into 6 categories:
     HEWAN       — animal (ular, binatang, burung, babi, tikus, etc.)
     BENDA_ASING — non-living foreign object (aluminium foil, terpal, etc.)
     KONDUKTOR   — conductor / tower structural failure
+    PERALATAN   — equipment / protection / telecom-origin failure
 
 Design rationale
 ----------------
@@ -19,6 +20,11 @@ Random Forest on the metrics that matter for imbalanced multi-class:
     F1 macro    0.407 (LGBM) vs 0.352 (RF)   — primary metric
     F1 weighted 0.757 (LGBM) vs 0.738 (RF)
     Accuracy    0.778 (LGBM) vs 0.800 (RF)   — less relevant here
+
+Previous design was a binary PETIR vs rest tree — only viable with the
+old tiny dataset (83 rows, 84% PETIR). With the expanded dataset
+(~450+ rows across 7 classes), LightGBM is now used as the main Tier 2
+multiclass model while Random Forest remains the comparison baseline.
 
   - Tier 1 deterministic rules are still applied first (rules.py) for
     high-confidence KONDUKTOR and failed-reclose cases.

@@ -40,7 +40,10 @@ python batch_extract.py
 
 - Memindai seluruh `raw_data/` secara rekursif
 - Melewati folder `olah/`, `_extracted/`, `locus/`, `analisa/`
-- Output: `data/features/labeled_features.csv` dan `data/features/extraction_errors.csv`
+- Output:
+  - `data/features/labeled_features.csv`
+  - `data/features/labeled_features_87l.csv`
+  - `data/features/extraction_errors.csv`
 
 ### Format Output CSV
 
@@ -90,7 +93,7 @@ INPUT: fault event terdeteksi
         ▼
 Layer 1a: fault_on_reclose_phase_change
   Syarat: fault_count 2–20, fasa berbeda antar kejadian, dur >80ms, AR tidak berhasil
-  → KONDUKTOR / KERUSAKAN PERALATAN (85%)
+  → KONDUKTOR / TOWER (85%)
         │ tidak cocok
         ▼
 Layer 1b: three_pole_failed_reclose
@@ -104,7 +107,7 @@ Layer 1c: explicit_failed_reclose
         │ tidak cocok
         ▼
 Layer 2: Multi-class RandomForest (13 fitur)
-  Kelas: PETIR, LAYANG-LAYANG, POHON, HEWAN, BENDA ASING, KONDUKTOR
+  Kelas: PETIR, LAYANG-LAYANG, POHON, HEWAN, BENDA ASING, KONDUKTOR, PERALATAN / PROTEKSI
   → label + confidence + probabilitas tiap kelas
         │ model tidak tersedia
         ▼
@@ -136,6 +139,7 @@ Proses:
 6. Output: `models/fault_classifier.pkl` + `models/petir_tree.pkl` (alias)
 
 Model saat ini: **5-class RandomForest** (~400 sampel, CV accuracy 82.9%)
+Catatan: `data/features/labeled_features_87l.csv` sekarang dikumpulkan terpisah untuk corpus 87L, belum ikut training utama.
 
 ---
 
@@ -161,7 +165,7 @@ python extract_all.py
 | `COMTRADE parse failed` | File `.dat` hilang / format tidak standar | Cek kelengkapan file |
 | `No fault detected` | Window rekaman tidak mengandung gangguan | Normal — bukan error |
 | `Feature extraction failed` | Channel arus/tegangan tidak dikenali | Tambahkan pola di `core/channel_normalizer.py` |
-| `DIFFERENTIAL is not supported` | File dari rele 87L | Belum didukung |
+| `DIFFERENTIAL is not supported` | File dari rele 87L | Inference masih fallback ke gelombang; untuk training batch sekarang masuk `labeled_features_87l.csv` |
 | `DIRECTIONAL_EF is not supported` | File dari rele 67N | Belum didukung |
 
 ---

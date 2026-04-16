@@ -8,8 +8,12 @@ Update terakhir: April 2026
 
 ## Ringkasan Sistem
 
-Pipeline ini berperan sebagai alat bantu respon awal sebelum tim lapangan tiba — probabilistik untuk gangguan penghantar (prediksi penyebab fisik), dan evidence-based triage untuk gangguan trafo (interpretasi sinyal lokal + pemetaan evidence yang masih dibutuhkan). lalu untuk gangguan penghantar akan diklasifikasikan penyebab fisik gangguan ke
-dalam 6 kelas:
+Pipeline ini menerima rekaman COMTRADE dari rele jarak, rele diferensial trafo, dan
+DFR eksternal (Qualitrol, Toshiba, dll), lalu berperan sebagai alat bantu respon awal
+sebelum tim lapangan tiba: probabilistik untuk gangguan penghantar (prediksi penyebab
+fisik) dan evidence-based triage untuk gangguan trafo (interpretasi sinyal lokal +
+pemetaan evidence yang masih dibutuhkan). Untuk gangguan penghantar, sistem saat ini
+mengklasifikasikan penyebab fisik ke dalam 7 kelas:
 
 | Kelas | Deskripsi |
 |---|---|
@@ -19,6 +23,7 @@ dalam 6 kelas:
 | **HEWAN / BINATANG** | Kontak hewan (ular, burung, babi, tikus, dll.) |
 | **BENDA ASING** | Benda asing non-hayati (aluminium foil, terpal, spanduk, dll.) |
 | **KONDUKTOR / TOWER** | Kerusakan konduktor, joint, klem, atau struktur tower |
+| **PERALATAN / PROTEKSI** | Gangguan pilot wire, teleprotection/PLCC, CT/VT, PMT, atau peralatan proteksi terkait |
 
 ---
 
@@ -39,13 +44,13 @@ INPUT: file .cfg + .dat (COMTRADE)
                 ▼
         4. extract_distance_features  →  feature dict
         5. Tier 1 rules (rules.py)
-           ├── fault_on_reclose_phase_change   → KONDUKTOR / KERUSAKAN PERALATAN (85%)
+           ├── fault_on_reclose_phase_change   → KONDUKTOR / TOWER (85%)
            ├── three_pole_failed_reclose        → GANGGUAN PERMANEN (75%)
            └── explicit_failed_reclose          → GANGGUAN PERMANEN (90%)
                 │ tidak cocok
                 ▼
         6. Tier 2 Multi-class ML (RandomForest, 13 fitur)
-           → PETIR / LAYANG-LAYANG / POHON / HEWAN / BENDA ASING / KONDUKTOR
+           → PETIR / LAYANG-LAYANG / POHON / HEWAN / BENDA ASING / KONDUKTOR / PERALATAN
            → probabilitas per kelas ditampilkan di UI
                 │ model tidak tersedia
                 ▼
@@ -74,12 +79,12 @@ Bila file berasal dari DFR eksternal (Qualitrol, Toshiba standalone) tanpa sinya
 | `core/transformer_channel_mapper.py` | Pemetaan channel trafo HV/LV/diff/restraint |
 | `core/transformer_feature_extractor.py` | Ekstraksi fitur trafo (H2, H5, slope, DC offset) |
 | `models/rules.py` | Tier 1: aturan deterministik KONDUKTOR/PERMANEN |
-| `models/train.py` | Training RandomForest 6-kelas (input: labeled_features.csv) |
+| `models/train.py` | Training RandomForest 7-kelas (input: labeled_features.csv) |
 | `models/predict.py` | Inference end-to-end untuk satu file .cfg |
 | `models/transformer_classifier.py` | Klasifikasi event trafo berbasis pengetahuan |
-| `models/fault_classifier.pkl` | Model terlatih (5-class, ~400 sampel, CV acc 82.9%) |
+| `models/fault_classifier.pkl` | Model terlatih aktif (jumlah kelas mengikuti data trainable) |
 | `webapp/app.py` | Flask app: upload, browse, history, API |
-| `batch_extract.py` | Ekstraksi fitur batch dari seluruh raw_data/ |
+| `batch_extract.py` | Ekstraksi fitur batch dari seluruh raw_data/ termasuk corpus kandidat 87L |
 | `extract_all.py` | Ekstraksi arsip ZIP/RAR menggunakan 7-Zip |
 
 ---
@@ -106,6 +111,7 @@ python extract_all.py
 ```bash
 python batch_extract.py
 # output: data/features/labeled_features.csv
+#         data/features/labeled_features_87l.csv
 #         data/features/extraction_errors.csv
 ```
 
@@ -128,21 +134,21 @@ python models/predict.py path/to/file.cfg
 | Parameter | Nilai |
 |---|---|
 | Algoritma | RandomForestClassifier (300 trees) |
-| Kelas | PETIR, LAYANG, POHON, HEWAN, BENDA_ASING, KONDUKTOR |
+| Kelas | PETIR, LAYANG, POHON, HEWAN, BENDA_ASING, KONDUKTOR, PERALATAN |
 | Sampel training | ~400 baris (setelah quality filter + Tier 1 exclusion) |
 | Fitur | 13 (lihat `models/train.py:FEATURE_COLS`) |
 | CV accuracy | 82.9% ± 2.6% (5-fold stratified) |
 | CV F1 weighted | 78.3% ± 3.5% |
-| Catatan | Kelas POHON terbatas (< 2 sampel usable) — model belum bisa prediksi POHON |
+| Catatan | `POHON` dan `PERALATAN` tetap muncul di taksonomi, tetapi hanya menjadi kelas prediksi bila data latih usable sudah mencukupi |
 
 ---
 
 ## Output Klasifikasi
 
 ### Line / transmisi
-- `PETIR` / `LAYANG-LAYANG` / `POHON / VEGETASI` / `HEWAN / BINATANG` / `BENDA ASING` / `KONDUKTOR / TOWER`
+- `PETIR` / `LAYANG-LAYANG` / `POHON / VEGETASI` / `HEWAN / BINATANG` / `BENDA ASING` / `KONDUKTOR / TOWER` / `PERALATAN / PROTEKSI`
 - `GANGGUAN PERMANEN` (Tier 1 permanent fault rules)
-- `KONDUKTOR / KERUSAKAN PERALATAN` (Tier 1 conductor fault rule)
+- `KONDUKTOR / TOWER` (Tier 1 conductor fault rule)
 - `PERLU INVESTIGASI` (fallback)
 
 ### Transformer differential (87T)
@@ -427,8 +433,9 @@ pipeline/
 | Multi-class fault classifier | Selesai | 5-class RF, accuracy 82.9%. POHON butuh data lebih |
 | Transformer differential support | Selesai | H2/H5/slope/DC offset, 6 kelas event |
 | Web app & browse | Selesai | Upload, browse raw_data, history |
-| Batch extraction pipeline | Selesai | ZIP/RAR via 7-Zip, skip duplikat, error log |
-| Kurasi data stakeholder | Berlanjut | Isi `correct`/`notes` di labeled_features.csv |
+| Batch extraction pipeline | Selesai | ZIP/RAR via 7-Zip, skip duplikat, error log, simpan corpus 87L |
+| Line differential (87L) dataset lane | Selesai | Rekaman berlabel 87L tidak lagi dibuang saat ekstraksi |
+| Kurasi data stakeholder | Berlanjut | Isi `correct`/`notes` di `labeled_features.csv` dan kurasi corpus `labeled_features_87l.csv` |
 | Data kelas POHON | Kurang | Perlu minimal 10+ rekaman berlabel POHON untuk training |
 
 Panduan labeling ringkas tersedia di [LABELING_GUIDELINES.md](LABELING_GUIDELINES.md).

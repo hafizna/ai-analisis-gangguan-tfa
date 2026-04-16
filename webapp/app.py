@@ -719,7 +719,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         updated["evidence"] = f"{rule_result.evidence} | Analisa ulang dengan rasio CT/VT."
         updated["cause_pcts"] = _compute_cause_pcts(row)
         updated["recommendation"] = (
-            "Lakukan inspeksi lapangan sesuai indikasi gangguan permanen/peralatan."
+            "Lakukan inspeksi lapangan sesuai indikasi gangguan permanen atau kerusakan konduktor/tower."
             if "PERMANEN" in rule_result.label.upper() or "KONDUKTOR" in rule_result.label.upper()
             else updated.get("recommendation", "")
         )
