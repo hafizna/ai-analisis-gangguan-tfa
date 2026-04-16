@@ -161,7 +161,7 @@ def load_and_prepare(csv_path: Path):
     counts = df["label"].value_counts()
     for cls in ALL_CLASSES:
         n = counts.get(cls, 0)
-        bar = "█" * n + "░" * max(0, 40 - n)
+        bar = "#" * n + "." * max(0, 40 - n)
         print(f"  {cls:<15} {n:>4}  {bar[:40]}")
     print()
 
@@ -262,7 +262,7 @@ def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
     # Feature importances
     print("Feature importances:")
     for feat, imp in sorted(zip(FEATURE_COLS, clf.feature_importances_), key=lambda x: -x[1]):
-        bar = "█" * int(imp * 40)
+        bar = "#" * int(imp * 40)
         print(f"  {feat:<30} {imp:.3f}  {bar}")
     print()
 
