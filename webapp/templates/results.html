@@ -533,7 +533,11 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     <!-- Cause likelihoods -->
     {% if analysis.cause_pcts %}
     <div class="r-card">
+        {% if analysis.tier == 2 and analysis.rule_name == 'multiclass_random_forest' %}
+        <div class="r-section-label">Probabilitas Penyebab (Model ML)</div>
+        {% else %}
         <div class="r-section-label">Estimasi Penyebab (Heuristik)</div>
+        {% endif %}
         {% for c in analysis.cause_pcts %}
         {% set pct = c.pct | float %}
         <div class="cause-row">
@@ -587,9 +591,11 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <label>Gangguan</label>
                 <div class="dur-val">{{ "%.0f"|format(analysis.fault_duration_ms) }}</div>
                 <div class="dur-unit">ms
-                    {% if 'TRANSIEN' in analysis.label | upper %}
+                    {% if analysis.reclose_successful == true or analysis.reclose_successful == 'True' %}
                     <br><span class="dur-badge dur-transien">TRANSIEN</span>
-                    {% elif 'PERMANEN' in analysis.label | upper %}
+                    {% elif analysis.reclose_successful == false or analysis.reclose_successful == 'False' %}
+                    <br><span class="dur-badge dur-permanen">PERMANEN</span>
+                    {% elif 'KONDUKTOR' in analysis.label | upper or 'PERMANEN' in analysis.label | upper %}
                     <br><span class="dur-badge dur-permanen">PERMANEN</span>
                     {% endif %}
                 </div>

@@ -8,6 +8,15 @@ Label is inferred from the folder name (PETIR, LAYANG, POHON, HEWAN,
 KONDUKTOR, BENDA_ASING).  Files in 'olah' or '_extracted' sub-folders
 are skipped (processed copies).
 
+ZIP/RAR archives are extracted permanently in-place before scanning.
+Each archive is extracted once; subsequent runs skip already-extracted
+archives (tracked via a .extracted marker file beside each archive).
+
+Requirements for RAR support:
+    pip install rarfile
+    # Windows: install WinRAR or UnRAR and ensure it's on PATH
+    # Linux/Mac: sudo apt install unrar  OR  brew install rar
+
 Run from the pipeline/ directory:
     python batch_extract.py
 """
@@ -15,10 +24,18 @@ Run from the pipeline/ directory:
 import os
 import sys
 import csv
+import zipfile
 import warnings
 import traceback
 from pathlib import Path
 from dataclasses import asdict
+
+# Optional RAR support
+try:
+    import rarfile
+    _RAR_AVAILABLE = True
+except ImportError:
+    _RAR_AVAILABLE = False
 
 warnings.filterwarnings("ignore")
 
@@ -30,21 +47,180 @@ from core.fault_detector import detect_fault
 from core.feature_extractor import extract_distance_features
 
 RAW_DATA = Path(__file__).parent.parent / "raw_data"
+
+
+# ---------------------------------------------------------------------------
+# Archive extraction
+# ---------------------------------------------------------------------------
+
+def _marker_path(archive: Path) -> Path:
+    """Return the marker file path that signals an archive was already extracted."""
+    return archive.with_suffix(archive.suffix + ".extracted")
+
+
+def _extract_zip(archive: Path) -> int:
+    """Extract a ZIP archive into its parent folder. Returns number of files extracted."""
+    dest = archive.parent
+    extracted = 0
+    with zipfile.ZipFile(archive, "r") as zf:
+        for member in zf.infolist():
+            # Skip macOS metadata junk
+            if "__MACOSX" in member.filename or member.filename.startswith("."):
+                continue
+            target = dest / member.filename
+            # Prevent path traversal
+            if not str(target.resolve()).startswith(str(dest.resolve())):
+                continue
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member) as src, open(target, "wb") as dst:
+                    dst.write(src.read())
+                extracted += 1
+    return extracted
+
+
+def _extract_rar(archive: Path) -> int:
+    """Extract a RAR archive into its parent folder. Returns number of files extracted."""
+    if not _RAR_AVAILABLE:
+        print(f"  [SKIP] rarfile not installed — cannot extract {archive.name}")
+        print("         Run: pip install rarfile  (and install WinRAR/UnRAR on PATH)")
+        return 0
+    dest = archive.parent
+    extracted = 0
+    with rarfile.RarFile(str(archive), "r") as rf:
+        for member in rf.infolist():
+            if member.is_dir():
+                continue
+            target = dest / member.filename
+            if not str(target.resolve()).startswith(str(dest.resolve())):
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            rf.extract(member, str(dest))
+            extracted += 1
+    return extracted
+
+
+def _already_extracted(archive: Path) -> bool:
+    """
+    Return True if this archive should be skipped because its contents
+    already exist.  Two signals:
+      1. A .extracted marker file beside the archive (written by a prior run).
+      2. A folder with the same stem exists beside the archive
+         (e.g. archive.zip → archive/ folder already there).
+    """
+    if _marker_path(archive).exists():
+        return True
+    stem_folder = archive.with_suffix("")
+    if stem_folder.is_dir():
+        return True
+    return False
+
+
+def extract_archives(root: Path) -> None:
+    """
+    Recursively find all .zip and .rar files under root and extract them
+    permanently in-place.
+
+    Skipped when:
+      - A .extracted marker is already present beside the archive, OR
+      - A folder with the same stem already exists beside the archive.
+
+    Corrupt or unreadable archives are skipped with a warning — they
+    never cause the overall batch run to abort.
+    """
+    archives = sorted(root.rglob("*.zip")) + sorted(root.rglob("*.ZIP")) + \
+               sorted(root.rglob("*.rar")) + sorted(root.rglob("*.RAR"))
+
+    if not archives:
+        return
+
+    print(f"\n=== ARCHIVE EXTRACTION ({len(archives)} found) ===")
+    for archive in archives:
+        if _already_extracted(archive):
+            print(f"  [SKIP] already extracted: {archive.name}")
+            continue
+
+        suffix = archive.suffix.lower()
+        print(f"  [EXTRACT] {archive.relative_to(root)} ... ", end="", flush=True)
+        try:
+            if suffix == ".zip":
+                count = _extract_zip(archive)
+            elif suffix == ".rar":
+                count = _extract_rar(archive)
+            else:
+                count = 0
+
+            if count > 0:
+                _marker_path(archive).touch()  # mark so future runs skip it
+                print(f"{count} files extracted")
+            else:
+                print("0 files (skipped or empty)")
+        except Exception as e:
+            print(f"SKIP (corrupt or unreadable): {e}")
+    print()
+
+
 OUT_DIR  = Path(__file__).parent / "data" / "features"
 OUT_CSV  = OUT_DIR / "labeled_features.csv"
 ERR_CSV  = OUT_DIR / "extraction_errors.csv"
 
-# Folder name → label mapping (case-insensitive substring match)
+# ---------------------------------------------------------------------------
+# Label taxonomy
+# ---------------------------------------------------------------------------
+# Labels are based on PHYSICAL cause, not PLN's administrative accountability
+# categories.  PLN uses administrative labels (APPL, DISTRIBUSI) that describe
+# who is responsible, not what physically caused the fault — these are excluded
+# because they carry no reliable physical-cause signal for the model.
+#
+# Classes:
+#   PETIR        — lightning (direct strike or induced overvoltage)
+#   LAYANG       — kite (layang-layang); kept separate — distinct seasonal/
+#                  geographic pattern and very different waveform signature
+#                  from generic foreign objects
+#   POHON        — tree contact (vegetation encroachment)
+#   HEWAN        — any animal (ular/snake, babi/pig, burung/bird, tikus/rat,
+#                  biawak/monitor lizard, etc.)
+#   BENDA_ASING  — non-living foreign object (other than kite)
+#   KONDUKTOR    — conductor / tower structural failure
+#
+# Intentionally excluded:
+#   APPL         — "Akibat Pekerjaan Pihak Luar" (external-party work);
+#                  administrative accountability label, physical cause unknown
+#   DISTRIBUSI   — distribution-side transformer trip; not a transmission
+#                  line fault, different protection context
+# ---------------------------------------------------------------------------
+
 LABEL_MAP = [
-    ("petir",        "PETIR"),
-    ("layang",       "LAYANG"),
-    ("pohon",        "POHON"),
-    ("hewan",        "HEWAN"),
-    ("ular",         "HEWAN"),
-    ("babi",         "HEWAN"),
-    ("tower roboh",  "KONDUKTOR"),
-    ("konduktor",    "KONDUKTOR"),
-    ("benda asing",  "BENDA_ASING"),
+    # Weather / environment
+    ("petir",         "PETIR"),
+    ("sambaran",      "PETIR"),     # "sambaran petir" = direct lightning strike
+
+    # Human-launched object — kept as its own class
+    ("layang",        "LAYANG"),    # layang-layang (kite)
+
+    # Vegetation
+    ("pohon",         "POHON"),
+
+    # Animals — all species grouped into HEWAN
+    ("hewan",         "HEWAN"),
+    ("binatang",      "HEWAN"),     # generic animal (UPT Semarang & others use this)
+    ("ular",          "HEWAN"),     # snake
+    ("babi",          "HEWAN"),     # pig / wild boar
+    ("tikus",         "HEWAN"),     # rat / rodent
+    ("burung",        "HEWAN"),     # bird
+    ("biawak",        "HEWAN"),     # monitor lizard
+    ("kukang",        "HEWAN"),     # slow loris
+    ("monyet",        "HEWAN"),     # monkey
+
+    # Foreign object (non-living, non-kite)
+    ("benda asing",   "BENDA_ASING"),
+    ("benda_asing",   "BENDA_ASING"),
+
+    # Conductor / structural failure
+    ("tower roboh",   "KONDUKTOR"),
+    ("konduktor",     "KONDUKTOR"),
 ]
 
 # Sub-folder fragments to skip (processed copies, analysis outputs)
@@ -152,6 +328,9 @@ def flatten_features(feat, label, cfg_path, prot, fault):
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Extract any zip/rar archives found in raw_data/ before scanning
+    extract_archives(RAW_DATA)
+
     cfg_files = list(find_labeled_cfgs(RAW_DATA))
     print(f"Found {len(cfg_files)} labeled CFG files")
 
@@ -214,7 +393,7 @@ def main():
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
-        print(f"\nWrote {len(rows)} rows → {OUT_CSV}")
+        print(f"\nWrote {len(rows)} rows -> {OUT_CSV}")
 
     # Write errors CSV
     if errors:
@@ -223,7 +402,7 @@ def main():
                                     extrasaction="ignore")
             writer.writeheader()
             writer.writerows(errors)
-        print(f"Wrote {len(errors)} errors → {ERR_CSV}")
+        print(f"Wrote {len(errors)} errors -> {ERR_CSV}")
 
     # Summary by label
     from collections import Counter

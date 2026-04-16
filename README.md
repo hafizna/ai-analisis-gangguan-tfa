@@ -1,156 +1,87 @@
-# AI Analisis Gangguan DFR
+# AI Analisis Gangguan DFR — Pipeline
 
-Sistem klasifikasi gangguan berbasis COMTRADE IEEE C37.111 untuk rekaman transmisi dan trafo.
+Sistem klasifikasi penyebab gangguan transmisi berbasis COMTRADE IEEE C37.111.
 
-Update terakhir: 9 April 2026
-
-Dokumen ini merangkum:
-- tahap yang sudah selesai
-- kemampuan yang sudah aktif di kode terbaru
-- arti `status_data` dan `suspected_label`
-- temuan terbaru dari scan data dan parser
+Update terakhir: April 2026
 
 ---
 
-## Ringkasan Terkini
+## Ringkasan Sistem
 
-- Parser COMTRADE sudah lebih tahan terhadap variasi CFG, termasuk kasus `NR,TRANSFORMER_RELAY,1999,` dan tanggal `DD/MM/YYYY`.
-- Jalur line/transmisi dan jalur transformer differential sekarang dipisah.
-- Browse dan batch prediction sudah path-aware.
-- UI waveform sudah mendukung dua cursor yang bisa dipilih user.
-- `status_data` dan `suspected_label` adalah heuristik untuk triage, bukan label final.
+Pipeline ini menerima rekaman COMTRADE dari rele jarak, rele diferensial trafo, dan
+DFR eksternal (Qualitrol, Toshiba, dll), lalu mengklasifikasikan penyebab fisik gangguan ke
+dalam 6 kelas:
 
----
-
-## Tahap Proyek
-
-### Tahap 1 - Fondasi line/transmisi
-Selesai.
-
-- Parse `cfg/dat`
-- Normalisasi channel multi-merk
-- Deteksi proteksi, zona, trip type, dan reclose outcome
-- Ekstraksi fitur gangguan
-- Klasifikasi line cause: `GANGGUAN TRANSIEN`, `GANGGUAN PERMANEN`, `KONDUKTOR / KERUSAKAN PERALATAN`, `PERLU INVESTIGASI`
-
-### Tahap 2 - Transformer differential
-Selesai untuk discovery dan routing, aktif di UI.
-
-- Channel trafo dimapping ke HV/LV/differential/restraint
-- Rekaman 87T/PDIF-style bisa terdeteksi
-- Halaman transformer history, trends, dan data-status tersedia
-- Rekaman trafo yang punya filename generik tetap bisa ditemukan lewat folder/path
-
-### Tahap 3 - Discovery dan rekap data
-Selesai.
-
-- Browse tidak lagi bergantung pada nama file saja
-- `status_data` memisahkan `TRANSIENT`, `TRANSFORMER`, dan `UNKNOWN`
-- `suspected_label` menandai label dugaan dengan awalan `DIDUGA`
-- Batch export ikut menulis field ini ke CSV
-
-### Tahap 4 - Data curation
-Berjalan.
-
-- Stakeholder masih perlu crosscheck isi COMTRADE dan label lapangan
-- File OCR-only tidak boleh dipaksa menjadi `87T CONFIRMED`
-- Kelas non-PETIR dan kasus trafo tetap butuh kurasi tambahan
+| Kelas | Deskripsi |
+|---|---|
+| **PETIR** | Sambaran petir langsung atau induced overvoltage |
+| **LAYANG-LAYANG** | Kontak layang-layang dengan konduktor |
+| **POHON / VEGETASI** | Sentuhan pohon/ranting pada ROW |
+| **HEWAN / BINATANG** | Kontak hewan (ular, burung, babi, tikus, dll.) |
+| **BENDA ASING** | Benda asing non-hayati (aluminium foil, terpal, spanduk, dll.) |
+| **KONDUKTOR / TOWER** | Kerusakan konduktor, joint, klem, atau struktur tower |
 
 ---
 
-## Temuan Terbaru
+## Alur Klasifikasi
 
-1. Banyak file trafo memakai nama CFG yang generik.
-   Folder/path lebih informatif daripada nama file.
+```
+INPUT: file .cfg + .dat (COMTRADE)
+        │
+        ▼
+1. Parse COMTRADE  →  Record
+2. determine_protection  →  ProtectionType (DISTANCE / 87T / 87L / UNKNOWN)
+3. detect_fault          →  FaultEvent (inception time, duration, reclose outcome)
+        │
+        ├── [87T] → Transformer classifier (inrush, internal fault, through fault, dll.)
+        │
+        └── [DISTANCE / generic trip / UNKNOWN] → Line classifier
+                │
+                ▼
+        4. extract_distance_features  →  feature dict
+        5. Tier 1 rules (rules.py)
+           ├── fault_on_reclose_phase_change   → KONDUKTOR / KERUSAKAN PERALATAN (85%)
+           ├── three_pole_failed_reclose        → GANGGUAN PERMANEN (75%)
+           └── explicit_failed_reclose          → GANGGUAN PERMANEN (90%)
+                │ tidak cocok
+                ▼
+        6. Tier 2 Multi-class ML (RandomForest, 13 fitur)
+           → PETIR / LAYANG-LAYANG / POHON / HEWAN / BENDA ASING / KONDUKTOR
+           → probabilitas per kelas ditampilkan di UI
+                │ model tidak tersedia
+                ▼
+        7. Fallback → PERLU INVESTIGASI
+```
 
-2. Rekaman OCR-only memang ada.
-   Kasus seperti ini sekarang dipisah sebagai `OCR ONLY`, bukan dianggap `87T CONFIRMED`.
+### Catatan DFR Eksternal
 
-3. Parser perlu menangani CFG non-standar.
-   Kasus `Trafo 1_Diff` sempat gagal karena header `NR,TRANSFORMER_RELAY,1999,` dan format tanggal `DD/MM/YYYY`. Keduanya sudah ditangani.
-
-4. Browse sekarang lebih cocok dipakai untuk triage.
-   Hasil scan lokal per 9 April 2026 menemukan 531 pasangan CFG+DAT yang dapat dipetakan:
-   - 158 `TRANSIENT`
-   - 38 `TRANSFORMER`
-   - 335 `UNKNOWN`
-
-   Catatan: `UNKNOWN` berarti tidak ada petunjuk path yang cukup, bukan parse gagal.
-
-5. Path heuristics dipakai sebagai petunjuk, bukan kebenaran final.
-   Routing klasifikasi tetap harus mengacu ke isi COMTRADE, bukan nama folder.
-
----
-
-## Makna Label
-
-| Field | Arti | Dipakai untuk |
-| --- | --- | --- |
-| `status_data` | `TRANSIENT`, `TRANSFORMER`, atau `UNKNOWN` | Rekap dan filter triage |
-| `path_tag` | Contoh: `PETIR`, `LAYANG-LAYANG`, `87T CONFIRMED`, `OCR ONLY`, `TRAFO CANDIDATE` | Badge dan hint di browse |
-| `suspected_label` | Label dugaan, misalnya `DIDUGA PETIR` | Tampilan yang tidak bersifat fixed |
-| `folder_label` | Label dari nama folder jika tersedia | Crosscheck stakeholder di CSV |
-
-Penting:
-- `status_data` bukan hasil klasifikasi akhir.
-- `suspected_label` bukan label final.
-- Keduanya hanya membantu triage saat browse dan batch export.
-
----
-
-## Alur Sistem
-
-1. Parse file `cfg/dat`.
-2. Normalisasi channel.
-3. Tentukan protection type dan fault event.
-4. Ekstrak fitur gangguan.
-5. Jalankan jalur line atau jalur transformer.
-6. Simpan hasil ke web app, history, atau CSV batch.
-7. Secara paralel, path heuristics mengisi status triage untuk browse dan batch.
-
----
-
-## Output Yang Tersedia
-
-### Line / transmisi
-- `GANGGUAN TRANSIEN`
-- `GANGGUAN PERMANEN`
-- `KONDUKTOR / KERUSAKAN PERALATAN`
-- `PERLU INVESTIGASI`
-
-### Transformer
-- `INRUSH MAGNETISASI`
-- `GANGGUAN INTERNAL TRAFO`
-- `GANGGUAN EKSTERNAL (THROUGH)`
-- `TEGANGAN LEBIH / OVEREKSITASI`
-- `KEMUNGKINAN MALOPERATE`
-- `LAIN-LAIN`
-
-### Halaman web
-- `/browse` -> rekap path-aware dan filter status data
-- `/history` -> riwayat analisis line
-- `/transformer/history` -> riwayat transformer
-- `/transformer/trends` -> tren class transformer
-- `/transformer/data-status` -> kesiapan data transformer
+Bila file berasal dari DFR eksternal (Qualitrol, Toshiba standalone) tanpa sinyal trip rele:
+- `protection_type = UNKNOWN` namun klasifikasi **tetap berjalan** menggunakan fitur gelombang
+- Fitur waveform (di/dt, peak-I, THD, inception angle) tidak bergantung pada jenis rele
+- Channel status CB (52A, 52B, PMT BUKA) juga dideteksi untuk konfirmasi trip dan reclose
+- Evidence panel menampilkan caveat `[DFR EKSTERNAL]` dan rekomendasi mengkonfirmasi dengan rekaman rele jika tersedia
 
 ---
 
 ## Komponen Utama
 
 | File | Fungsi |
-| --- | --- |
-| `core/comtrade_parser.py` | Parse COMTRADE dan perbaikan format CFG yang beragam |
-| `core/channel_normalizer.py` | Normalisasi nama channel vendor-specific |
-| `core/protection_router.py` | Deteksi proteksi dan zona trip |
-| `core/fault_detector.py` | Deteksi inception, durasi, dan outcome reclose |
-| `core/feature_extractor.py` | Ekstraksi fitur line/transmisi |
+|---|---|
+| `core/comtrade_parser.py` | Parse COMTRADE, perbaikan format CFG beragam |
+| `core/channel_normalizer.py` | Normalisasi nama channel multi-merk (ABB, Siemens, NARI, GE, Alstom, Toshiba) |
+| `core/protection_router.py` | Deteksi tipe proteksi, zona, trip type, reclose outcome |
+| `core/fault_detector.py` | Deteksi inception, durasi, fault count, SOE |
+| `core/feature_extractor.py` | Ekstraksi 13 fitur line/transmisi |
 | `core/transformer_channel_mapper.py` | Pemetaan channel trafo HV/LV/diff/restraint |
-| `core/transformer_feature_extractor.py` | Ekstraksi fitur trafo |
-| `core/path_heuristics.py` | `status_data`, `path_tag`, dan `suspected_label` |
-| `models/predict.py` | Inference end-to-end |
-| `models/transformer_classifier.py` | Klasifikasi transformer |
-| `webapp/app.py` | Flask app, browse, history, dan endpoint API |
-| `batch_predict.py` | Batch scoring seluruh `raw_data/` |
+| `core/transformer_feature_extractor.py` | Ekstraksi fitur trafo (H2, H5, slope, DC offset) |
+| `models/rules.py` | Tier 1: aturan deterministik KONDUKTOR/PERMANEN |
+| `models/train.py` | Training RandomForest 6-kelas (input: labeled_features.csv) |
+| `models/predict.py` | Inference end-to-end untuk satu file .cfg |
+| `models/transformer_classifier.py` | Klasifikasi event trafo berbasis pengetahuan |
+| `models/fault_classifier.pkl` | Model terlatih (5-class, ~400 sampel, CV acc 82.9%) |
+| `webapp/app.py` | Flask app: upload, browse, history, API |
+| `batch_extract.py` | Ekstraksi fitur batch dari seluruh raw_data/ |
+| `extract_all.py` | Ekstraksi arsip ZIP/RAR menggunakan 7-Zip |
 
 ---
 
@@ -164,26 +95,64 @@ python webapp/app.py
 # buka http://localhost:5000
 ```
 
-### Batch prediction
+### Ekstraksi arsip (ZIP/RAR)
 ```bash
-cd pipeline
-python batch_predict.py
-# output:
-# data/predictions/all_predictions.csv
-# data/predictions/prediction_errors.csv
+# Instal 7-Zip terlebih dahulu: https://www.7-zip.org/
+python extract_all.py
+# --dry-run  : preview tanpa mengekstrak
+# --force    : ekstrak ulang meski sudah ada marker
+```
+
+### Batch ekstraksi fitur
+```bash
+python batch_extract.py
+# output: data/features/labeled_features.csv
+#         data/features/extraction_errors.csv
+```
+
+### Training ulang model
+```bash
+python models/train.py
+# membaca: data/features/labeled_features.csv
+# output:  models/fault_classifier.pkl
 ```
 
 ### Klasifikasi file tunggal
 ```bash
-cd pipeline
 python models/predict.py path/to/file.cfg
 ```
 
-### Training ulang
-```bash
-cd pipeline
-python models/train.py
-```
+---
+
+## Model Saat Ini
+
+| Parameter | Nilai |
+|---|---|
+| Algoritma | RandomForestClassifier (300 trees) |
+| Kelas | PETIR, LAYANG, POHON, HEWAN, BENDA_ASING, KONDUKTOR |
+| Sampel training | ~400 baris (setelah quality filter + Tier 1 exclusion) |
+| Fitur | 13 (lihat `models/train.py:FEATURE_COLS`) |
+| CV accuracy | 82.9% ± 2.6% (5-fold stratified) |
+| CV F1 weighted | 78.3% ± 3.5% |
+| Catatan | Kelas POHON terbatas (< 2 sampel usable) — model belum bisa prediksi POHON |
+
+---
+
+## Output Klasifikasi
+
+### Line / transmisi
+- `PETIR` / `LAYANG-LAYANG` / `POHON / VEGETASI` / `HEWAN / BINATANG` / `BENDA ASING` / `KONDUKTOR / TOWER`
+- `GANGGUAN PERMANEN` (Tier 1 permanent fault rules)
+- `KONDUKTOR / KERUSAKAN PERALATAN` (Tier 1 conductor fault rule)
+- `PERLU INVESTIGASI` (fallback)
+
+### Transformer differential (87T)
+- `INRUSH MAGNETISASI`
+- `GANGGUAN INTERNAL TRAFO`
+- `GANGGUAN EKSTERNAL (THROUGH)`
+- `TEGANGAN LEBIH / OVEREKSITASI`
+- `KEMUNGKINAN MALOPERATE`
+- `PERLU INVESTIGASI`
 
 ---
 
@@ -194,6 +163,7 @@ pipeline/
   core/
     comtrade_parser.py
     channel_normalizer.py
+    channel_mappings.json       ← pola channel per merk (NARI, ABB, Siemens, Toshiba, dll.)
     protection_router.py
     fault_detector.py
     feature_extractor.py
@@ -202,51 +172,37 @@ pipeline/
     path_heuristics.py
   models/
     rules.py
-    predict.py
     train.py
+    predict.py
     transformer_classifier.py
-    petir_tree.pkl
+    fault_classifier.pkl        ← model aktif (5-class RandomForest)
+    petir_tree.pkl              ← alias legacy (sama dengan fault_classifier.pkl)
   webapp/
     app.py
     templates/
+      index.html
+      results.html
+      history.html
+      browse.html
   data/
-    predictions/
-    features/
-  batch_predict.py
+    features/                   ← di-gitignore; diisi oleh batch_extract.py
+  batch_extract.py
+  extract_all.py
   requirements.txt
-  Procfile
-  railway.json
 ```
 
 ---
 
-## Catatan Operasional
+## Status Pengembangan
 
-- Folder/path heuristics membantu menemukan kasus trafo yang filename-nya generik.
-- OCR-only cases tetap perlu review manual.
-- Jika file tidak punya petunjuk path yang cukup, `status_data` akan menjadi `UNKNOWN`.
-- Untuk keputusan final, tetap gunakan hasil classifier berbasis isi COMTRADE.
-
----
-
-## Roadmap
-
-| Tahap | Status | Catatan |
-| --- | --- | --- |
-| Parser COMTRADE multi-merk | Done | Sudah menangani variasi CFG utama dan kasus trafo tertentu |
-| Line fault classifier | Done | Sudah dipakai di web app dan batch |
-| Transformer differential support | Done | Sudah masuk pipeline dan dashboard transformer |
-| Path-aware discovery | Done | `status_data` dan `suspected_label` aktif |
-| Data curation stakeholder | Ongoing | Isi `correct`/`notes` di CSV batch |
-| Perluasan data trafo | Ongoing | Banyak file trafo masih OCR-only atau generik |
-| Multi-class non-PETIR | Ongoing | Perlu lebih banyak data berlabel per kelas |
-
----
-
-## Validasi Lokal
-
-Pengujian yang sudah saya jalankan di workspace ini:
-
-- `python -m pytest pipeline/tests/test_path_heuristics.py pipeline/tests/test_parser.py pipeline/tests/test_stage2_context.py -q`
-- `python -m pytest pipeline/tests/test_webapp_waveform.py -q`
-- `python -m py_compile pipeline/batch_predict.py pipeline/webapp/app.py pipeline/core/path_heuristics.py`
+| Komponen | Status | Catatan |
+|---|---|---|
+| Parser COMTRADE multi-merk | Selesai | NARI, ABB, Siemens, GE, Alstom, Toshiba, Qualitrol |
+| Deteksi CB status (52A/52B, PMT) | Selesai | Digunakan untuk konfirmasi trip/reclose DFR tanpa sinyal rele |
+| Tier 1 rule engine | Selesai | 3 aturan deterministik KONDUKTOR/PERMANEN |
+| Multi-class fault classifier | Selesai | 5-class RF, accuracy 82.9%. POHON butuh data lebih |
+| Transformer differential support | Selesai | H2/H5/slope/DC offset, 6 kelas event |
+| Web app & browse | Selesai | Upload, browse raw_data, history |
+| Batch extraction pipeline | Selesai | ZIP/RAR via 7-Zip, skip duplikat, error log |
+| Kurasi data stakeholder | Berlanjut | Isi `correct`/`notes` di labeled_features.csv |
+| Data kelas POHON | Kurang | Perlu minimal 10+ rekaman berlabel POHON untuk training |

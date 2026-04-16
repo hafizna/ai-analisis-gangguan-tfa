@@ -47,7 +47,10 @@ from core.feature_extractor import extract_distance_features
 from core.transformer_channel_mapper import map_transformer_channels
 from core.transformer_feature_extractor import extract_transformer_features, features_to_dict
 from models.rules import apply_rules, RuleResult
-from models.train import FEATURE_COLS, encode_reclose
+from models.train import (
+    FEATURE_COLS, encode_reclose,
+    encode_trip_type, encode_zone, parse_phase_count,
+)
 from models.transformer_classifier import (
     classify_transformer_event,
     TransformerClassificationResult,
@@ -210,34 +213,53 @@ def _transient_cause_likelihoods(row: dict) -> str:
 
 
 _CAUSE_RECOMMENDATIONS = {
+    # Model class names (canonical)
     "PETIR": (
         "Rekaman dapat diarsipkan sebagai indikasi gangguan petir. "
         "Bandingkan dengan data cuaca atau rekaman penangkal petir di sekitar jalur untuk konfirmasi."
     ),
-    "Layang-Layang": (
+    "LAYANG": (
         "Periksa area ROW untuk aktivitas layang-layang. "
         "Koordinasikan sosialisasi larangan bermain layang-layang di bawah SUTT dengan masyarakat sekitar jalur."
     ),
-    "Hewan": (
+    "POHON": (
+        "Inspeksi vegetasi di sepanjang ROW pada zona gangguan. "
+        "Jadwalkan pemangkasan jika terdapat pohon yang mendekati jarak aman konduktor."
+    ),
+    "HEWAN": (
         "Inspeksi isolator dan tower di zona gangguan untuk jejak kontak hewan. "
         "Pertimbangkan pemasangan pelindung hewan (bird/animal guard) pada tower yang rawan."
     ),
-    "Benda Asing": (
+    "BENDA_ASING": (
         "Lakukan inspeksi visual tower dan konduktor di zona gangguan untuk benda asing "
-        "(plastik, banner, tali, dll). Dokumentasikan untuk pemetaan titik rawan."
+        "(plastik, banner, terpal, tali layang, dll). Dokumentasikan untuk pemetaan titik rawan."
     ),
-    "Pohon": (
-        "Inspeksi vegetasi di sepanjang ROW pada zona gangguan. "
-        "Jadwalkan pemangkasan jika terdapat pohon yang mendekati jarak aman konduktor."
+    "KONDUKTOR": (
+        "Lakukan inspeksi mekanik segera pada tower dan konduktor di zona operasi rele. "
+        "Periksa kondisi joint, klem, armor rod, dan struktur tower. Pertimbangkan patroli helikopter."
     ),
 }
 
 
+def _label_recommendation(model_class: str) -> str:
+    """Return follow-up recommendation for a model class label."""
+    return _CAUSE_RECOMMENDATIONS.get(
+        model_class,
+        "Kumpulkan data pendukung (cuaca, CCTV, laporan patroli) untuk menentukan penyebab gangguan."
+    )
+
+
 def _transient_recommendation(row: dict) -> str:
-    """Return a context-aware follow-up recommendation based on the top-scoring cause."""
+    """Return a context-aware follow-up recommendation based on the top heuristic cause."""
     scores = _compute_cause_scores(row)
     top    = max(scores, key=scores.get)
-    return _CAUSE_RECOMMENDATIONS.get(top, "Verifikasi penyebab melalui data pendukung.")
+    # Map heuristic score keys to canonical model class names
+    _heuristic_to_canonical = {
+        "PETIR": "PETIR", "Layang-Layang": "LAYANG",
+        "Hewan": "HEWAN", "Benda Asing": "BENDA_ASING", "Pohon": "POHON",
+    }
+    canonical = _heuristic_to_canonical.get(top, top)
+    return _CAUSE_RECOMMENDATIONS.get(canonical, "Verifikasi penyebab melalui data pendukung.")
 
 
 @dataclass
@@ -487,20 +509,24 @@ def _load_model() -> Optional[dict]:
 
 
 def _build_feature_vector(row: dict) -> np.ndarray:
-    """Build the numpy feature vector expected by the Tier 2 classifier."""
-    reclose_enc = encode_reclose(row.get("reclose_successful"))
-
-    di_dt     = float(row.get("di_dt_max", 0) or 0)
-    peak_i    = float(row.get("peak_fault_current_a", 0) or 0)
+    """Build the numpy feature vector expected by the Tier 2 multi-class classifier."""
+    di_dt  = float(row.get("di_dt_max", 0) or 0)
+    peak_i = float(row.get("peak_fault_current_a", 0) or 0)
 
     vec = [
-        float(row.get("fault_duration_ms", 0) or 0),
-        float(row.get("fault_count", 1) or 1),
-        float(row.get("i0_i1_ratio", 0) or 0),
-        float(row.get("voltage_sag_depth_pu", 0) or 0),
-        np.log1p(max(di_dt, 0)),
-        np.log1p(max(peak_i, 0)),
-        reclose_enc,
+        float(row.get("fault_duration_ms", 0) or 0),           # fault_duration_ms
+        float(row.get("fault_count", 1) or 1),                  # fault_count
+        np.log1p(max(peak_i, 0)),                               # peak_fault_current_a (log)
+        np.log1p(max(di_dt, 0)),                                # di_dt_max (log)
+        float(row.get("i0_i1_ratio", 0) or 0),                 # i0_i1_ratio
+        float(row.get("thd_percent", 0) or 0),                  # thd_percent
+        float(row.get("inception_angle_degrees", 0) or 0),      # inception_angle_degrees
+        float(row.get("voltage_sag_depth_pu", 0) or 0),        # voltage_sag_depth_pu
+        encode_reclose(row.get("reclose_successful")),           # reclose_enc
+        1 if str(row.get("is_ground_fault", "")).lower() == "true" else 0,  # is_ground_enc
+        encode_trip_type(row.get("trip_type", "")),              # trip_type_enc
+        parse_phase_count(row.get("faulted_phases", "")),        # phase_count
+        encode_zone(row.get("zone_operated", "")),               # zone_enc
     ]
     return np.array(vec, dtype=float).reshape(1, -1)
 
@@ -533,14 +559,17 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         return _classify_transformer_file(record, prot, fault, _soe, cfg_path)
 
     if prot.primary_protection.name == "UNKNOWN":
-        # No protection type identified from status channels, but a fault was detected.
-        # For transmission line recordings this typically means the DFR only captured
-        # analog waveforms / generic trip outputs, not zone-specific relay signals.
-        # Attempt waveform-based classification with a caveat.
+        # No protection type identified from status channels.
+        # This is typical for standalone external DFRs (e.g. Qualitrol) that only capture
+        # analog waveforms without relay trip/zone digital outputs.
+        # Waveform physics (di/dt, THD, peak-I, inception angle) are still valid for
+        # cause classification — zone info will be absent, but the ML model is trained
+        # on waveform features only and does not require zone data.
+        # Confidence is reduced slightly to reflect the missing relay context.
         _routing_caveat = (
-            " | [CATATAN: Tipe proteksi tidak teridentifikasi dari sinyal digital — "
-            "diklasifikasikan berdasarkan analisis gelombang arus/tegangan saja. "
-            "Verifikasi manual diperlukan.]"
+            " | [DFR EKSTERNAL: sinyal trip rele tidak ditemukan — "
+            "klasifikasi hanya dari analisis gelombang arus/tegangan. "
+            "Untuk konfirmasi, gunakan rekaman rele jarak jika tersedia.]"
         )
     elif prot.primary_protection == ProtectionType.DIFFERENTIAL:
         # 87L line differential is a valid transmission-line event, but we do not yet
@@ -595,43 +624,62 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         _r1.description = _generate_description(row, _r1)
         return _r1
 
-    # ── Step 6.5: Confirmed-transient shortcut ────────────────────────────────
-    # If auto-reclose SUCCEEDED and a real fault current was present, the fault
-    # cleared and the line recovered → definitively transient.  No ML needed.
-    # Guard: peak_i > 200A to exclude dead-time / remote-end recordings.
+    # ── Step 7: Tier 2 ML classifier (multi-class) ───────────────────────────
+    # Note: reclose success is now an input feature to the model, not a bypass.
+    # The multi-class model directly outputs the physical cause label.
     _reclose_ok = row.get("reclose_successful")
     _peak_i     = float(row.get("peak_fault_current_a", 0) or 0)
-    if (_reclose_ok is True or _reclose_ok == "True") and _peak_i > 200:
-        likelihoods = _transient_cause_likelihoods(row)
-        _r0 = ClassificationResult(
-            label="GANGGUAN TRANSIEN",
-            confidence=0.95,
-            tier=1,
-            rule_name="reclose_confirmed_transient",
-            evidence=(
-                f"AR berhasil — gangguan transien terkonfirmasi.  "
-                f"peak_i={_peak_i:.0f}A  "
-                f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
-                f"fault_count={row.get('fault_count', '?')}  |  "
-                f"Estimasi penyebab (heuristik): {likelihoods}"
-                + _routing_caveat
-            ),
-            recommendation=_transient_recommendation(row),
-            features=row,
-            soe=_soe,
-            cause_pcts=_compute_cause_pcts(row),
-        )
-        _r0.description = _generate_description(row, _r0)
-        return _r0
+    _reclose_confirmed = (_reclose_ok is True or _reclose_ok == "True") and _peak_i > 200
 
-    # ── Step 7: Tier 2 ML classifier ─────────────────────────────────────────
     model_bundle = _load_model()
     if model_bundle is not None:
-        clf = model_bundle["clf"]
-        X = _build_feature_vector(row)
-        pred = clf.predict(X)[0]
-        proba = clf.predict_proba(X)[0]
+        clf          = model_bundle["clf"]
+        classes      = model_bundle.get("classes", [])
+        model_type   = model_bundle.get("model_type", "binary")
+        X            = _build_feature_vector(row)
+        pred         = clf.predict(X)[0]
+        proba        = clf.predict_proba(X)[0]
 
+        # ── Multi-class path (new fault_classifier.pkl) ───────────────────
+        if model_type == "multiclass_random_forest" and classes:
+            confidence = float(proba.max())
+            # cause_pcts uses "name" key for template compatibility
+            _label_id_map = {
+                "PETIR":       "PETIR",
+                "LAYANG":      "LAYANG-LAYANG",
+                "POHON":       "POHON / VEGETASI",
+                "HEWAN":       "HEWAN / BINATANG",
+                "BENDA_ASING": "BENDA ASING",
+                "KONDUKTOR":   "KONDUKTOR / TOWER",
+            }
+            cause_pcts_ml = [
+                {"name": _label_id_map.get(cls, cls), "pct": round(float(p) * 100, 1)}
+                for cls, p in sorted(zip(classes, proba), key=lambda x: -x[1])
+            ]
+            label_id = _label_id_map.get(pred, pred)
+            reclose_note = "  AR berhasil — gangguan terkonfirmasi transien." if _reclose_confirmed else ""
+            _r2_mc = ClassificationResult(
+                label=label_id,
+                confidence=confidence,
+                tier=2,
+                rule_name="multiclass_random_forest",
+                evidence=(
+                    f"Classifier ML: {pred} ({confidence:.0%}){reclose_note}  "
+                    f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
+                    f"peak_i={_peak_i:.0f}A  "
+                    f"i0/i1={row.get('i0_i1_ratio', 0):.2f}  "
+                    f"zone={row.get('zone_operated', '?')}"
+                    + (_routing_caveat or "")
+                ),
+                recommendation=_label_recommendation(pred),
+                features=row,
+                soe=_soe,
+                cause_pcts=cause_pcts_ml,
+            )
+            _r2_mc.description = _generate_description(row, _r2_mc)
+            return _r2_mc
+
+        # ── Legacy binary path (old petir_tree.pkl) ───────────────────────
         if pred == 1:   # transient fault
             confidence  = float(proba[1])
             likelihoods = _transient_cause_likelihoods(row)
@@ -670,7 +718,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                     f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
                     f"fault_count={row.get('fault_count', '?')}  |  "
                     f"Estimasi penyebab (heuristik): {likelihoods}  |  "
-                    f"Catatan: data latih non-PETIR terbatas — konfirmasi penyebab via "
+                    f"Catatan: data latih non-PETIR terbatas — konfirmasi penyebab via"
                     f"data cuaca, CCTV, atau inspeksi lapangan."
                     + _routing_caveat
                 ),

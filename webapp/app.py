@@ -666,39 +666,46 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         )
         return _json_safe(updated)
 
-    reclose_ok = _to_bool_or_none(row.get("reclose_successful"))
-    if reclose_ok is True and row["peak_fault_current_a"] > 200:
-        updated["label"] = "GANGGUAN TRANSIEN"
-        updated["confidence"] = 0.95
-        updated["tier"] = 1
-        updated["rule_name"] = "reclose_confirmed_transient"
-        updated["cause_pcts"] = _compute_cause_pcts(row)
-        updated["recommendation"] = _transient_recommendation(row)
-        updated["evidence"] = "AR berhasil + arus primer memadai setelah koreksi rasio CT/VT."
-        updated["description"] = (
-            (updated.get("baseline_description") or updated.get("description", "")) + "\n\n"
-            if (updated.get("baseline_description") or updated.get("description", ""))
-            else ""
-        ) + (
-            f"Analisis dihitung ulang dengan rasio CT {ct_p:g}/{ct_s:g} dan VT {vt_p:g}/{vt_s:g}. "
-            f"Hasil terbaru: {updated['label']} dengan keyakinan {updated['confidence']*100:.0f}%."
-        )
-        return _json_safe(updated)
-
     model_bundle = _load_model()
     if model_bundle is not None:
-        clf = model_bundle["clf"]
-        X = _build_feature_vector(row)
-        pred = int(clf.predict(X)[0])
-        proba = clf.predict_proba(X)[0]
-        p_trans = float(proba[1])
-        updated["label"] = "GANGGUAN TRANSIEN"
-        updated["confidence"] = p_trans if pred == 1 else max(p_trans, 0.5)
-        updated["tier"] = 2
-        updated["rule_name"] = "petir_decision_tree" if pred == 1 else "petir_decision_tree_non_petir"
-        updated["cause_pcts"] = _compute_cause_pcts(row)
-        updated["recommendation"] = _transient_recommendation(row)
-        updated["evidence"] = "Analisa ulang ML berbasis fitur yang sudah dikoreksi rasio CT/VT."
+        clf        = model_bundle["clf"]
+        classes    = model_bundle.get("classes", [])
+        model_type = model_bundle.get("model_type", "binary")
+        X          = _build_feature_vector(row)
+        pred_raw   = clf.predict(X)[0]
+        proba      = clf.predict_proba(X)[0]
+
+        if model_type == "multiclass_random_forest" and classes:
+            from models.predict import _label_recommendation
+            _label_id_map = {
+                "PETIR": "PETIR", "LAYANG": "LAYANG-LAYANG",
+                "POHON": "POHON / VEGETASI", "HEWAN": "HEWAN / BINATANG",
+                "BENDA_ASING": "BENDA ASING", "KONDUKTOR": "KONDUKTOR / TOWER",
+            }
+            label_id = _label_id_map.get(pred_raw, pred_raw)
+            reclose_ok = _to_bool_or_none(row.get("reclose_successful"))
+            reclose_note = "  AR berhasil — transien terkonfirmasi." if (
+                reclose_ok is True and row["peak_fault_current_a"] > 200) else ""
+            updated["label"] = label_id
+            updated["confidence"] = float(proba.max())
+            updated["tier"] = 2
+            updated["rule_name"] = "multiclass_random_forest"
+            updated["cause_pcts"] = [
+                {"name": _label_id_map.get(c, c), "pct": round(float(p) * 100, 1)}
+                for c, p in sorted(zip(classes, proba), key=lambda x: -x[1])
+            ]
+            updated["recommendation"] = _label_recommendation(pred_raw)
+            updated["evidence"] = f"ML multi-kelas: {pred_raw} ({updated['confidence']:.0%}).{reclose_note} Dihitung ulang dengan rasio CT/VT."
+        else:
+            pred = int(pred_raw)
+            p_trans = float(proba[1])
+            updated["label"] = "GANGGUAN TRANSIEN"
+            updated["confidence"] = p_trans if pred == 1 else max(p_trans, 0.5)
+            updated["tier"] = 2
+            updated["rule_name"] = "petir_decision_tree" if pred == 1 else "petir_decision_tree_non_petir"
+            updated["cause_pcts"] = _compute_cause_pcts(row)
+            updated["recommendation"] = _transient_recommendation(row)
+            updated["evidence"] = "Analisa ulang ML (binary) berbasis fitur yang sudah dikoreksi rasio CT/VT."
         updated["description"] = (
             (updated.get("baseline_description") or updated.get("description", "")) + "\n\n"
             if (updated.get("baseline_description") or updated.get("description", ""))

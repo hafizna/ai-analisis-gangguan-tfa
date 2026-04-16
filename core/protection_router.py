@@ -562,6 +562,14 @@ def _check_generic_trip_fallback(status_names: List[str], status_dict: dict) -> 
         'RELAY TRIP',     # External DFR relay trip output
         'LINE TRIP',      # External DFR line trip
         'TRIP PHASE',     # GE D60: "TRIP PHASE A/B/C" (phase trip from distance)
+        # CB position / auxiliary-contact channels (DFR-only recordings without relay signals)
+        # 52A = normally-open CB aux contact — goes 0→1 when CB opens (trip confirmed)
+        '52A',            # IEEE 52A aux contact energised when CB is open
+        'CB OPEN',        # Explicit CB open status channel
+        'CB TRIP',        # Generic CB trip output on DFR
+        'PMT BUKA',       # Indonesian: PMT = Pemutus Tenaga (CB), BUKA = open
+        'BUKA PMT',       # Indonesian variant
+        'PMT TRIP',       # Indonesian DFR CB trip channel
     ]
 
     for name in status_names:
@@ -706,14 +714,19 @@ def _check_auto_reclose_attempted(status_names: List[str], status_dict: dict) ->
             if len(samples) > 0 and samples.sum() > 0:
                 return True
 
-    # "Any Pole Dead" / "All Pole Dead" / "Position*open" going 0→1→0 = CB opened then reclosed
+    # "Any Pole Dead" / "All Pole Dead" / "Position*open" / CB position going 0→1→0 (or 1→0→1)
+    # = CB opened then reclosed.  Both 52A (0→1→0) and 52B (1→0→1) conventions are handled
+    # by checking for BOTH a positive AND a negative edge anywhere in the trace.
     for name in status_names:
         name_upper = _normalize_status_name(name)
-        is_pole_open = (
+        is_cb_position = (
             any(k in name_upper for k in ['POLE DEAD', 'ANY POLE', 'ALL POLE'])
-            or ('POSITION' in name_upper and 'OPEN' in name_upper)  # Siemens 7SA CB position
+            or ('POSITION' in name_upper and 'OPEN' in name_upper)    # Siemens 7SA
+            or ('PMT' in name_upper and ('BUKA' in name_upper or 'OPEN' in name_upper))  # Indonesian DFR
+            or ('CB' in name_upper and 'OPEN' in name_upper)           # Generic CB OPEN channel
+            or re.search(r'\b52A\b|\b52B\b', name_upper) is not None  # IEEE 52A/52B aux contacts
         )
-        if is_pole_open:
+        if is_cb_position:
             samples = status_dict.get(name, [])
             if len(samples) > 1:
                 vals = _np.array(samples, dtype=int)
@@ -777,14 +790,18 @@ def _check_auto_reclose_successful(status_names: List[str], status_dict: dict) -
     if found_failure:
         return False
 
-    # "Any/All Pole Dead" or "Position*open" going 0→1→0 means CB reclosed successfully
+    # "Any/All Pole Dead", "Position*open", or CB position channel going 0→1→0 (or 1→0→1)
+    # means CB reclosed successfully.  Handles 52A (0→1→0) and 52B (1→0→1) conventions.
     for name in status_names:
         name_upper = _normalize_status_name(name)
-        is_pole_open = (
+        is_cb_position = (
             any(k in name_upper for k in ['POLE DEAD', 'ANY POLE', 'ALL POLE'])
-            or ('POSITION' in name_upper and 'OPEN' in name_upper)  # Siemens 7SA
+            or ('POSITION' in name_upper and 'OPEN' in name_upper)    # Siemens 7SA
+            or ('PMT' in name_upper and ('BUKA' in name_upper or 'OPEN' in name_upper))  # Indonesian DFR
+            or ('CB' in name_upper and 'OPEN' in name_upper)           # Generic CB OPEN channel
+            or re.search(r'\b52A\b|\b52B\b', name_upper) is not None  # IEEE 52A/52B aux contacts
         )
-        if is_pole_open:
+        if is_cb_position:
             samples = status_dict.get(name, [])
             if len(samples) > 1:
                 vals = _np.array(samples, dtype=int)

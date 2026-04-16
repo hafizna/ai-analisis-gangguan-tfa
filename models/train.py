@@ -1,27 +1,32 @@
 """
-Tier 2 — PETIR Binary Classifier
-=================================
-Trains a Decision Tree on labeled_features.csv to distinguish PETIR from
-all other fault causes (LAYANG, POHON, HEWAN, KONDUKTOR, BENDA_ASING).
+Multi-class Fault Cause Classifier
+====================================
+Trains a Random Forest on labeled_features.csv to classify the physical
+cause of transmission line faults into 6 categories:
+
+    PETIR       — lightning (direct strike or induced overvoltage)
+    LAYANG      — kite (layang-layang)
+    POHON       — tree / vegetation contact
+    HEWAN       — animal (ular, binatang, burung, babi, tikus, etc.)
+    BENDA_ASING — non-living foreign object (aluminium foil, terpal, etc.)
+    KONDUKTOR   — conductor / tower structural failure
 
 Design rationale
 ----------------
-- Only rows that passed BOTH quality filters (scaling_ok=True, duration_ok=True)
-  are used for training.
-- Rows already handled by Tier 1 rules (KONDUKTOR with phase change, or failed
-  reclose) are excluded, so the classifier only needs to separate what rules
-  cannot.
-- Binary target: PETIR=1, everything else=0.
-- Features chosen for availability and discrimination power:
-    fault_duration_ms   — lightning is brief (typically <120ms)
-    fault_count         — lightning rarely recurs (usually 1)
-    i0_i1_ratio         — lightning has asymmetric ground current
-    voltage_sag_depth_pu — lightning causes sharp but shallow sag
-    di_dt_max           — lightning has fast front (log-scaled)
-    peak_fault_current_a — lightning tends lower peak (log-scaled)
-    reclose_enc         — 0=False, 1=True, 0.5=None
-- Depth is capped at 3 to avoid overfitting on the tiny non-PETIR set.
-- Model is saved as pipeline/models/petir_tree.pkl (joblib).
+Previous design was a binary PETIR vs rest tree — only viable with the
+old tiny dataset (83 rows, 84% PETIR).  With the expanded dataset
+(~450+ rows across 6 classes), a multi-class Random Forest is used:
+
+  - Tier 1 deterministic rules are still applied first (rules.py) for
+    high-confidence KONDUKTOR and failed-reclose cases.
+  - Tier 2 (this model) handles the remaining ambiguous events.
+  - RandomForest with class_weight='balanced_subsample' to compensate
+    for class imbalance.
+  - Features cover waveform physics (di/dt, peak current, THD, inception
+    angle), fault context (duration, ground ratio, zone, reclose), and
+    protection metadata (trip type, phase count).
+  - Stratified 5-fold cross-validation with per-class F1 report.
+  - Model is saved as pipeline/models/fault_classifier.pkl (joblib/pickle).
 
 Run from the pipeline/ directory:
     python models/train.py
@@ -34,30 +39,56 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.tree import DecisionTreeClassifier, export_text
-from sklearn.model_selection import StratifiedKFold, cross_val_score
-from sklearn.metrics import classification_report
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import StratifiedKFold, cross_val_score, cross_validate
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.preprocessing import LabelEncoder
 
 warnings.filterwarnings("ignore")
 
 FEATURES_CSV = Path(__file__).parent.parent / "data" / "features" / "labeled_features.csv"
-MODEL_OUT    = Path(__file__).parent / "petir_tree.pkl"
+MODEL_OUT    = Path(__file__).parent / "fault_classifier.pkl"
+# Keep old binary model path so existing webapp code still loads during transition
+MODEL_OUT_LEGACY = Path(__file__).parent / "petir_tree.pkl"
 
-# Features fed to the classifier
+ALL_CLASSES = ["PETIR", "LAYANG", "POHON", "HEWAN", "BENDA_ASING", "KONDUKTOR"]
+
+# ── Feature set ──────────────────────────────────────────────────────────────
+# Each feature maps a physical phenomenon to a discriminating signal:
+#   fault_duration_ms      PETIR = brief (20-100ms), KONDUKTOR = long (>200ms)
+#   fault_count            PETIR = 1, LAYANG/KONDUKTOR may repeat
+#   peak_fault_current_a   magnitude; log-scaled for dynamic range
+#   di_dt_max              wavefront steepness; lightning = very fast; log-scaled
+#   i0_i1_ratio            zero-seq dominance → ground fault (HEWAN, PETIR)
+#   thd_percent            harmonic distortion; less relevant for lightning
+#   inception_angle_deg    lightning strikes at voltage peak (~90°)
+#   voltage_sag_depth_pu   severity of voltage dip
+#   reclose_enc            0=failed, 0.5=not attempted/unknown, 1=successful
+#   is_ground_enc          1 if ground fault, 0 if phase fault
+#   trip_type_enc          0=unknown, 1=single_pole, 2=three_pole
+#   phase_count            number of faulted phases (1, 2, or 3)
+#   zone_enc               distance zone (1, 2, 3, 0=unknown)
 FEATURE_COLS = [
     "fault_duration_ms",
     "fault_count",
+    "peak_fault_current_a",      # log-scaled in prep
+    "di_dt_max",                  # log-scaled in prep
     "i0_i1_ratio",
+    "thd_percent",
+    "inception_angle_degrees",
     "voltage_sag_depth_pu",
-    "di_dt_max",
-    "peak_fault_current_a",
-    "reclose_enc",   # engineered below
+    "reclose_enc",
+    "is_ground_enc",
+    "trip_type_enc",
+    "phase_count",
+    "zone_enc",
 ]
 
-# Tier 1 rule signatures — rows matching these were already classified by rules,
-# so we exclude them from the Tier 2 training set.
+
+# ── Tier 1 rule check (must stay in sync with rules.py) ─────────────────────
+
 def is_tier1_handled(row) -> bool:
-    """Return True if a Tier 1 rule would fire on this row. Must stay in sync with rules.py."""
+    """Return True if a Tier 1 rule fires — exclude from Tier 2 training."""
     fault_count    = int(row.get("fault_count", 1))
     faulted_phases = str(row.get("faulted_phases", ""))
     duration_ms    = float(row.get("fault_duration_ms", 0))
@@ -69,60 +100,94 @@ def is_tier1_handled(row) -> bool:
     reclose_failed    = (reclose_ok is False or str(reclose_ok) == "False")
     reclose_succeeded = (reclose_ok is True  or str(reclose_ok) == "True")
 
-    # Rule 1 — KONDUKTOR phase change (only when reclose did NOT succeed and count is sane)
     if (fault_count >= 2 and fault_count <= 20 and phase_count == 2
             and duration_ms > 80 and not reclose_succeeded):
         return True
-    # Rule 2 — three-pole failed reclose (requires meaningful fault current)
     if reclose_failed and trip_type == "three_pole" and peak_i > 50:
         return True
-    # Rule 3 — any failed reclose (requires real fault duration and current)
     if reclose_failed and duration_ms > 10 and peak_i > 100:
         return True
     return False
 
 
+# ── Feature engineering helpers ──────────────────────────────────────────────
+
 def encode_reclose(val) -> float:
-    """Map reclose_successful → numeric: True→1, False→0, None/nan→0.5"""
     if val is True or str(val).lower() == "true":
         return 1.0
     if val is False or str(val).lower() == "false":
         return 0.0
-    return 0.5   # unknown / not attempted
+    return 0.5
 
 
-def load_and_prepare(csv_path: Path) -> tuple[pd.DataFrame, pd.Series]:
+def encode_trip_type(val) -> int:
+    s = str(val).lower()
+    if "single" in s or "1" in s:
+        return 1
+    if "three" in s or "3" in s:
+        return 2
+    return 0
+
+
+def encode_zone(val) -> int:
+    s = str(val).upper().strip()
+    for z in ("Z1", "Z2", "Z3"):
+        if z in s:
+            return int(z[1])
+    return 0
+
+
+def parse_phase_count(val) -> int:
+    s = str(val)
+    if not s or s == "nan":
+        return 1
+    return s.count("+") + 1
+
+
+def load_and_prepare(csv_path: Path):
     df = pd.read_csv(csv_path)
 
     # Quality filter
     df = df[df["scaling_ok"].astype(str).str.lower() == "true"].copy()
     df = df[df["duration_ok"].astype(str).str.lower() == "true"].copy()
 
-    # Exclude rows that Tier 1 rules already handle
+    # Keep only known classes
+    df = df[df["label"].isin(ALL_CLASSES)].copy()
+
+    # Exclude rows already handled by Tier 1
     df = df[~df.apply(is_tier1_handled, axis=1)].copy()
 
     print(f"After quality + Tier-1 filter: {len(df)} rows")
-    print(df["label"].value_counts().to_string())
+    counts = df["label"].value_counts()
+    for cls in ALL_CLASSES:
+        n = counts.get(cls, 0)
+        bar = "#" * n + "." * max(0, 40 - n)
+        print(f"  {cls:<15} {n:>4}  {bar[:40]}")
     print()
 
-    # Engineer reclose feature
-    df["reclose_enc"] = df["reclose_successful"].apply(encode_reclose)
+    # ── Engineered features ──────────────────────────────────────────────────
+    df["reclose_enc"]     = df["reclose_successful"].apply(encode_reclose)
+    df["is_ground_enc"]   = df["is_ground_fault"].astype(str).str.lower().map(
+                                {"true": 1, "false": 0}).fillna(0).astype(int)
+    df["trip_type_enc"]   = df["trip_type"].apply(encode_trip_type)
+    df["phase_count"]     = df["faulted_phases"].apply(parse_phase_count)
+    df["zone_enc"]        = df["zone_operated"].apply(encode_zone)
 
-    # Log-scale features with large dynamic range
-    df["di_dt_max"]              = np.log1p(df["di_dt_max"].fillna(0).clip(lower=0))
-    df["peak_fault_current_a"]   = np.log1p(df["peak_fault_current_a"].fillna(0).clip(lower=0))
+    # Log-scale large-range features
+    df["di_dt_max"]            = np.log1p(df["di_dt_max"].fillna(0).clip(lower=0))
+    df["peak_fault_current_a"] = np.log1p(df["peak_fault_current_a"].fillna(0).clip(lower=0))
 
     # Fill remaining NaN with column median
     for col in FEATURE_COLS:
         if col in df.columns:
             df[col] = df[col].fillna(df[col].median())
 
-    # Binary target
-    y = (df["label"] == "PETIR").astype(int)
+    y = df["label"]
     X = df[FEATURE_COLS]
-
     return X, y, df
 
+
+# ── Training ─────────────────────────────────────────────────────────────────
 
 def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
     if not csv_path.exists():
@@ -130,57 +195,95 @@ def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
         sys.exit(1)
 
     X, y, df = load_and_prepare(csv_path)
+    class_counts = y.value_counts()
 
-    n_petir     = int(y.sum())
-    n_non_petir = int((y == 0).sum())
-    print(f"Training set: {n_petir} PETIR  /  {n_non_petir} non-PETIR")
+    # Need at least 2 samples per class for stratified CV
+    trainable = [c for c in ALL_CLASSES if class_counts.get(c, 0) >= 2]
+    sparse    = [c for c in ALL_CLASSES if 0 < class_counts.get(c, 0) < 2]
+    missing   = [c for c in ALL_CLASSES if class_counts.get(c, 0) == 0]
 
-    if n_non_petir == 0:
-        print("ERROR: no non-PETIR rows after filtering — cannot train binary classifier")
-        sys.exit(1)
+    if sparse:
+        print(f"WARNING: classes with only 1 sample (excluded from CV): {sparse}")
+    if missing:
+        print(f"WARNING: classes with no samples (model cannot predict): {missing}")
 
-    # Class weights to handle imbalance
-    clf = DecisionTreeClassifier(
-        max_depth=3,
+    mask = y.isin(trainable)
+    X_tr, y_tr = X[mask], y[mask]
+
+    print(f"Training on {len(X_tr)} rows across {len(trainable)} classes: {trainable}\n")
+
+    clf = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=None,           # grow full trees — forest ensemble handles variance
         min_samples_leaf=2,
-        class_weight="balanced",
+        max_features="sqrt",
+        class_weight="balanced_subsample",
         random_state=42,
+        n_jobs=-1,
     )
 
-    # Cross-validation (only if enough samples per class for stratified splits)
-    if n_non_petir >= 3:
-        n_splits = min(5, n_non_petir)
+    # Stratified CV — adapt n_splits to smallest class size
+    min_class = min(y_tr.value_counts())
+    n_splits  = max(2, min(5, min_class))
+
+    if n_splits >= 2:
         cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-        scores = cross_val_score(clf, X, y, cv=cv, scoring="f1")
-        print(f"Cross-val F1 ({n_splits}-fold): {scores.mean():.3f} ± {scores.std():.3f}")
+        cv_results = cross_validate(
+            clf, X_tr, y_tr, cv=cv,
+            scoring=["f1_macro", "f1_weighted", "accuracy"],
+            return_train_score=False,
+        )
+        print(f"Cross-validation ({n_splits}-fold):")
+        print(f"  accuracy     {cv_results['test_accuracy'].mean():.3f} ± {cv_results['test_accuracy'].std():.3f}")
+        print(f"  F1 macro     {cv_results['test_f1_macro'].mean():.3f} ± {cv_results['test_f1_macro'].std():.3f}")
+        print(f"  F1 weighted  {cv_results['test_f1_weighted'].mean():.3f} ± {cv_results['test_f1_weighted'].std():.3f}")
+        print()
     else:
-        print("Too few non-PETIR samples for cross-validation — skipping CV")
+        print("Too few samples per class for cross-validation — skipping CV\n")
 
     # Full-data fit
-    clf.fit(X, y)
+    clf.fit(X_tr, y_tr)
 
-    # Training-set report
-    y_pred = clf.predict(X)
-    labels_present = sorted(y.unique())
-    target_names = ["non-PETIR" if l == 0 else "PETIR" for l in labels_present]
-    print("\nTraining-set report:")
-    print(classification_report(y, y_pred, labels=labels_present, target_names=target_names))
+    # Training-set report (optimistic — shows model capacity, not generalisation)
+    y_pred = clf.predict(X_tr)
+    print("Training-set classification report:")
+    print(classification_report(y_tr, y_pred, labels=trainable, zero_division=0))
 
-    # Human-readable tree
-    print("Decision tree structure:")
-    print(export_text(clf, feature_names=FEATURE_COLS))
+    # Confusion matrix
+    cm = confusion_matrix(y_tr, y_pred, labels=trainable)
+    print("Confusion matrix (rows=actual, cols=predicted):")
+    header = "".join(f"{c[:6]:>8}" for c in trainable)
+    print(f"{'':>12}{header}")
+    for i, cls in enumerate(trainable):
+        row = "".join(f"{cm[i,j]:>8}" for j in range(len(trainable)))
+        print(f"  {cls:<12}{row}")
+    print()
 
     # Feature importances
     print("Feature importances:")
     for feat, imp in sorted(zip(FEATURE_COLS, clf.feature_importances_), key=lambda x: -x[1]):
-        if imp > 0:
-            print(f"  {feat:<30} {imp:.3f}")
+        bar = "#" * int(imp * 40)
+        print(f"  {feat:<30} {imp:.3f}  {bar}")
+    print()
 
     # Save
     model_out.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "clf": clf,
+        "feature_cols": FEATURE_COLS,
+        "classes": trainable,
+        "all_classes": ALL_CLASSES,
+        "class_counts": dict(class_counts),
+        "model_type": "multiclass_random_forest",
+    }
     with open(model_out, "wb") as f:
-        pickle.dump({"clf": clf, "feature_cols": FEATURE_COLS}, f)
-    print(f"\nModel saved -> {model_out}")
+        pickle.dump(payload, f)
+    print(f"Model saved -> {model_out}")
+
+    # Also write to legacy path so webapp still works until it's updated
+    with open(MODEL_OUT_LEGACY, "wb") as f:
+        pickle.dump(payload, f)
+    print(f"Legacy path -> {MODEL_OUT_LEGACY}")
 
     return clf
 
