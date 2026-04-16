@@ -393,7 +393,7 @@ def main():
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
-        print(f"\nWrote {len(rows)} rows → {OUT_CSV}")
+        print(f"\nWrote {len(rows)} rows -> {OUT_CSV}")
 
     # Write errors CSV
     if errors:
@@ -402,7 +402,7 @@ def main():
                                     extrasaction="ignore")
             writer.writeheader()
             writer.writerows(errors)
-        print(f"Wrote {len(errors)} errors → {ERR_CSV}")
+        print(f"Wrote {len(errors)} errors -> {ERR_CSV}")
 
     # Summary by label
     from collections import Counter

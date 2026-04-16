@@ -47,7 +47,10 @@ from core.feature_extractor import extract_distance_features
 from core.transformer_channel_mapper import map_transformer_channels
 from core.transformer_feature_extractor import extract_transformer_features, features_to_dict
 from models.rules import apply_rules, RuleResult
-from models.train import FEATURE_COLS, encode_reclose
+from models.train import (
+    FEATURE_COLS, encode_reclose,
+    encode_trip_type, encode_zone, parse_phase_count,
+)
 from models.transformer_classifier import (
     classify_transformer_event,
     TransformerClassificationResult,
@@ -487,20 +490,24 @@ def _load_model() -> Optional[dict]:
 
 
 def _build_feature_vector(row: dict) -> np.ndarray:
-    """Build the numpy feature vector expected by the Tier 2 classifier."""
-    reclose_enc = encode_reclose(row.get("reclose_successful"))
-
-    di_dt     = float(row.get("di_dt_max", 0) or 0)
-    peak_i    = float(row.get("peak_fault_current_a", 0) or 0)
+    """Build the numpy feature vector expected by the Tier 2 multi-class classifier."""
+    di_dt  = float(row.get("di_dt_max", 0) or 0)
+    peak_i = float(row.get("peak_fault_current_a", 0) or 0)
 
     vec = [
-        float(row.get("fault_duration_ms", 0) or 0),
-        float(row.get("fault_count", 1) or 1),
-        float(row.get("i0_i1_ratio", 0) or 0),
-        float(row.get("voltage_sag_depth_pu", 0) or 0),
-        np.log1p(max(di_dt, 0)),
-        np.log1p(max(peak_i, 0)),
-        reclose_enc,
+        float(row.get("fault_duration_ms", 0) or 0),           # fault_duration_ms
+        float(row.get("fault_count", 1) or 1),                  # fault_count
+        np.log1p(max(peak_i, 0)),                               # peak_fault_current_a (log)
+        np.log1p(max(di_dt, 0)),                                # di_dt_max (log)
+        float(row.get("i0_i1_ratio", 0) or 0),                 # i0_i1_ratio
+        float(row.get("thd_percent", 0) or 0),                  # thd_percent
+        float(row.get("inception_angle_degrees", 0) or 0),      # inception_angle_degrees
+        float(row.get("voltage_sag_depth_pu", 0) or 0),        # voltage_sag_depth_pu
+        encode_reclose(row.get("reclose_successful")),           # reclose_enc
+        1 if str(row.get("is_ground_fault", "")).lower() == "true" else 0,  # is_ground_enc
+        encode_trip_type(row.get("trip_type", "")),              # trip_type_enc
+        parse_phase_count(row.get("faulted_phases", "")),        # phase_count
+        encode_zone(row.get("zone_operated", "")),               # zone_enc
     ]
     return np.array(vec, dtype=float).reshape(1, -1)
 
@@ -624,14 +631,55 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         _r0.description = _generate_description(row, _r0)
         return _r0
 
-    # ── Step 7: Tier 2 ML classifier ─────────────────────────────────────────
+    # ── Step 7: Tier 2 ML classifier (multi-class) ───────────────────────────
     model_bundle = _load_model()
     if model_bundle is not None:
-        clf = model_bundle["clf"]
-        X = _build_feature_vector(row)
-        pred = clf.predict(X)[0]
-        proba = clf.predict_proba(X)[0]
+        clf          = model_bundle["clf"]
+        classes      = model_bundle.get("classes", [])
+        model_type   = model_bundle.get("model_type", "binary")
+        X            = _build_feature_vector(row)
+        pred         = clf.predict(X)[0]
+        proba        = clf.predict_proba(X)[0]
 
+        # ── Multi-class path (new fault_classifier.pkl) ───────────────────
+        if model_type == "multiclass_random_forest" and classes:
+            confidence   = float(proba.max())
+            # Build cause_pcts from class probabilities
+            cause_pcts_ml = [
+                {"label": cls, "pct": round(float(p) * 100, 1)}
+                for cls, p in sorted(zip(classes, proba), key=lambda x: -x[1])
+            ]
+            # Translate predicted class to Indonesian display label
+            _label_id = {
+                "PETIR": "PETIR",
+                "LAYANG": "LAYANG-LAYANG",
+                "POHON": "POHON / VEGETASI",
+                "HEWAN": "HEWAN / BINATANG",
+                "BENDA_ASING": "BENDA ASING",
+                "KONDUKTOR": "KONDUKTOR / TOWER",
+            }.get(pred, pred)
+            _r2_mc = ClassificationResult(
+                label=_label_id,
+                confidence=confidence,
+                tier=2,
+                rule_name="multiclass_random_forest",
+                evidence=(
+                    f"Classifier ML multi-kelas: prediksi={pred} ({confidence:.0%})  "
+                    f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
+                    f"peak_i={row.get('peak_fault_current_a', 0):.0f}A  "
+                    f"i0/i1={row.get('i0_i1_ratio', 0):.2f}  "
+                    f"zone={row.get('zone_operated', '?')}  |  "
+                    + _routing_caveat
+                ),
+                recommendation=_transient_recommendation(row),
+                features=row,
+                soe=_soe,
+                cause_pcts=cause_pcts_ml,
+            )
+            _r2_mc.description = _generate_description(row, _r2_mc)
+            return _r2_mc
+
+        # ── Legacy binary path (old petir_tree.pkl) ───────────────────────
         if pred == 1:   # transient fault
             confidence  = float(proba[1])
             likelihoods = _transient_cause_likelihoods(row)
@@ -670,7 +718,7 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                     f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
                     f"fault_count={row.get('fault_count', '?')}  |  "
                     f"Estimasi penyebab (heuristik): {likelihoods}  |  "
-                    f"Catatan: data latih non-PETIR terbatas — konfirmasi penyebab via "
+                    f"Catatan: data latih non-PETIR terbatas — konfirmasi penyebab via"
                     f"data cuaca, CCTV, atau inspeksi lapangan."
                     + _routing_caveat
                 ),
