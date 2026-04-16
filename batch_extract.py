@@ -160,21 +160,65 @@ def extract_archives(root: Path) -> None:
         except Exception as e:
             print(f"SKIP (corrupt or unreadable): {e}")
     print()
+
+
 OUT_DIR  = Path(__file__).parent / "data" / "features"
 OUT_CSV  = OUT_DIR / "labeled_features.csv"
 ERR_CSV  = OUT_DIR / "extraction_errors.csv"
 
-# Folder name → label mapping (case-insensitive substring match)
+# ---------------------------------------------------------------------------
+# Label taxonomy
+# ---------------------------------------------------------------------------
+# Labels are based on PHYSICAL cause, not PLN's administrative accountability
+# categories.  PLN uses administrative labels (APPL, DISTRIBUSI) that describe
+# who is responsible, not what physically caused the fault — these are excluded
+# because they carry no reliable physical-cause signal for the model.
+#
+# Classes:
+#   PETIR        — lightning (direct strike or induced overvoltage)
+#   LAYANG       — kite (layang-layang); kept separate — distinct seasonal/
+#                  geographic pattern and very different waveform signature
+#                  from generic foreign objects
+#   POHON        — tree contact (vegetation encroachment)
+#   HEWAN        — any animal (ular/snake, babi/pig, burung/bird, tikus/rat,
+#                  biawak/monitor lizard, etc.)
+#   BENDA_ASING  — non-living foreign object (other than kite)
+#   KONDUKTOR    — conductor / tower structural failure
+#
+# Intentionally excluded:
+#   APPL         — "Akibat Pekerjaan Pihak Luar" (external-party work);
+#                  administrative accountability label, physical cause unknown
+#   DISTRIBUSI   — distribution-side transformer trip; not a transmission
+#                  line fault, different protection context
+# ---------------------------------------------------------------------------
+
 LABEL_MAP = [
-    ("petir",        "PETIR"),
-    ("layang",       "LAYANG"),
-    ("pohon",        "POHON"),
-    ("hewan",        "HEWAN"),
-    ("ular",         "HEWAN"),
-    ("babi",         "HEWAN"),
-    ("tower roboh",  "KONDUKTOR"),
-    ("konduktor",    "KONDUKTOR"),
-    ("benda asing",  "BENDA_ASING"),
+    # Weather / environment
+    ("petir",         "PETIR"),
+    ("sambaran",      "PETIR"),     # "sambaran petir" = direct lightning strike
+
+    # Human-launched object — kept as its own class
+    ("layang",        "LAYANG"),    # layang-layang (kite)
+
+    # Vegetation
+    ("pohon",         "POHON"),
+
+    # Animals — all species grouped into HEWAN
+    ("hewan",         "HEWAN"),
+    ("ular",          "HEWAN"),     # snake
+    ("babi",          "HEWAN"),     # pig / wild boar
+    ("tikus",         "HEWAN"),     # rat / rodent
+    ("burung",        "HEWAN"),     # bird
+    ("biawak",        "HEWAN"),     # monitor lizard
+    ("monyet",        "HEWAN"),     # monkey
+
+    # Foreign object (non-living, non-kite)
+    ("benda asing",   "BENDA_ASING"),
+    ("benda_asing",   "BENDA_ASING"),
+
+    # Conductor / structural failure
+    ("tower roboh",   "KONDUKTOR"),
+    ("konduktor",     "KONDUKTOR"),
 ]
 
 # Sub-folder fragments to skip (processed copies, analysis outputs)
