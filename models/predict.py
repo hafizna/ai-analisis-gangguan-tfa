@@ -45,6 +45,7 @@ from core.comtrade_parser import parse_comtrade
 from core.protection_router import determine_protection, ProtectionType
 from core.fault_detector import detect_fault, extract_soe
 from core.feature_extractor import extract_distance_features
+from core.differential_feature_extractor import extract_87l_features
 from core.transformer_channel_mapper import map_transformer_channels
 from core.transformer_feature_extractor import extract_transformer_features, features_to_dict
 from models.rules import apply_rules, RuleResult
@@ -324,13 +325,60 @@ def _generate_description(row: dict, result: "ClassificationResult") -> str:
         fault_desc = "Gangguan terdeteksi"
 
     sag_pct = sag_pu * 100
+    prot_type = str(row.get("protection_type", "") or "")
     lines = []
 
     # Line 1: Fault characteristics
-    lines.append(
-        f"Terdeteksi {fault_desc} dengan kenaikan arus puncak mencapai "
-        f"{peak_i/1000:.2f} kA dan penurunan tegangan (voltage sag) sebesar {sag_pct:.1f}%."
-    )
+    # For 67N / DEF: voltage sag is typically absent (no VT) — omit misleading "0%" sag
+    if sag_pct > 1.0:
+        lines.append(
+            f"Terdeteksi {fault_desc} dengan kenaikan arus puncak mencapai "
+            f"{peak_i/1000:.2f} kA dan penurunan tegangan (voltage sag) sebesar {sag_pct:.1f}%."
+        )
+    else:
+        lines.append(
+            f"Terdeteksi {fault_desc} dengan arus puncak mencapai {peak_i/1000:.2f} kA."
+        )
+
+    # Protection-type context
+    if prot_type == "67N":
+        lines.append(
+            "Rele arah gangguan tanah sensitif (67N / DEF) beroperasi — "
+            "mengindikasikan gangguan hubung tanah resistif tinggi. "
+            "Kemungkinan penyebab: pohon menyentuh penghantar, layang-layang, atau benda asing konduktif."
+        )
+    elif prot_type == "87L":
+        lines.append(
+            "Proteksi diferensial saluran (87L) beroperasi — "
+            "gangguan terkonfirmasi berada di dalam segmen terlindungi."
+        )
+        # Add 87L morphology detail when available
+        _rise = row.get("rise_time_ms")
+        _dc   = row.get("dc_offset_index")
+        _hf   = row.get("dwt_hf_ratio")
+        _osc  = row.get("transient_osc_freq_hz")
+        _87l_parts = []
+        if _rise is not None and not (isinstance(_rise, float) and _rise != _rise):
+            _rise_f = float(_rise)
+            if _rise_f < 1.0:
+                _87l_parts.append(f"Rise time arus {_rise_f:.2f} ms (sangat cepat — tipikal petir)")
+            elif _rise_f < 10.0:
+                _87l_parts.append(f"Rise time arus {_rise_f:.1f} ms (menengah)")
+            else:
+                _87l_parts.append(f"Rise time arus {_rise_f:.1f} ms (lambat — tipikal vegetasi/benda asing)")
+        if _hf is not None and not (isinstance(_hf, float) and _hf != _hf):
+            _hf_pct = float(_hf) * 100
+            _87l_parts.append(f"Rasio energi frekuensi tinggi {_hf_pct:.1f}%")
+        if _dc is not None and not (isinstance(_dc, float) and _dc != _dc):
+            _87l_parts.append(f"Indeks offset DC {float(_dc):.3f}")
+        if _osc is not None and not (isinstance(_osc, float) and _osc != _osc):
+            _osc_f = float(_osc)
+            if _osc_f > 1000:
+                _87l_parts.append(f"Osilasi transien {_osc_f/1000:.1f} kHz")
+            else:
+                _87l_parts.append(f"Osilasi transien {_osc_f:.0f} Hz")
+        if _87l_parts:
+            lines.append("Analisis morfologi arus 87L: " + " | ".join(_87l_parts) + ".")
 
     # Line 2: Protection operation
     if zone and zone not in ("-", "UNKNOWN", ""):
@@ -652,27 +700,91 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             "dan status OCR; tidak ada evidence zona impedansi.]"
         )
     elif prot.primary_protection == ProtectionType.DIFFERENTIAL:
-        # 87L line differential is a valid transmission-line event, but we do not yet
-        # model the 87L logic itself. Fall back to waveform-based line analysis with a caveat.
+        # 87L line differential — the fault is definitively within the protected segment.
+        # Route to waveform-based cause classification (same feature set as distance relay).
+        # No zone impedance data, but di/dt, i0/i1, THD, and peak current are strong
+        # discriminators. A dedicated 87L logic module is not required for cause classification.
+        _diff_keywords = ('87L', 'DIFF TRIP', 'DIFFERENTIAL TRIP', 'DIFL', 'L3D',
+                          'LINE DIFF', 'LINE DIFFERENTIAL', 'IDIFF')
+        _diff_confirmed_channels = [
+            str(ev.get("channel", ""))
+            for ev in (_soe or [])
+            if int(ev.get("state", 0) or 0) == 1
+            and any(k in str(ev.get("channel", "")).upper() for k in _diff_keywords)
+        ][:3]
+        _diff_confirm_str = (
+            f" Kanal konfirmasi: {', '.join(_diff_confirmed_channels)}."
+            if _diff_confirmed_channels else ""
+        )
         _routing_caveat = (
-            " | [CATATAN: Rekaman menunjukkan proteksi diferensial saluran (87L) — "
-            "analisis berikut dihitung dari pola gelombang arus/tegangan, "
-            "bukan logika 87L khusus. Verifikasi manual diperlukan.]"
+            f" | [87L: proteksi diferensial saluran —{_diff_confirm_str} "
+            "gangguan terkonfirmasi berada di segmen terlindungi. "
+            "Penyebab diklasifikasikan dari pola gelombang arus; tidak ada data zona impedansi.]"
+        )
+    elif prot.primary_protection == ProtectionType.DIRECTIONAL_EF:
+        # 67N / DEF: sensitive directional earth fault relay.
+        # Fires for high-resistance ground contacts — pohon (tree), layang-layang (kite),
+        # or benda asing (foreign object) touching a phase conductor.
+        # i0/i1 ratio from the zero-sequence waveform is the key discriminating feature.
+        # The ML model receives this naturally-elevated i0/i1 ratio and typically ranks
+        # POHON / LAYANG / BENDA_ASING as top candidates.
+        #
+        # Confirm by scanning the SOE for DEF/67N digital channel names that actually
+        # fired — prevents false positives from the routing heuristic.
+        _ef_keywords = ('67N', 'DEF', 'EARTH FAULT', 'DIRECTIONAL EF', 'EF TRIP',
+                        'GROUND FAULT', 'GROUND OPERATE', 'EFO', 'SGEF', 'REF')
+        _ef_confirmed_channels = [
+            str(ev.get("channel", ""))
+            for ev in (_soe or [])
+            if int(ev.get("state", 0) or 0) == 1
+            and any(k in str(ev.get("channel", "")).upper() for k in _ef_keywords)
+        ][:4]   # cap at 4 to keep evidence text short
+        _ef_confirm_str = (
+            f" Konfirmasi kanal digital: {', '.join(_ef_confirmed_channels)}."
+            if _ef_confirmed_channels else
+            " (Konfirmasi kanal DEF/67N tidak ditemukan di SOE — periksa nama kanal digital.)"
+        )
+        _routing_caveat = (
+            f" | [67N / DEF: rele arah gangguan tanah sensitif —{_ef_confirm_str} "
+            "Indikasi gangguan hubung tanah resistif tinggi: pohon, layang-layang, atau "
+            "benda asing menyentuh penghantar. "
+            "Klasifikasi dari pola gelombang zero-sequence; tidak ada data zona impedansi.]"
         )
     elif prot.primary_protection.name != "DISTANCE":
         raise ValueError(
             f"Protection type '{prot.primary_protection.name}' is not supported "
-            f"(only DISTANCE relay files are classified)"
+            f"(only DISTANCE, 87L, 67N, OCR, and UNKNOWN relay files are classified)"
         )
     else:
         _routing_caveat = ""
 
-    feat = extract_distance_features(record, fault, prot)
-    if feat is None:
-        raise ValueError(f"Feature extraction failed: {cfg_path}")
+    # ── Step 4: extract features (protection-type-specific path) ────────────────
+    if prot.primary_protection == ProtectionType.DIFFERENTIAL:
+        # 87L path: current-only features, voltage fields set to NaN
+        feat_87l = extract_87l_features(record, fault, prot)
+        if feat_87l is None:
+            raise ValueError(f"87L feature extraction failed: {cfg_path}")
+        row = _augment_row_with_soe_context(_flatten_87l(feat_87l, fault), _soe)
+        # Voltage always absent for 87L — always apply confidence cap
+        _voltage_absent = True
+    else:
+        feat = extract_distance_features(record, fault, prot)
+        if feat is None:
+            raise ValueError(f"Feature extraction failed: {cfg_path}")
 
-    # ── Step 5: flatten features ──────────────────────────────────────────────
-    row = _augment_row_with_soe_context(_flatten(feat, fault), _soe)
+        # ── Step 5: flatten features ──────────────────────────────────────────
+        row = _augment_row_with_soe_context(_flatten(feat, fault), _soe)
+        row["protection_type"] = prot.primary_protection.value  # e.g. "21", "67N", "50/51"
+
+        # Detect whether voltage channels were actually present.
+        # If absent (common for OCR, external DFR), inception_angle and
+        # voltage_sag_depth_pu default to 0 — the model treats them as real values.
+        # We record this so confidence can be capped later.
+        _voltage_absent = (
+            feat.voltage_sag_depth_pu == 0.0
+            and feat.inception_angle_degrees == 0.0
+            and feat.v_prefault_v is None
+        )
 
     # ── Step 6: Tier 1 rules ──────────────────────────────────────────────────
     rule_result: Optional[RuleResult] = apply_rules(row)
@@ -728,6 +840,33 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         proba_classes = list(getattr(clf, "classes_", classes))
         if model_type in ("multiclass_random_forest", "multiclass_lightgbm") and proba_classes:
             confidence = float(proba.max())
+
+            # ── Confidence penalty for missing voltage features ───────────────
+            # The model was trained predominantly on distance relay recordings that
+            # have voltage channels.  When voltage is absent (87L without VT, OCR,
+            # external DFR), inception_angle and voltage_sag both default to 0.0.
+            # The model treats these as real values, which:
+            #   - Underestimates PETIR likelihood (lightning peaks at ~90°; 0° looks non-PETIR)
+            #   - Removes voltage sag as a discriminator entirely
+            #   - Biases the output toward patterns that genuinely have zero sag
+            # Cap confidence so the UI reflects this epistemic limitation.
+            # The cap depends on how much voltage info was lost:
+            #   - voltage absent + non-distance relay → cap at 0.65
+            #   - voltage absent + distance relay (unusual) → cap at 0.72
+            #   - voltage present → no cap applied
+            _is_non_distance = prot.primary_protection.name not in ("DISTANCE",)
+            if _voltage_absent:
+                if _is_non_distance:
+                    _confidence_cap = 0.65
+                else:
+                    _confidence_cap = 0.72
+                if confidence > _confidence_cap:
+                    confidence = _confidence_cap
+                _routing_caveat = (
+                    _routing_caveat
+                    + f" [Keyakinan dibatasi {_confidence_cap:.0%}: kanal tegangan tidak tersedia "
+                    "— inception_angle dan voltage_sag tidak terukur dari rekaman ini.]"
+                )
             # cause_pcts uses "name" key for template compatibility
             _label_id_map = {
                 "PETIR":       "PETIR",
@@ -877,6 +1016,86 @@ def _flatten(feat, fault) -> dict:
         "voltage_kv":           feat.voltage_kv,
         "sampling_rate_hz":     feat.sampling_rate_hz,
         "record_duration_ms":   feat.record_duration_ms,
+        # Protection type tag — used by downstream description/UI to apply correct caveats
+        "protection_type":      "",   # populated in classify_file after _flatten
+    }
+
+
+def _flatten_87l(feat, fault) -> dict:
+    """
+    Flatten DifferentialLineFeatures + FaultEvent into the same row-dict schema
+    as _flatten(), so the Tier 1 rule engine and Tier 2 ML classifier can run
+    unchanged on 87L recordings.
+
+    Key difference from _flatten():
+      • All voltage-derived fields are set to float('nan') — NOT 0.0.
+        LightGBM treats NaN as a missing value (separate split bin) rather than
+        treating it as a real zero measurement.
+      • New 87L-specific morphology fields are appended so they can be written
+        to labeled_features_87l.csv for future dedicated training.
+    """
+    _nan = float("nan")
+    return {
+        # ── Fault timing (from FaultEvent) ───────────────────────────────────
+        "fault_duration_ms":    fault.duration_ms,
+        "fault_inception_ms":   round(fault.inception_time * 1000, 2),
+        "fault_count":          feat.fault_count,
+        # ── Fault classification ──────────────────────────────────────────────
+        "faulted_phases":       "+".join(feat.faulted_phases) if feat.faulted_phases else "",
+        "fault_type":           feat.fault_type,
+        "is_ground_fault":      feat.is_ground_fault,
+        # ── Protection context ────────────────────────────────────────────────
+        "trip_type":            feat.trip_type,
+        "zone_operated":        "UNKNOWN",   # 87L has no zones
+        "reclose_attempted":    feat.reclose_attempted,
+        "reclose_successful":   feat.reclose_successful,
+        "reclose_time_ms":      feat.reclose_time_ms,
+        # ── Current features ──────────────────────────────────────────────────
+        "di_dt_max":            feat.di_dt_max,
+        "di_dt_phase":          feat.di_dt_phase,
+        "peak_fault_current_a": feat.peak_fault_current_a,
+        "peak_fault_phase":     feat.peak_fault_phase,
+        "i0_i1_ratio":          feat.i0_i1_ratio,
+        "i0_magnitude_a":       feat.i0_magnitude_a,
+        "i1_magnitude_a":       feat.i1_magnitude_a,
+        "i2_magnitude_a":       feat.i2_magnitude_a,
+        "thd_percent":          feat.thd_percent,
+        # ── Voltage features — intentionally NaN (no VT in 87L recordings) ───
+        # Setting these to NaN rather than 0.0 tells LightGBM these are missing
+        # values, not real zero measurements.  The model routes them through the
+        # "missing" split branch rather than treating them as zero-sag / zero-angle.
+        "inception_angle_degrees":        _nan,
+        "voltage_sag_depth_pu":           _nan,
+        "voltage_sag_phase":              "",
+        "voltage_phase_ratio_spread_pu":  _nan,
+        "healthy_phase_voltage_ratio":    _nan,
+        "v2_v1_ratio":                    _nan,
+        "voltage_thd_max_percent":        _nan,
+        "v_prefault_v":                   None,
+        "v_fault_v":                      None,
+        # ── Impedance — not applicable for 87L ───────────────────────────────
+        "r_x_ratio":            None,
+        "z_magnitude_ohms":     None,
+        "z_angle_degrees":      None,
+        # ── Metadata ──────────────────────────────────────────────────────────
+        "station_name":         feat.station_name,
+        "relay_model":          feat.relay_model,
+        "voltage_kv":           None,
+        "sampling_rate_hz":     feat.sampling_rate_hz,
+        "record_duration_ms":   feat.record_duration_ms,
+        # ── Protection type tag ───────────────────────────────────────────────
+        "protection_type":      "87L",
+        # ── 87L-specific morphology features (for future dedicated training) ──
+        "rise_time_ms":              feat.rise_time_ms,
+        "dc_offset_index":           feat.dc_offset_index,
+        "transient_osc_freq_hz":     feat.transient_osc_freq_hz,
+        "dwt_energy_detail_1":       feat.dwt_energy_detail_1,
+        "dwt_energy_detail_2":       feat.dwt_energy_detail_2,
+        "dwt_energy_approx":         feat.dwt_energy_approx,
+        "dwt_hf_ratio":              feat.dwt_hf_ratio,
+        "has_differential_channels": feat.has_differential_channels,
+        "id_peak_a":                 feat.id_peak_a,
+        "id_ir_ratio_max":           feat.id_ir_ratio_max,
     }
 
 
