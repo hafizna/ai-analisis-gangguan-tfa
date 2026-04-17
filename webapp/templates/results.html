@@ -532,9 +532,30 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 
     <!-- Cause likelihoods -->
     {% if analysis.cause_pcts %}
+    {% set is_ml_tier2 = analysis.tier == 2 and analysis.rule_name in ['multiclass_random_forest', 'multiclass_lightgbm'] %}
+    {% set margin_pp = ((analysis.margin or 1.0) * 100) %}
+    {% set close_call = is_ml_tier2 and margin_pp < 15 %}
     <div class="r-card">
-        {% if analysis.tier == 2 and analysis.rule_name in ['multiclass_random_forest', 'multiclass_lightgbm'] %}
-        <div class="r-section-label">Probabilitas Penyebab (Model ML)</div>
+        {% if is_ml_tier2 %}
+        <div class="r-section-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <span>Probabilitas Penyebab (Model ML, kalibrasi T=1.5)</span>
+            {% if analysis.cause_pcts | length >= 2 %}
+            {% if close_call %}
+            <span style="font-size:10px; font-weight:700; letter-spacing:.05em; padding:3px 8px; border-radius:999px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b;">
+                KEPUTUSAN TIPIS — margin {{ "%.1f"|format(margin_pp) }} pp
+            </span>
+            {% else %}
+            <span style="font-size:10px; font-weight:700; letter-spacing:.05em; padding:3px 8px; border-radius:999px; background:#ecfdf5; color:#065f46; border:1px solid #10b981;">
+                margin {{ "%.1f"|format(margin_pp) }} pp
+            </span>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% if close_call %}
+        <div style="font-size:11px; color:var(--text-muted); line-height:1.6; margin:4px 0 10px;">
+            Selisih top-1 ke runner-up &lt; 15 pp — model ragu, verifikasi lapangan atau relay pendukung disarankan.
+        </div>
+        {% endif %}
         {% else %}
         <div class="r-section-label">Estimasi Penyebab (Aturan)</div>
         {% endif %}

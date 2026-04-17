@@ -283,6 +283,8 @@ class ClassificationResult:
     soe: list = None                # Sequence of Events from digital channels
     description: str = ""          # Natural language analysis narrative
     cause_pcts: list = None        # [{name, pct}] likelihood bars for transient causes
+    # Margin = top1 - top2 (post-calibration) for Tier 2 ML. 1.0 for rules / fallback.
+    margin: float = 1.0
     # Phase 2 — transformer-specific fields
     event_type: str = "LINE"        # "LINE" or "TRANSFORMER"
     transformer_result: object = None  # TransformerClassificationResult if 87T
@@ -553,6 +555,26 @@ def _generate_transformer_description(tf, xr: "TransformerClassificationResult")
         lines.append("TINDAKAN DIPERLUKAN — lihat rekomendasi untuk langkah selanjutnya.")
 
     return "\n".join(lines)
+
+
+def _calibrate_proba(proba: np.ndarray, temperature: float = 1.5) -> np.ndarray:
+    """
+    Temperature-scale tree-ensemble probabilities to curb overconfidence.
+
+    RandomForest / LightGBM report the vote fraction as predict_proba, which
+    collapses toward 0 or 1 whenever the trees agree — the reported number
+    stops reflecting how hard the decision actually is. PETIR and
+    LAYANG-LAYANG in particular share fast-transient + reclose-success
+    signatures, so the ensemble often votes unanimously even when the real
+    call is close. Dividing logits by T>1 flattens the distribution while
+    preserving argmax and the relative ordering of cause_pcts.
+    """
+    p = np.asarray(proba, dtype=float)
+    p = np.clip(p, 1e-12, 1.0)
+    logits = np.log(p) / float(temperature)
+    logits -= logits.max()
+    exp = np.exp(logits)
+    return exp / exp.sum()
 
 
 def _load_model() -> Optional[dict]:
@@ -839,7 +861,22 @@ def classify_file(cfg_path: str) -> ClassificationResult:
         # ── Multi-class path (fault_classifier.pkl — RF or LightGBM) ────────
         proba_classes = list(getattr(clf, "classes_", classes))
         if model_type in ("multiclass_random_forest", "multiclass_lightgbm") and proba_classes:
+            # Temperature-scale the raw vote fractions before reporting.
+            # Argmax and the relative ordering of cause_pcts are preserved;
+            # the cap below is the hard ceiling for Tier 2 ML conviction.
+            proba = _calibrate_proba(proba, temperature=1.5)
             confidence = float(proba.max())
+
+            # Hard ceiling: even after calibration, tree ensembles can't
+            # distinguish petir vs layang-layang vs benda asing reliably
+            # enough to warrant >92% conviction from waveform features alone.
+            _ml_ceiling = 0.92
+            if confidence > _ml_ceiling:
+                confidence = _ml_ceiling
+
+            # Margin to runner-up as a "close call" signal for the UI.
+            _sorted_p = np.sort(proba)[::-1]
+            margin = float(_sorted_p[0] - _sorted_p[1]) if len(_sorted_p) >= 2 else 1.0
 
             # ── Confidence penalty for missing voltage features ───────────────
             # The model was trained predominantly on distance relay recordings that
@@ -883,23 +920,42 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             ]
             label_id = _label_id_map.get(pred, pred)
             reclose_note = "  AR berhasil — gangguan terkonfirmasi transien." if _reclose_confirmed else ""
+            # Runner-up label for the "close call" caveat in evidence
+            _runner_up = cause_pcts_ml[1] if len(cause_pcts_ml) >= 2 else None
+            _close_call = margin < 0.15
+            _margin_note = ""
+            if _runner_up is not None:
+                if _close_call:
+                    _margin_note = (
+                        f"  [Keputusan tipis: selisih ke runner-up "
+                        f"{_runner_up['name']} hanya {margin * 100:.1f} pp "
+                        f"— verifikasi lapangan disarankan.]"
+                    )
+                else:
+                    _margin_note = (
+                        f"  [Margin ke runner-up {_runner_up['name']}: "
+                        f"{margin * 100:.1f} pp.]"
+                    )
             _r2_mc = ClassificationResult(
                 label=label_id,
                 confidence=confidence,
                 tier=2,
                 rule_name=model_type,
                 evidence=(
-                    f"Classifier ML: {pred} ({confidence:.0%}){reclose_note}  "
+                    f"Classifier ML (kalibrasi T=1.5, plafon {_ml_ceiling:.0%}): "
+                    f"{pred} ({confidence:.0%}){reclose_note}  "
                     f"dur={row.get('fault_duration_ms', 0):.0f}ms  "
                     f"peak_i={_peak_i:.0f}A  "
                     f"i0/i1={row.get('i0_i1_ratio', 0):.2f}  "
                     f"zone={row.get('zone_operated', '?')}"
+                    + _margin_note
                     + (_routing_caveat or "")
                 ),
                 recommendation=_label_recommendation(pred),
                 features=row,
                 soe=_soe,
                 cause_pcts=cause_pcts_ml,
+                margin=margin,
             )
             _r2_mc.description = _generate_description(row, _r2_mc)
             return _r2_mc
