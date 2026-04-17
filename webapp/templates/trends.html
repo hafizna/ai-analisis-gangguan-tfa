@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Tren Gangguan — TFA{% endblock %}
 {% block topbar_title %}Tren Gangguan{% endblock %}
-{% block topbar_sub %}Analisis pola dan distribusi gangguan dari riwayat{% endblock %}
+{% block topbar_sub %}Pola dan distribusi gangguan dari riwayat{% endblock %}
 {% block nav_trends %}active{% endblock %}
 
 {% block extra_css %}
@@ -85,8 +85,8 @@
 {% if not rows %}
 <div class="empty-state">
     <div class="empty-icon">📊</div>
-    <p>Belum ada data riwayat analisis yang terkonfirmasi.</p>
-    <a href="{{ url_for('index') }}" class="btn btn-primary">Mulai Analisis</a>
+    <p>Belum ada riwayat analisis yang terkonfirmasi.</p>
+    <a href="{{ url_for('index') }}" class="btn btn-primary">Analisis File Baru</a>
 </div>
 {% else %}
 
@@ -98,7 +98,7 @@
     </div>
     <div class="stat-box">
         <div class="stat-num" style="color:#10b981;">{{ stats.correct }}</div>
-        <div class="stat-lbl">Prediksi Tepat</div>
+        <div class="stat-lbl">Prediksi Benar</div>
     </div>
     <div class="stat-box">
         <div class="stat-num">{{ stats.accuracy }}%</div>
@@ -209,7 +209,7 @@
             <div class="acc-pct">{{ item.accuracy }}%</div>
         </div>
         <div style="font-size:10px; color:var(--text-muted); margin:-4px 0 10px 130px;">
-            {{ item.correct }}/{{ item.total }} terkonfirmasi benar
+            {{ item.correct }}/{{ item.total }} benar
         </div>
         {% endfor %}
     </div>

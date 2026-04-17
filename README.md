@@ -49,7 +49,7 @@ INPUT: file .cfg + .dat (COMTRADE)
            └── explicit_failed_reclose          → GANGGUAN PERMANEN (90%)
                 │ tidak cocok
                 ▼
-        6. Tier 2 Multi-class ML (RandomForest, 13 fitur)
+        6. Tier 2 Multi-class ML (LightGBM/RandomForest, 17 fitur)
            → PETIR / LAYANG-LAYANG / POHON / HEWAN / BENDA ASING / KONDUKTOR / PERALATAN
            → probabilitas per kelas ditampilkan di UI
                 │ model tidak tersedia
@@ -75,7 +75,7 @@ Bila file berasal dari DFR eksternal (Qualitrol, Toshiba standalone) tanpa sinya
 | `core/channel_normalizer.py` | Normalisasi nama channel multi-merk (ABB, Siemens, NARI, GE, Alstom, Toshiba) |
 | `core/protection_router.py` | Deteksi tipe proteksi, zona, trip type, reclose outcome |
 | `core/fault_detector.py` | Deteksi inception, durasi, fault count, SOE |
-| `core/feature_extractor.py` | Ekstraksi 13 fitur line/transmisi |
+| `core/feature_extractor.py` | Ekstraksi 17 fitur line/transmisi |
 | `core/transformer_channel_mapper.py` | Pemetaan channel trafo HV/LV/diff/restraint |
 | `core/transformer_feature_extractor.py` | Ekstraksi fitur trafo (H2, H5, slope, DC offset) |
 | `models/rules.py` | Tier 1: aturan deterministik KONDUKTOR/PERMANEN |

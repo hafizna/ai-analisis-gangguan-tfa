@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Input Transformer — TFA{% endblock %}
-{% block topbar_title %}Input Analisis Trafo{% endblock %}
-{% block topbar_sub %}Quick local analysis atau coordinated multi-relay{% endblock %}
+{% block title %}Unggah Trafo — TFA{% endblock %}
+{% block topbar_title %}Analisis Trafo 87T{% endblock %}
+{% block topbar_sub %}Quick (satu relay) atau coordinated (multi-relay){% endblock %}
 {% block nav_transformer_upload %}active{% endblock %}
 
 {% block extra_css %}
@@ -80,11 +80,11 @@
 <div class="page-shell">
     <div class="hero-card">
         <div>
-            <div class="hero-title">Mulai dari relay yang Anda punya, lalu tambah evidence bila perlu.</div>
+            <div class="hero-title">Mulai dari relay yang ada, tambah evidence kalau perlu.</div>
             <div class="hero-sub">
-                Halaman ini memisahkan <strong>quick local analysis</strong> dari <strong>coordinated multi-relay analysis</strong>.
-                Jika file pertama adalah <strong>OCR LV</strong>, sistem akan membacanya sebagai bukti lokal sisi distribusi,
-                bukan langsung sebagai final cause transformer fault.
+                Pilih <strong>quick</strong> untuk satu relay atau <strong>coordinated</strong> untuk multi-relay.
+                Kalau file pertama hanya <strong>OCR LV</strong>, hasilnya dibaca sebagai bukti sisi distribusi —
+                bukan langsung final cause trafo.
             </div>
             <div class="pill-row">
                 <span class="pill">87T</span>
@@ -97,12 +97,12 @@
         </div>
         <div class="mini-grid">
             <div class="mini-box">
-                <div class="mini-label">Quick Analysis</div>
-                <div class="mini-text">Untuk screening cepat dari satu relay: event meaning, local interpretation, dan next files yang disarankan.</div>
+                <div class="mini-label">Quick</div>
+                <div class="mini-text">Screening cepat satu relay: event meaning, interpretasi lokal, saran relay berikutnya.</div>
             </div>
             <div class="mini-box">
-                <div class="mini-label">Coordinated Analysis</div>
-                <div class="mini-text">Untuk review selectivity, origin fault, dan kasus yang butuh pembacaan lintas relay.</div>
+                <div class="mini-label">Coordinated</div>
+                <div class="mini-text">Multi-relay untuk review selektivitas, origin fault, dan kasus lintas relay.</div>
             </div>
         </div>
     </div>
@@ -115,15 +115,15 @@
         <input type="hidden" name="intake_mode" id="intakeModeInput" value="QUICK">
 
         <div class="panel">
-            <div class="section-label">Pilih Workflow</div>
+            <div class="section-label">Mode Analisis</div>
             <div class="mode-grid">
                 <div class="mode-tile active" data-mode="QUICK">
-                    <div class="mode-title">Quick local analysis</div>
-                    <div class="mode-desc">Satu relay dulu. Cocok untuk OCR LV/HV, 87T, REF, atau feeder relay saat ingin first-look cepat.</div>
+                    <div class="mode-title">Quick (satu relay)</div>
+                    <div class="mode-desc">Satu relay dulu. Cocok untuk OCR LV/HV, 87T, REF, atau feeder relay saat butuh first-look cepat.</div>
                 </div>
                 <div class="mode-tile" data-mode="COORDINATED">
-                    <div class="mode-title">Coordinated multi-relay analysis</div>
-                    <div class="mode-desc">Unggah relay primer dan file pendukung untuk origin fault atau review selektivitas.</div>
+                    <div class="mode-title">Coordinated (multi-relay)</div>
+                    <div class="mode-desc">Unggah relay primer plus file pendukung untuk origin fault atau review selektivitas.</div>
                 </div>
             </div>
         </div>
@@ -148,9 +148,9 @@
                     </select>
                 </div>
                 <div class="field">
-                    <label>Catatan workflow</label>
+                    <label>Catatan mode</label>
                     <div class="hint" id="modeHint">
-                        Mulai dari satu file primer. Sistem akan menempatkan hasil sebagai evidence lokal dan menyarankan relay berikutnya bila perlu.
+                        Satu file primer dulu. Hasil dianggap evidence lokal; sistem menyarankan relay berikutnya kalau perlu.
                     </div>
                 </div>
             </div>
@@ -169,35 +169,35 @@
                 </div>
             </div>
             <div class="hint" style="margin-top:10px;">
-                File primer adalah relay yang paling dulu ingin Anda baca. Bila file ini hanya OCR LV, hasil akan diposisikan sebagai partial evidence untuk event trafo.
+                File primer = relay yang ingin dibaca lebih dulu. Jika hanya OCR LV, hasilnya dianggap partial evidence untuk event trafo.
             </div>
         </div>
 
         <div class="support-shell" id="supportShell">
-            <div class="section-label">Supporting Relays</div>
+            <div class="section-label">Relay Pendukung</div>
             <div class="support-stack">
                 {% for idx in [1, 2, 3] %}
                 <div class="support-card">
                     <div class="support-head">
-                        <strong>Supporting relay #{{ idx }}</strong>
-                        <span class="support-note">Opsional, tapi isi lengkap bila dipakai</span>
+                        <strong>Relay pendukung #{{ idx }}</strong>
+                        <span class="support-note">Opsional — isi lengkap kalau dipakai</span>
                     </div>
                     <div class="form-grid">
                         <div class="field">
                             <label for="support_role_{{ idx }}">Peran relay</label>
                             <select id="support_role_{{ idx }}" name="support_role_{{ idx }}">
-                                <option value="">Tidak digunakan</option>
+                                <option value="">Tidak dipakai</option>
                                 {% for value, label in relay_roles %}
                                 <option value="{{ value }}">{{ label }}</option>
                                 {% endfor %}
                             </select>
                         </div>
                         <div class="field">
-                            <label for="support_cfg_{{ idx }}">Supporting .cfg</label>
+                            <label for="support_cfg_{{ idx }}">File .cfg</label>
                             <input type="file" id="support_cfg_{{ idx }}" name="support_cfg_{{ idx }}" accept=".cfg,.CFG">
                         </div>
                         <div class="field">
-                            <label for="support_dat_{{ idx }}">Supporting .dat</label>
+                            <label for="support_dat_{{ idx }}">File .dat</label>
                             <input type="file" id="support_dat_{{ idx }}" name="support_dat_{{ idx }}" accept=".dat,.DAT">
                         </div>
                     </div>
@@ -207,7 +207,7 @@
         </div>
 
         <div class="action-row">
-            <a href="{{ url_for('line_upload') }}" class="btn btn-outline">Gunakan Input Jaringan</a>
+            <a href="{{ url_for('line_upload') }}" class="btn btn-outline">Pindah ke Jalur Jaringan</a>
             <button type="submit" class="btn btn-primary">Analisis Evidence Trafo</button>
         </div>
     </form>
@@ -227,8 +227,8 @@ function applyMode(mode) {
     const coordinated = mode === 'COORDINATED';
     supportShell.classList.toggle('show', coordinated);
     modeHint.textContent = coordinated
-        ? 'Gunakan mode ini bila Anda ingin menilai origin fault, selektivitas, atau butuh lintas relay.'
-        : 'Mulai dari satu file primer. Sistem akan menempatkan hasil sebagai evidence lokal dan menyarankan relay berikutnya bila perlu.';
+        ? 'Pakai mode ini kalau mau cek origin fault, selektivitas, atau butuh lintas relay.'
+        : 'Satu file primer dulu. Hasil dianggap evidence lokal; sistem menyarankan relay berikutnya kalau perlu.';
 }
 
 modeTiles.forEach(tile => {

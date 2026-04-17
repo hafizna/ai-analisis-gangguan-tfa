@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}TFA — Fault Analyzer{% endblock %}</title>
+    <title>{% block title %}TFA — AI Fault Analyzer{% endblock %}</title>
     <style>
         /* ── Reset ────────────────────────────────────────────────────────────── */
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -198,13 +198,13 @@
             <div class="brand-name">TFA</div>
             <div class="brand-sub">Fault Analyzer</div>
         </div>
-        <div class="sidebar-section">Mulai Analisis</div>
+        <div class="sidebar-section">Analisis</div>
         <nav class="sidebar-nav">
             <a href="{{ url_for('index') }}"   class="nav-item {% block nav_upload %}{% endblock %}">
                 <span class="nav-icon">⊕</span> Analisis Baru
             </a>
             <a href="{{ url_for('line_upload') }}" class="nav-item {% block nav_line_upload %}{% endblock %}">
-                <span class="nav-icon">↑</span> Input Jaringan
+                <span class="nav-icon">↑</span> Unggah Jaringan
             </a>
             <a href="{{ url_for('browse') }}"  class="nav-item {% block nav_browse %}{% endblock %}">
                 <span class="nav-icon">▣</span> Pilih Rekaman
@@ -216,10 +216,10 @@
                 <span class="nav-icon">↗</span> Tren Gangguan
             </a>
         </nav>
-        <div class="sidebar-section" style="margin-top:4px;">Transformator</div>
+        <div class="sidebar-section" style="margin-top:4px;">Trafo</div>
         <nav class="sidebar-nav" style="padding-top:0;">
             <a href="{{ url_for('transformer_upload') }}" class="nav-item {% block nav_transformer_upload %}{% endblock %}">
-                <span class="nav-icon" style="color:#8b5cf6;">↑</span> Input Trafo
+                <span class="nav-icon" style="color:#8b5cf6;">↑</span> Unggah Trafo
             </a>
             <a href="{{ url_for('transformer_history') }}" class="nav-item {% block nav_xfmr_history %}{% endblock %}">
                 <span class="nav-icon" style="color:#8b5cf6;">⬡</span> Riwayat 87T
@@ -232,10 +232,10 @@
             </a>
         </nav>
         <div class="sidebar-footer">
-            <strong>AI Analisis Gangguan</strong>
-            Phase 1: Jaringan &nbsp;|&nbsp; Phase 2: Trafo
+            <strong>TFA — AI Fault Analyzer</strong>
+            Jaringan &nbsp;|&nbsp; Trafo 87T
             <div style="margin-top:8px; font-size:10px; letter-spacing:0.04em;">
-                <span id="db-status-dot" style="color:#475569;">● Memuat status DB...</span>
+                <span id="db-status-dot" style="color:#475569;">● Cek status DB...</span>
             </div>
         </div>
     </aside>
@@ -244,11 +244,11 @@
     <div class="main-wrap">
         <header class="topbar">
             <div>
-                <div class="topbar-title">{% block topbar_title %}AI Analisis Gangguan{% endblock %}</div>
+                <div class="topbar-title">{% block topbar_title %}TFA — AI Fault Analyzer{% endblock %}</div>
                 <div class="topbar-sub">{% block topbar_sub %}{% endblock %}</div>
             </div>
             <div class="topbar-right">
-                <div class="status-dot">Sistem aktif</div>
+                <div class="status-dot">Siap</div>
                 <button class="theme-btn" onclick="toggleTheme()" id="themeBtn">🌙 Gelap</button>
             </div>
         </header>
@@ -267,8 +267,8 @@
         flex-direction:column; gap:20px;">
         <div class="tfa-spinner"></div>
         <div id="loadingMsg" style="color:#94a3b8; font-size:13px; font-weight:600;
-             letter-spacing:0.08em; text-transform:uppercase;">Memproses...</div>
-        <div style="color:#475569; font-size:11px; margin-top:-8px;">Mohon tunggu sebentar</div>
+             letter-spacing:0.08em; text-transform:uppercase;">Menganalisis...</div>
+        <div style="color:#475569; font-size:11px; margin-top:-8px;">Tunggu sebentar</div>
     </div>
     <style>
         @keyframes tfa-spin { to { transform: rotate(360deg); } }
@@ -316,7 +316,7 @@
                 // Skip forms that opt out with data-no-loading
                 if (form.dataset.noLoading) return;
                 form.addEventListener('submit', function () {
-                    const msg = form.dataset.loadingMsg || 'Memproses...';
+                    const msg = form.dataset.loadingMsg || 'Menganalisis...';
                     showLoading(msg);
                 });
             });
@@ -336,11 +336,11 @@
                 el.textContent = '● PostgreSQL aktif';
             } else {
                 el.style.color = '#f59e0b';
-                el.textContent = '● CSV (no DB)';
+                el.textContent = '● CSV (tanpa DB)';
             }
         }).catch(() => {
             const el = document.getElementById('db-status-dot');
-            if (el) { el.style.color = '#ef4444'; el.textContent = '● Status tidak diketahui'; }
+            if (el) { el.style.color = '#ef4444'; el.textContent = '● Status DB tidak terbaca'; }
         });
     </script>
     {% block extra_js %}{% endblock %}

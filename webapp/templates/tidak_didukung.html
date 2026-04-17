@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Tidak Dapat Dianalisis — TFA{% endblock %}
-{% block topbar_title %}Rekaman Tidak Dapat Dianalisis{% endblock %}
+{% block title %}Belum Didukung — TFA{% endblock %}
+{% block topbar_title %}Rekaman Belum Didukung{% endblock %}
 {% block topbar_sub %}{{ filename }}{% endblock %}
 
 {% block extra_css %}
@@ -45,7 +45,7 @@
 
     {% if tips %}
     <div class="tips-card">
-        <h4>Informasi Tambahan</h4>
+        <h4>Catatan</h4>
         <ul>
             {% for tip in tips %}
             <li>{{ tip }}</li>
@@ -62,7 +62,7 @@
     {% if soe %}
     <div style="margin-top:24px; background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; padding:20px;">
         <div style="font-size:10px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:var(--text-muted); margin-bottom:12px; display:flex; align-items:center; gap:8px;">
-            Urutan Event Digital (SOE) — Data tetap tersedia meski klasifikasi belum didukung
+            Urutan Event Digital (SOE) — data tetap tersedia meski klasifikasi belum didukung
             <span style="flex:1; height:1px; background:var(--border); display:block;"></span>
         </div>
         <div style="max-height:300px; overflow-y:auto;">
@@ -82,7 +82,7 @@
             {% endfor %}
         </div>
         <div style="margin-top:10px; font-size:11px; color:var(--text-muted);">
-            {{ soe | length }} event digital terdeteksi. Waktu relatif terhadap deteksi gangguan pertama.
+            {{ soe | length }} event digital terdeteksi. Waktu relatif dari deteksi gangguan pertama.
         </div>
     </div>
     {% endif %}
@@ -94,7 +94,7 @@
             Rekaman COMTRADE — Tampilan Gelombang
             <span style="flex:1; height:1px; background:var(--border); display:block;"></span>
             <span style="font-size:10px; font-weight:400; color:var(--text-muted);">
-                Ditampilkan langsung dari file, tanpa model proteksi
+                Ditampilkan langsung dari file, tanpa klasifikasi
             </span>
         </div>
         {% include "_wave_viewer_inc.html" %}

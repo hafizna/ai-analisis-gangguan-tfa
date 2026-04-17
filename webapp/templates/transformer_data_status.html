@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Status Data Phase 2{% endblock %}
-{% block topbar_title %}Status Data Phase 2 — Trafo 87T{% endblock %}
+{% block title %}Status Data Trafo — TFA{% endblock %}
+{% block topbar_title %}Status Data Trafo 87T{% endblock %}
 {% block topbar_sub %}{{ total_real }} event nyata &bull; {{ classes_ready }}/5 kelas siap training{% endblock %}
 {% block nav_xfmr_data %}active{% endblock %}
 
@@ -42,10 +42,10 @@
   <div style="font-size:28px;">{% if classes_ready >= 5 %}✅{% elif classes_ready >= 2 %}⚠{% else %}🔬{% endif %}</div>
   <div>
     <div style="font-size:14px; font-weight:800; color:var(--text);">
-      {% if classes_ready >= 5 %}Platform siap untuk training ML penuh{% elif classes_ready >= 2 %}Training parsial dimungkinkan ({{ classes_ready }}/5 kelas){% else %}Mode Rule-Based aktif — kumpulkan data nyata{% endif %}
+      {% if classes_ready >= 5 %}Siap untuk training ML penuh{% elif classes_ready >= 2 %}Training parsial dimungkinkan ({{ classes_ready }}/5 kelas){% else %}Mode rule-based aktif — kumpulkan data nyata dulu{% endif %}
     </div>
     <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
-      {{ total_real }} event nyata terkonfirmasi &bull; Minimum per kelas: {{ min_for_training }} event
+      {{ total_real }} event nyata terkonfirmasi &bull; minimum per kelas: {{ min_for_training }} event
     </div>
   </div>
 </div>
@@ -54,9 +54,9 @@
 {% set class_labels = {
   'INRUSH':         'Inrush Magnetisasi',
   'INTERNAL_FAULT': 'Gangguan Internal',
-  'THROUGH_FAULT':  'Gangguan Eksternal (Through)',
-  'OVEREXCITATION': 'Tegangan Lebih / Overeksitasi',
-  'MAL_OPERATE':    'Kemungkinan Maloperate',
+  'THROUGH_FAULT':  'Gangguan Eksternal (through-fault)',
+  'OVEREXCITATION': 'Overeksitasi (V/Hz)',
+  'MAL_OPERATE':    'Indikasi Maloperate',
 } %}
 
 <div class="ds-grid">
@@ -68,15 +68,15 @@
 <div class="ds-card {% if info.ready %}ready{% elif real > 0 %}partial{% else %}empty{% endif %}">
   <div class="ds-class">{{ class_labels.get(cls, cls) }}</div>
   <span class="ds-badge {% if info.ready %}badge-ready{% elif real > 0 %}badge-partial{% else %}badge-empty{% endif %}">
-    {% if info.ready %}✓ Siap Training{% elif real > 0 %}Sebagian{% else %}Belum Ada Data{% endif %}
+    {% if info.ready %}✓ Siap training{% elif real > 0 %}Sebagian{% else %}Belum ada data{% endif %}
   </span>
 
-  <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">Data Nyata ({{ real }}/{{ min_for_training }})</div>
+  <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">Data nyata ({{ real }}/{{ min_for_training }})</div>
   <div class="progress-wrap">
     <div class="progress-fill fill-real" style="width:{{ pct_real }}%"></div>
   </div>
 
-  <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">Data Sintetis ({{ synth }} file)</div>
+  <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">Data sintetis ({{ synth }} file)</div>
   <div class="progress-wrap">
     <div class="progress-fill fill-synth" style="width:{{ pct_synth }}%"></div>
   </div>
@@ -94,13 +94,13 @@
 
 <!-- Roadmap -->
 <div class="info-card">
-  <div style="font-size:13px; font-weight:800; color:var(--text); margin-bottom:16px;">Peta Jalan Phase 2</div>
+  <div style="font-size:13px; font-weight:800; color:var(--text); margin-bottom:16px;">Peta Jalan Training Trafo 87T</div>
 
   <div class="step-row">
     <div class="step-num {% if total_real > 0 %}done{% else %}active{% endif %}">1</div>
     <div class="step-text">
-      <strong>Kumpulkan data nyata</strong> — Upload file COMTRADE dari rele 87T (ABB RET615/670, Siemens 7UT, SEL-387, GE T60).
-      Konfirmasi setiap event melalui form di halaman hasil analisis.
+      <strong>Kumpulkan data nyata</strong> — unggah file COMTRADE dari rele 87T (ABB RET615/670, Siemens 7UT, SEL-387, GE T60).
+      Konfirmasi setiap event lewat form di halaman hasil analisis.
       <br>Status: <strong>{{ total_real }} event</strong> terkonfirmasi
     </div>
   </div>
@@ -108,7 +108,7 @@
   <div class="step-row">
     <div class="step-num {% if total_real >= 10 %}done{% elif total_real > 0 %}active{% endif %}">2</div>
     <div class="step-text">
-      <strong>Generate data sintetis</strong> — Jalankan generator sintetis untuk development dan testing.
+      <strong>Generate data sintetis</strong> — jalankan generator sintetis untuk development dan testing.
       <br><code style="font-size:10px; background:#1e293b; padding:2px 6px; border-radius:4px;">python data/generate_synthetic_transformer.py --n 20</code>
       <br>Direktori: <code style="font-size:10px; background:#1e293b; padding:2px 6px; border-radius:4px;">{{ synthetic_dir }}</code>
     </div>
@@ -117,8 +117,8 @@
   <div class="step-row">
     <div class="step-num {% if classes_ready >= 3 %}done{% elif total_real >= 10 %}active{% endif %}">3</div>
     <div class="step-text">
-      <strong>Validasi rule-based classifier</strong> — Setelah ≥ 10 event nyata per kelas, evaluasi akurasi
-      rule-based vs labeled data. Sesuaikan threshold jika perlu.
+      <strong>Validasi rule-based classifier</strong> — setelah ≥ 10 event nyata per kelas, evaluasi akurasi
+      rule-based vs labeled data. Sesuaikan threshold kalau perlu.
       <br>Target: 3 kelas dengan ≥ {{ min_for_training }} event masing-masing
     </div>
   </div>
@@ -126,17 +126,17 @@
   <div class="step-row">
     <div class="step-num {% if classes_ready >= 5 %}active{% endif %}">4</div>
     <div class="step-text">
-      <strong>Training ML classifier</strong> — Saat semua 5 kelas memiliki ≥ {{ min_for_training }} event nyata,
-      jalankan training Random Forest / XGBoost menggunakan <code style="font-size:10px; background:#1e293b; padding:2px 6px; border-radius:4px;">TransformerMLClassifier.train()</code>.
-      <br>Model tersimpan di: <code style="font-size:10px; background:#1e293b; padding:2px 6px; border-radius:4px;">pipeline/models/transformer_model.pkl</code>
+      <strong>Training ML classifier</strong> — begitu semua 5 kelas punya ≥ {{ min_for_training }} event nyata,
+      jalankan training Random Forest / XGBoost lewat <code style="font-size:10px; background:#1e293b; padding:2px 6px; border-radius:4px;">TransformerMLClassifier.train()</code>.
+      <br>Model tersimpan di <code style="font-size:10px; background:#1e293b; padding:2px 6px; border-radius:4px;">pipeline/models/transformer_model.pkl</code>
     </div>
   </div>
 
   <div class="step-row" style="margin-bottom:0;">
     <div class="step-num">5</div>
     <div class="step-text">
-      <strong>Produksi</strong> — Aktifkan ML model sebagai Tier 2, rule-based tetap sebagai Tier 1 fallback.
-      Monitor akurasi via halaman Tren Trafo.
+      <strong>Produksi</strong> — aktifkan ML model sebagai Tier 2, rule-based tetap sebagai Tier 1 fallback.
+      Monitor akurasi lewat halaman Tren Trafo.
     </div>
   </div>
 </div>

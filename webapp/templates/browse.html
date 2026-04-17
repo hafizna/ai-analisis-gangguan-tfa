@@ -111,15 +111,15 @@
 {% if offline_mode %}
 <div class="offline-card">
     <div style="font-size:40px; opacity:0.5;">☁️</div>
-    <h3>Mode Cloud Aktif</h3>
+    <h3>Mode Cloud</h3>
     <p>
-        Sistem berjalan di lingkungan cloud — folder rekaman lokal tidak tersedia.
-        Unggah file COMTRADE (<code>.cfg</code> + <code>.dat</code>) langsung untuk dianalisis.
+        Folder rekaman lokal tidak tersedia di cloud.
+        Unggah file COMTRADE (<code>.cfg</code> + <code>.dat</code>) langsung.
         {% if db_enabled %}
-        Semua hasil analisis yang dikonfirmasi tersimpan otomatis di
-        <strong>database PostgreSQL</strong> dan dapat dilihat di halaman <strong>Riwayat</strong>.
+        Hasil yang sudah dikonfirmasi tersimpan di <strong>PostgreSQL</strong> —
+        lihat di <strong>Riwayat</strong>.
         {% else %}
-        Hasil analisis tersimpan di file CSV lokal dan dapat dilihat di halaman <strong>Riwayat</strong>.
+        Hasil tersimpan di CSV lokal — lihat di <strong>Riwayat</strong>.
         {% endif %}
     </p>
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
@@ -172,7 +172,7 @@
     <span id="countDisplay" class="filter-count"></span>
 </div>
 <div style="font-size:12px; color:var(--text-muted); margin:-10px 0 14px;">
-    Status Data dan Label Dugaan diambil dari heuristik path/folder, jadi ini bersifat <strong>dugaan</strong> dan bisa berubah setelah verifikasi isi COMTRADE.
+    Status Data dan Label Dugaan diambil dari nama folder — ini <strong>dugaan</strong> dan bisa berubah setelah isi COMTRADE diverifikasi.
 </div>
 
 {% if events %}
@@ -239,7 +239,7 @@
 {% else %}
 <div style="text-align:center; padding:60px; color:var(--text-muted);">
     <div style="font-size:40px; margin-bottom:12px; opacity:0.3;">📂</div>
-    <p>Tidak ada rekaman berlabel ditemukan di raw_data/</p>
+    <p>Belum ada rekaman berlabel di folder raw_data/</p>
 </div>
 {% endif %}
 {% endif %}
@@ -262,7 +262,7 @@ function filterTable() {
         if (match) visible++;
     });
     const el = document.getElementById('countDisplay');
-    if (el) el.textContent = visible + ' dari ' + rows.length + ' rekaman';
+    if (el) el.textContent = visible + ' / ' + rows.length + ' rekaman';
 }
 filterTable();
 </script>

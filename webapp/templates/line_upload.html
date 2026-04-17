@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Unggah File — TFA{% endblock %}
+{% block title %}Unggah Jaringan — TFA{% endblock %}
 {% block topbar_title %}Unggah File COMTRADE{% endblock %}
-{% block topbar_sub %}Klasifikasi penyebab gangguan jaringan berbasis AI{% endblock %}
+{% block topbar_sub %}Klasifikasi penyebab gangguan jaringan{% endblock %}
 {% block nav_line_upload %}active{% endblock %}
 
 {% block extra_css %}
@@ -93,25 +93,25 @@
     <div class="info-card">
         <h4>File yang Diperlukan</h4>
         <ul>
-            <li><strong>.cfg</strong> — file konfigurasi COMTRADE</li>
-            <li><strong>.dat</strong> — file data (nama sama dengan .cfg)</li>
+            <li><strong>.cfg</strong> — konfigurasi COMTRADE</li>
+            <li><strong>.dat</strong> — data (nama sama dengan .cfg)</li>
         </ul>
         <p style="font-size:13px; color:var(--text-muted); margin-top:10px;">
-            Atau gunakan
+            Atau pakai
             <a href="{{ url_for('browse') }}">Pilih Rekaman</a>
-            untuk memilih langsung dari folder tanpa mengunggah.
+            untuk pilih langsung dari folder tanpa unggah ulang.
         </p>
     </div>
 
     <form id="uploadForm" action="{{ url_for('upload_files') }}" method="POST" enctype="multipart/form-data" data-loading-msg="Menganalisis file COMTRADE...">
         <div class="drop-zone" id="dropZone">
             <div class="drop-icon" style="font-size:40px;opacity:0.4;">&#x2B06;</div>
-            <h3>Drag &amp; Drop Files Here</h3>
-            <p>atau pilih file secara manual</p>
+            <h3>Seret file ke sini</h3>
+            <p>atau pilih manual</p>
             <div class="file-btns">
-                <label for="cfg_file" class="file-pick">Select .cfg</label>
+                <label for="cfg_file" class="file-pick">Pilih .cfg</label>
                 <input type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" class="file-input" required>
-                <label for="dat_file" class="file-pick">Select .dat</label>
+                <label for="dat_file" class="file-pick">Pilih .dat</label>
                 <input type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" class="file-input" required>
             </div>
         </div>
@@ -141,12 +141,12 @@
     </form>
 
     <div class="analysis-card">
-        <h4>Yang Dianalisis Sistem</h4>
+        <h4>Alur Analisis</h4>
         <div class="analysis-items">
-            <div class="analysis-item"><strong>Konfirmasi transien (Layer 0)</strong> — AR berhasil dengan arus nyata langsung dikategorikan transien</div>
-            <div class="analysis-item"><strong>Aturan deterministik (Layer 1)</strong> — perubahan fasa saat AR, trip 3-fasa gagal reclose</div>
-            <div class="analysis-item"><strong>Classifier ML (Layer 2)</strong> — pola di/dt, arus puncak, rasio i0/i1</div>
-            <div class="analysis-item"><strong>Estimasi penyebab</strong> — PETIR / Layang / Hewan / Benda Asing / Pohon / Konduktor</div>
+            <div class="analysis-item"><strong>Konfirmasi transien</strong> — auto-reclose sukses dengan arus nyata langsung masuk kategori transien</div>
+            <div class="analysis-item"><strong>Tier 1 (aturan)</strong> — perubahan fasa saat reclose, trip 3-fasa gagal reclose, explicit failed reclose</div>
+            <div class="analysis-item"><strong>Tier 2 (ML)</strong> — pola di/dt, arus puncak, rasio i0/i1, THD, inception angle</div>
+            <div class="analysis-item"><strong>Estimasi penyebab</strong> — PETIR / LAYANG / HEWAN / BENDA ASING / POHON / KONDUKTOR / PERALATAN</div>
         </div>
     </div>
 

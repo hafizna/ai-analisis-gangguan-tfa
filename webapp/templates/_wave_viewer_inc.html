@@ -105,10 +105,10 @@
 
     if (hintEl) {
         const notes = [];
-        if (meta.analog_truncated) notes.push('Sebagian kanal analog disembunyikan untuk menjaga performa.');
-        if (meta.digital_truncated) notes.push('Sebagian kanal digital disembunyikan untuk menjaga performa.');
+        if (meta.analog_truncated) notes.push('Sebagian kanal analog disembunyikan biar viewer tetap lancar.');
+        if (meta.digital_truncated) notes.push('Sebagian kanal digital disembunyikan biar viewer tetap lancar.');
         if (meta.selected_line_tag) notes.push(`Viewer difokuskan ke bay/penghantar ${meta.selected_line_tag}.`);
-        notes.push('Tip: gunakan toggle Cursor aktif untuk memilih Cursor 1 atau Cursor 2, lalu klik plot untuk menaruh cursor aktif. Δt dan ΔI/ΔV dihitung otomatis. Klik kanal di sidebar untuk isolate/lock. Double-click untuk reset zoom.');
+        notes.push('Tip: pilih Cursor 1 atau Cursor 2 lewat toggle, lalu klik plot untuk menaruh cursor. Δt dan ΔI/ΔV dihitung otomatis. Klik kanal di sidebar untuk isolate/lock. Double-click untuk reset zoom.');
         hintEl.textContent = notes.join('  |  ');
     }
 
@@ -398,11 +398,11 @@
         }).join('');
         const vList = showVoltagePanel ? `
             <div class=\"wave-group-title\">Tegangan</div>
-            ${renderChannelRows(voltageChannels.map((ch, idx) => ({ ch, idx })), 'voltage') || '<div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Tidak ada kanal tegangan</div>'}
+            ${renderChannelRows(voltageChannels.map((ch, idx) => ({ ch, idx })), 'voltage') || '<div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Kanal tegangan tidak tersedia</div>'}
         ` : '';
         listEl.innerHTML = `
             ${vList}
-            ${iList || '<div class=\"wave-group-title\">Current</div><div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Tidak ada kanal arus</div>'}
+            ${iList || '<div class=\"wave-group-title\">Current</div><div style=\"font-size:11px;color:var(--text-muted);padding:6px;\">Kanal arus tidak tersedia</div>'}
         `;
     }
 
@@ -868,7 +868,7 @@
         const safeName = subtitle.replace(/[^a-zA-Z0-9_\-\.]/g, '_').slice(0, 60);
         try {
             const imgUrls = await _getPlotImgUrls(1.5);
-            if (!imgUrls.length) { alert('Tidak ada plot untuk diekspor.'); return; }
+            if (!imgUrls.length) { alert('Belum ada plot untuk diekspor.'); return; }
 
             const imgs = await Promise.all(imgUrls.map(_loadImg));
             const W = Math.max(...imgs.map(i => i.width));
@@ -943,7 +943,7 @@
         try {
             // Use scale 1.5 — same as PNG export; scale 2 can exceed browser memory
             const imgUrls = await _getPlotImgUrls(1.5);
-            if (!imgUrls.length) { alert('Tidak ada plot untuk dicetak.'); return; }
+            if (!imgUrls.length) { alert('Belum ada plot untuk dicetak.'); return; }
 
             const subtitle = document.querySelector('.topbar-sub')?.textContent?.trim() || '';
             const now = new Date().toLocaleString('id-ID');
@@ -990,7 +990,7 @@
     function exportCSV() {
         const analogChs = getExportAnalogChannels();
         if (!analogChs.length) {
-            alert('Tidak ada data waveform untuk diekspor.'); return;
+            alert('Belum ada data waveform untuk diekspor.'); return;
         }
         const digitalChs = wf.digital || [];
         const tArr = analogChs[0].x;
@@ -1025,7 +1025,7 @@
     } catch (err) {
         console.error('Waveform viewer init failed', err);
         showWaveFallback(
-            'Viewer interaktif gagal dimuat. Menampilkan waveform statis dari server.',
+            'Viewer interaktif gagal dimuat — menampilkan waveform statis dari server.',
             err && err.message ? err.message : String(err || 'Unknown error')
         );
     }
