@@ -535,13 +535,13 @@ def _generate_transformer_description(tf, xr: "TransformerClassificationResult")
     )
 
     if h2 is not None:
-        lines.append(f"Rasio harmonik ke-2 (indikator inrush): {h2:.1f}% (ambang: 15%).")
+        lines.append(f"Rasio harmonik ke-2 (indikator inrush): {h2:.1f}% (threshold: 15%).")
     if h5 is not None:
-        lines.append(f"Rasio harmonik ke-5 (indikator overeksitasi): {h5:.1f}% (ambang: 10%).")
+        lines.append(f"Rasio harmonik ke-5 (indikator overeksitasi): {h5:.1f}% (threshold: 10%).")
     if slp is not None:
-        lines.append(f"Rasio diferensial/restraint (slope): {slp:.1f}% (ambang slope-1: 20%).")
+        lines.append(f"Rasio diferensial/restraint (slope): {slp:.1f}% (threshold slope-1: 20%).")
     if dc is not None:
-        lines.append(f"Indeks offset DC (bentuk gelombang): {dc:.3f} (ambang inrush: 0.35).")
+        lines.append(f"Indeks offset DC (bentuk gelombang): {dc:.3f} (threshold inrush: 0.35).")
     if tf.energisation_flag:
         lines.append("Terdeteksi kondisi energisasi: arus sisi LV ≈ 0 sebelum event.")
 
