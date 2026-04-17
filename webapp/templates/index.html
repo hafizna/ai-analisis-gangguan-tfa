@@ -7,30 +7,41 @@
 {% block extra_css %}
 .landing-shell { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 .landing-hero {
-    background: linear-gradient(135deg, #0f172a, #1e3a8a 55%, #0f172a);
-    color: #e2e8f0;
+    background: linear-gradient(135deg, #faf5ef 0%, #fde4c8 60%, #fdba74 100%);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-radius: 20px;
-    padding: 28px 30px;
+    padding: 32px 34px;
     display: grid;
     grid-template-columns: 1.1fr 0.9fr;
     gap: 18px;
 }
-.landing-hero h1 { font-size: 32px; line-height: 1.08; margin-bottom: 12px; }
-.landing-hero p { font-size: 14px; color: #cbd5e1; line-height: 1.8; }
-.hero-tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.landing-hero h1 {
+    font-family: var(--serif);
+    font-size: 36px;
+    line-height: 1.12;
+    margin-bottom: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+.landing-hero h1 em { font-style: italic; color: var(--accent-dark); font-weight: 500; }
+.landing-hero p { font-size: 14px; color: #57534e; line-height: 1.8; }
+.hero-tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .hero-tag {
     padding: 5px 10px; border-radius: 999px;
-    background: rgba(255,255,255,0.08); color: #e2e8f0;
+    background: rgba(249,115,22,0.12); color: var(--accent-dark);
     font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    border: 1px solid rgba(249,115,22,0.22);
 }
 .hero-side {
-    background: rgba(15,23,42,0.42);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.72);
+    border: 1px solid rgba(234,88,12,0.18);
     border-radius: 16px;
     padding: 18px;
+    backdrop-filter: blur(4px);
 }
-.hero-side h3 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: #93c5fd; margin-bottom: 10px; }
-.hero-side ul { margin-left: 18px; color: #cbd5e1; line-height: 1.8; font-size: 13px; }
+.hero-side h3 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-dark); margin-bottom: 10px; }
+.hero-side ul { margin-left: 18px; color: var(--text); line-height: 1.8; font-size: 13px; }
 .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .choice-card {
     background: var(--panel-bg);
@@ -39,7 +50,7 @@
     padding: 22px;
     display: flex; flex-direction: column; gap: 14px;
 }
-.choice-card.line { border-top: 4px solid #3b82f6; }
+.choice-card.line { border-top: 4px solid var(--accent); }
 .choice-card.xfmr { border-top: 4px solid #8b5cf6; }
 .choice-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted); }
 .choice-title { font-size: 22px; font-weight: 800; color: var(--text); }
@@ -69,7 +80,7 @@
 <div class="landing-shell">
     <section class="landing-hero">
         <div>
-            <h1>Analisis gangguan transmisi bertenaga AI — pilih jalurnya.</h1>
+            <h1>Analisis gangguan transmisi bertenaga AI — <em>pilih jalurnya.</em></h1>
             <p>
                 Klasifikasi penyebab gangguan pakai AI (aturan deterministik + ML) langsung dari
                 rekaman COMTRADE. Jaringan dan trafo punya alur berbeda, jadi pilih jalur yang tepat
