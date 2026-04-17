@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Mulai Analisis — TFA{% endblock %}
 {% block topbar_title %}Pilih Jalur Analisis{% endblock %}
-{% block topbar_sub %}Bedakan gangguan saluran dan gangguan trafo sejak awal{% endblock %}
+{% block topbar_sub %}Bedakan gangguan jaringan dan gangguan trafo sejak awal{% endblock %}
 {% block nav_upload %}active{% endblock %}
 
 {% block extra_css %}
@@ -71,7 +71,7 @@
         <div>
             <h1>Mulai dari domain gangguan yang benar, bukan dari satu upload box yang sama.</h1>
             <p>
-                Saluran transmisi dan transformator punya filosofi analisis yang berbeda.
+                Jaringan transmisi dan transformator punya filosofi analisis yang berbeda.
                 Pilih jalur yang sesuai supaya input, hasil, dan evidence yang diminta selaras dengan cara engineer membaca gangguan di lapangan.
             </p>
             <div class="hero-tag-row">
@@ -85,7 +85,7 @@
         <div class="hero-side">
             <h3>Prinsip Kerja</h3>
             <ul>
-                <li>Saluran: cepat ke pola arus-tegangan, AR, dan cause classification.</li>
+                <li>Jaringan: cepat ke pola arus-tegangan, AR, dan cause classification.</li>
                 <li>Trafo: mulai dari relay role, event meaning, lalu origin fault dan selectivity.</li>
                 <li>Jika evidence belum cukup, sistem seharusnya minta relay tambahan, bukan memaksa final cause.</li>
             </ul>
@@ -95,17 +95,17 @@
     <section class="choice-grid">
         <article class="choice-card line">
             <div class="choice-eyebrow">Jaringan Transmisi</div>
-            <div class="choice-title">Input Saluran</div>
+            <div class="choice-title">Input Jaringan</div>
             <div class="choice-copy">
-                Dipakai untuk rele jarak, DFR saluran, dan analisis cepat penyebab seperti petir, layang-layang, hewan, benda asing, pohon, atau konduktor/tower.
+                Dipakai untuk rele jarak, DFR jaringan, dan analisis cepat penyebab seperti petir, layang-layang, hewan, benda asing, pohon, atau konduktor/tower.
             </div>
             <div class="bullet-list">
                 <div class="bullet-item">Satu pasangan file `.cfg + .dat`</div>
-                <div class="bullet-item">Cocok untuk distance relay, DFR eksternal, atau screening cepat gangguan saluran</div>
+                <div class="bullet-item">Cocok untuk distance relay, DFR eksternal, atau screening cepat gangguan jaringan</div>
                 <div class="bullet-item">Hasil fokus ke transien/permanen dan cause ranking</div>
             </div>
             <div class="card-actions">
-                <a href="{{ url_for('line_upload') }}" class="btn btn-primary">Masuk ke Input Saluran</a>
+                <a href="{{ url_for('line_upload') }}" class="btn btn-primary">Masuk ke Input Jaringan</a>
                 <a href="{{ url_for('browse') }}" class="btn btn-outline">Pilih dari Raw Data</a>
             </div>
         </article>
@@ -130,7 +130,7 @@
 
     <section class="notes-grid">
         <div class="note-card">
-            <h4>Kapan Pilih Saluran</h4>
+            <h4>Kapan Pilih Jaringan</h4>
             <p>Jika fokus utamanya adalah penyebab gangguan penghantar, auto-reclose, waveform line current, dan klasifikasi petir/hewan/benda asing.</p>
         </div>
         <div class="note-card">

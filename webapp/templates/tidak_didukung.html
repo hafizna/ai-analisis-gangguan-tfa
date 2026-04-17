@@ -4,7 +4,7 @@
 {% block topbar_sub %}{{ filename }}{% endblock %}
 
 {% block extra_css %}
-.error-wrap { max-width: 580px; margin: 40px auto; }
+.error-wrap { max-width: 880px; margin: 40px auto; }
 .error-icon {
     width: 64px; height: 64px; border-radius: 50%;
     background: rgba(245,158,11,0.12);
@@ -84,6 +84,20 @@
         <div style="margin-top:10px; font-size:11px; color:var(--text-muted);">
             {{ soe | length }} event digital terdeteksi. Waktu relatif terhadap deteksi gangguan pertama.
         </div>
+    </div>
+    {% endif %}
+
+    {% if analysis and analysis.waveform_data %}
+    <div style="margin-top:24px;">
+        <div style="font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase;
+                    color:var(--text-muted); margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+            Rekaman COMTRADE — Tampilan Gelombang
+            <span style="flex:1; height:1px; background:var(--border); display:block;"></span>
+            <span style="font-size:10px; font-weight:400; color:var(--text-muted);">
+                Ditampilkan langsung dari file, tanpa model proteksi
+            </span>
+        </div>
+        {% include "_wave_viewer_inc.html" %}
     </div>
     {% endif %}
 </div>

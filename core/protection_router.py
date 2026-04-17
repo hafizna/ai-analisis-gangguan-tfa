@@ -168,17 +168,34 @@ def determine_protection(record) -> ProtectionEvent:
         primary_protection = ProtectionType.DIFFERENTIAL
         confidence = 0.9
 
-        # 87L line differential → not the transformer classifier
-        classifiable = False
-        skip_reason = "87L line differential trip - awaiting line differential analysis module"
+        # 87L line differential — route to waveform-based cause classifier.
+        # Zone info is unavailable but current waveform features (di/dt, i0/i1, THD,
+        # peak current, inception angle) are still valid discriminators.
+        # A separate 87L-specific logic module is not required for cause classification.
+        classifiable = True
+        skip_reason = None
+        warnings.append(
+            "Proteksi diferensial saluran (87L) terdeteksi — "
+            "gangguan berada di segmen terlindungi. "
+            "Klasifikasi penyebab dari gelombang arus; tidak ada data zona impedansi."
+        )
 
     elif ef_operated:
         primary_protection = ProtectionType.DIRECTIONAL_EF
         confidence = 0.8
 
-        # Directional EF → classifiable = False
-        classifiable = False
-        skip_reason = "67N directional earth fault only"
+        # 67N / DEF: sensitive directional earth fault.
+        # Fires for high-resistance ground faults (tree branch, kite string, foreign object
+        # touching one phase) — cause classification from zero-sequence waveform features
+        # is still meaningful.  Zone info absent; i0/i1 ratio is the primary discriminator.
+        classifiable = True
+        skip_reason = None
+        warnings.append(
+            "Rele arah gangguan tanah (67N / DEF) terdeteksi — "
+            "gangguan hubung tanah resistif tinggi; kemungkinan besar pohon, layang-layang, "
+            "atau benda asing yang menyentuh penghantar. "
+            "Klasifikasi dari pola gelombang zero-sequence; tidak ada data zona impedansi."
+        )
 
     elif oc_operated:
         primary_protection = ProtectionType.OVERCURRENT

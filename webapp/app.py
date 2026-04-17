@@ -1180,12 +1180,39 @@ def _render_not_supported(filename: str, error_msg: str, soe: list = None, cfg_p
         except Exception:
             soe = []
 
+    # Always try to build the waveform from the raw COMTRADE file.
+    # Like a physical DFR, the waveform display is relay-type agnostic —
+    # it just shows whatever analog/digital channels exist in the file.
+    waveform_data = {}
+    if cfg_path:
+        try:
+            from core.comtrade_parser import parse_comtrade as _pc
+            from core.fault_detector import detect_fault as _df
+            _rec = _pc(cfg_path)
+            inception_ms, duration_ms = 0.0, 0.0
+            if _rec:
+                _flt = _df(_rec)
+                if _flt:
+                    inception_ms = float(_flt.inception_time) * 1000.0
+                    duration_ms  = float(_flt.duration_ms or 0.0)
+            waveform_data = _build_waveform_payload(cfg_path, inception_ms, duration_ms)
+        except Exception:
+            waveform_data = {}
+
+    # Wrap in a minimal analysis dict so _wave_viewer_inc.html can be reused as-is
+    analysis_stub = {
+        "waveform_data": waveform_data,
+        "fault_inception_ms": 0,
+        "fault_duration_ms": 0,
+    }
+
     return render_template("tidak_didukung.html",
                            filename=filename,
                            reason_title=title,
                            reason_detail=detail,
                            tips=tips,
-                           soe=soe or [])
+                           soe=soe or [],
+                           analysis=analysis_stub)
 
 
 def _build_analysis_payload(result, original_filename: str, ts: str, cfg_path: str) -> dict:

@@ -142,9 +142,19 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
         vb = _get_channel(record, 'VB', 'voltage', active_line_tag)
         vc = _get_channel(record, 'VC', 'voltage', active_line_tag)
 
-        if not all([ia, ib, ic, va, vb, vc]):
-            logger.error("Missing required phase channels for distance feature extraction")
+        has_current = all([ia, ib, ic])
+        has_voltage = all([va, vb, vc])
+
+        if not has_current:
+            logger.error("Missing required current channels (IA/IB/IC) for feature extraction")
             return None
+
+        if not has_voltage:
+            logger.warning(
+                "Voltage channels not found — proceeding with current-only feature extraction. "
+                "Typical for OCR relay or DFR without VT wiring. "
+                "Voltage-based features (sag, impedance, inception angle) will be zero/None."
+            )
 
         # Calculate sampling rate
         sampling_rate = _get_sampling_rate(record)
@@ -154,23 +164,40 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
 
         system_freq = record.frequency if record.frequency else 50.0
 
-        # Calculate impedance features
-        r_x_ratio, z_mag, z_angle = _calculate_impedance(
-            va, vb, vc, ia, ib, ic, inception_idx, sampling_rate, system_freq, fault.faulted_phases
-        )
-
-        # Calculate voltage sag
-        voltage_sag_depth, voltage_sag_phase = _calculate_voltage_sag(
-            va, vb, vc, inception_idx, sampling_rate, system_freq
-        )
-        (
-            voltage_phase_ratio_spread,
-            healthy_phase_voltage_ratio,
-            v2_v1_ratio,
-            voltage_thd_max_percent,
-        ) = _calculate_voltage_profile_features(
-            va, vb, vc, inception_idx, sampling_rate, system_freq
-        )
+        # Calculate impedance features (requires voltage)
+        if has_voltage:
+            r_x_ratio, z_mag, z_angle = _calculate_impedance(
+                va, vb, vc, ia, ib, ic, inception_idx, sampling_rate, system_freq, fault.faulted_phases
+            )
+            voltage_sag_depth, voltage_sag_phase = _calculate_voltage_sag(
+                va, vb, vc, inception_idx, sampling_rate, system_freq
+            )
+            (
+                voltage_phase_ratio_spread,
+                healthy_phase_voltage_ratio,
+                v2_v1_ratio,
+                voltage_thd_max_percent,
+            ) = _calculate_voltage_profile_features(
+                va, vb, vc, inception_idx, sampling_rate, system_freq
+            )
+            inception_angle = _calculate_inception_angle(
+                va, vb, vc, inception_idx, sampling_rate, system_freq, fault.faulted_phases
+            )
+            voltage_kv = _estimate_voltage_level(va, vb, vc)
+            v_prefault, v_fault = _calculate_voltage_levels(
+                va, vb, vc, inception_idx, sampling_rate, system_freq, voltage_sag_phase
+            )
+        else:
+            r_x_ratio = z_mag = z_angle = None
+            voltage_sag_depth = 0.0
+            voltage_sag_phase = ""
+            voltage_phase_ratio_spread = 0.0
+            healthy_phase_voltage_ratio = 0.0
+            v2_v1_ratio = 0.0
+            voltage_thd_max_percent = 0.0
+            inception_angle = 0.0
+            voltage_kv = None
+            v_prefault = v_fault = None
 
         # Calculate dI/dt features
         di_dt_max, di_dt_phase = _calculate_di_dt(
@@ -195,21 +222,8 @@ def extract_distance_features(record, fault, protection) -> Optional[DistanceFea
             ia, ib, ic, inception_idx, sampling_rate, system_freq, fault.faulted_phases
         )
 
-        # Calculate inception angle
-        inception_angle = _calculate_inception_angle(
-            va, vb, vc, inception_idx, sampling_rate, system_freq, fault.faulted_phases
-        )
-
         # Determine fault type
         fault_type, is_ground_fault = _determine_fault_type(fault.faulted_phases, i0_i1_ratio)
-
-        # Get voltage level
-        voltage_kv = _estimate_voltage_level(va, vb, vc)
-
-        # Get absolute voltage levels (prefault vs fault)
-        v_prefault, v_fault = _calculate_voltage_levels(
-            va, vb, vc, inception_idx, sampling_rate, system_freq, voltage_sag_phase
-        )
 
         # Dead time should be interval from fault clearing to reclose, not absolute recording time.
         dead_time_ms = None
