@@ -1140,36 +1140,36 @@ def _render_not_supported(filename: str, error_msg: str, soe: list = None, cfg_p
     """Render a friendly notification page for unsupported file types."""
     msg = error_msg.lower()
     if "differential" in msg or "diferensial" in msg or "87l" in msg or "diff" in msg:
-        title  = "Gangguan dideteksi dengan Rele Diferensial Penghantar"
-        detail = ("Rekaman ini berasal dari rele diferensial (87L). "
-                  "Model AI saat ini hanya mendukung analisis rele jarak (distance relay / 21). "
-                  "Rele diferensial menggunakan arus diferensial sebagai besaran ukur, "
-                  "sehingga memerlukan pendekatan fitur yang berbeda.")
-        tips   = ["Proteksi diferensial umumnya digunakan pada penghantar transmisi jarak jauh",
-                  "Data rekaman ini tetap berharga — simpan untuk pengembangan model berikutnya",
-                  "Gunakan Pilih Rekaman untuk memilih file dari rele jarak"]
+        title  = "Rekaman dari rele diferensial penghantar"
+        detail = ("File ini berasal dari rele diferensial (87L). "
+                  "Pipeline jalur saat ini baru mendukung rele jarak (distance relay / 21). "
+                  "Rele diferensial memakai arus diferensial sebagai besaran ukur, "
+                  "jadi butuh pendekatan fitur yang berbeda.")
+        tips   = ["Proteksi diferensial umum dipakai di penghantar transmisi jarak jauh",
+                  "Rekaman tetap berharga — simpan untuk pengembangan model berikutnya",
+                  "Gunakan Pilih Rekaman untuk membuka file dari rele jarak"]
     elif "directional" in msg or "67n" in msg or "earth fault" in msg:
-        title  = "Gangguan dideteksi dengan Rele Arah Hubung Tanah"
-        detail = ("Rekaman ini berasal dari rele terarah hubung tanah (67N/EF). "
-                  "Model AI saat ini hanya mendukung rele jarak (distance relay / 21).")
-        tips   = ["Rele 67N digunakan untuk gangguan hubung tanah sensitif",
-                  "Analisis manual tetap dapat dilakukan dari tampilan osilografi"]
+        title  = "Rekaman dari rele arah hubung tanah"
+        detail = ("File ini berasal dari rele terarah hubung tanah (67N/EF). "
+                  "Pipeline jalur saat ini baru mendukung rele jarak (distance relay / 21).")
+        tips   = ["Rele 67N dipakai untuk gangguan hubung tanah sensitif",
+                  "Analisis manual tetap bisa dilakukan dari tampilan osilografi"]
     elif "no fault" in msg or "tidak" in msg.lower():
-        title  = "Gangguan tidak terdeteksi dalam rekaman"
-        detail = ("Pipeline tidak menemukan event gangguan yang jelas dalam file ini. "
-                  "Kemungkinan file adalah rekaman normal (bukan gangguan), "
-                  "atau sinyal terlalu kecil untuk dideteksi secara otomatis.")
-        tips   = ["Periksa apakah file .cfg dan .dat sudah benar (nama sama)",
-                  "Pastikan file adalah rekaman saat gangguan, bukan kondisi normal"]
+        title  = "Tidak ada gangguan terdeteksi"
+        detail = ("Pipeline tidak menemukan event gangguan yang jelas di file ini. "
+                  "Kemungkinan rekaman kondisi normal (bukan gangguan), "
+                  "atau sinyalnya terlalu kecil untuk dideteksi otomatis.")
+        tips   = ["Cek apakah pasangan .cfg dan .dat sudah benar (nama sama)",
+                  "Pastikan rekaman memang saat gangguan, bukan kondisi normal"]
     elif "parse" in msg or "load" in msg or "unpack" in msg:
-        title  = "File COMTRADE tidak dapat dibaca"
+        title  = "File COMTRADE tidak bisa dibaca"
         detail = ("Format file tidak dikenali atau file rusak. "
                   "Beberapa format COMTRADE lama atau file dari DFR internal "
-                  "tidak kompatibel dengan parser yang digunakan.")
-        tips   = ["Pastikan file .cfg dan .dat tidak terpisah atau rusak",
+                  "belum kompatibel dengan parser yang dipakai.")
+        tips   = ["Pastikan pasangan .cfg dan .dat lengkap dan tidak rusak",
                   "File dari CSC101M, DFR internal, atau format non-standar belum didukung"]
     else:
-        title  = "File tidak dapat dianalisis"
+        title  = "File belum bisa dianalisis"
         detail = f"Alasan: {error_msg}"
         tips   = ["Coba file dari rele jarak (distance relay) dengan format COMTRADE standar"]
 
@@ -2146,7 +2146,7 @@ def transformer_upload():
                 "transformer_upload.html",
                 relay_roles=TRANSFORMER_RELAY_ROLES,
                 analysis_goals=TRANSFORMER_ANALYSIS_GOALS,
-                form_error=f"Supporting relay #{idx} harus berisi pasangan .cfg dan .dat lengkap.",
+                form_error=f"Relay pendukung #{idx} harus berisi pasangan .cfg dan .dat lengkap.",
             ), 400
         support_cfg_path, _ = _save_uploaded_pair(support_cfg, support_dat, ts, prefix=f"support{idx}")
         supporting_relays.append({

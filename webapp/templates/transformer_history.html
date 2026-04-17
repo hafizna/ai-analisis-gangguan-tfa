@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Riwayat 87T — Proteksi Trafo{% endblock %}
-{% block topbar_title %}Riwayat Event Trafo (87T){% endblock %}
-{% block topbar_sub %}{{ total }} event &bull; {{ confirmed_count }} dikonfirmasi &bull; akurasi {{ accuracy }}%{% endblock %}
+{% block title %}Riwayat 87T — TFA{% endblock %}
+{% block topbar_title %}Riwayat Event Trafo 87T{% endblock %}
+{% block topbar_sub %}{{ total }} event &bull; {{ confirmed_count }} terkonfirmasi &bull; akurasi {{ accuracy }}%{% endblock %}
 {% block nav_xfmr_history %}active{% endblock %}
 
 {% block extra_css %}
@@ -36,14 +36,14 @@
 {% if rows %}
 <div style="background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; overflow:hidden;">
   <div style="padding:14px 20px; border-bottom:1px solid var(--border); font-size:13px; font-weight:700; color:var(--text);">
-    Event Trafo — Terbaru
+    Riwayat Event 87T
   </div>
   <div style="overflow-x:auto;">
     <table class="xh-table">
       <thead>
         <tr>
           <th>Waktu</th><th>File</th><th>Gardu</th><th>Relay</th>
-          <th>Event Class</th><th>Kepercayaan</th>
+          <th>Event Class</th><th>Keyakinan</th>
           <th>H2 Max%</th><th>H5 Max%</th><th>Slope%</th>
           <th>Aksi?</th><th>Konfirmasi</th><th>Benar?</th>
         </tr>
@@ -66,7 +66,7 @@
           <td>{{ r.h5_ratio_max_pct or '-' }}</td>
           <td>{{ r.slope_worst_pct or '-' }}</td>
           <td class="{% if r.action_required == 'True' %}action-yes{% endif %}">
-            {% if r.action_required == 'True' %}⚠ YA{% else %}—{% endif %}
+            {% if r.action_required == 'True' %}⚠ Ya{% else %}—{% endif %}
           </td>
           <td>{{ r.confirmed_label_display or '—' }}</td>
           <td class="{% if r.correct == 'True' %}correct-yes{% elif r.correct == 'False' %}correct-no{% endif %}">
@@ -82,7 +82,7 @@
 <div style="text-align:center; padding:60px 20px; color:var(--text-muted);">
   <div style="font-size:40px; margin-bottom:12px;">⬡</div>
   <div style="font-size:15px; font-weight:700; margin-bottom:6px;">Belum ada riwayat event trafo</div>
-  <div style="font-size:12px;">Upload file COMTRADE dari rele 87T untuk memulai Phase 2.</div>
+  <div style="font-size:12px;">Unggah file COMTRADE dari rele 87T untuk mulai mengisi riwayat.</div>
 </div>
 {% endif %}
 {% endblock %}

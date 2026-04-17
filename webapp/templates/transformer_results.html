@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if analysis.transformer_context_only %}Analisis Evidence Trafo — {{ analysis.station_name }}{% else %}Analisis Trafo 87T — {{ analysis.station_name }}{% endif %}{% endblock %}
-{% block topbar_title %}{% if analysis.transformer_context_only %}Analisis Evidence Trafo{% else %}Analisis Proteksi Trafo (87T){% endif %}{% endblock %}
+{% block topbar_title %}{% if analysis.transformer_context_only %}Analisis Evidence Trafo{% else %}Analisis Trafo 87T{% endif %}{% endblock %}
 {% block topbar_sub %}{{ analysis.station_name }} — {{ analysis.original_filename }}{% endblock %}
 {% block nav_upload %}{% endblock %}
 
@@ -290,7 +290,7 @@
 
       <div class="conf-bar-wrap">
         <div class="conf-bar-label">
-          <span>{% if is_transformer_context %}Kepercayaan analisis file primer{% else %}Tingkat keyakinan{% endif %}</span>
+          <span>Keyakinan</span>
           <span>{{ "%.0f"|format(analysis.confidence * 100) }}%</span>
         </div>
         <div class="conf-bar">
@@ -312,7 +312,7 @@
 
       {% if analysis.action_required %}
       <div class="action-banner">
-        ⚠ TINDAKAN DIPERLUKAN — Baca rekomendasi di bawah sebelum re-energisasi
+        ⚠ Perlu tindakan — baca rekomendasi di bawah sebelum re-energisasi
       </div>
       {% endif %}
 
@@ -324,7 +324,7 @@
         <div class="layer-row">
           <div class="layer-icon">🔍</div>
           <div class="layer-body">
-            <div class="layer-label">Event Class (relay lokal)</div>
+            <div class="layer-label">Event class (relay lokal)</div>
             <div class="layer-value
               {% if ec == 'INRUSH' %}ev-inrush
               {% elif ec == 'INTERNAL_FAULT' %}lv-internal
@@ -334,14 +334,14 @@
               {% else %}lv-unknown{% endif %}">
               {{ ec | replace('_',' ') }}
             </div>
-            <div class="layer-reason">Terlihat dari rekaman COMTRADE relay ini.</div>
+            <div class="layer-reason">Dibaca dari rekaman COMTRADE relay primer.</div>
           </div>
         </div>
 
         <div class="layer-row">
           <div class="layer-icon">📍</div>
           <div class="layer-body">
-            <div class="layer-label">Fault Origin (asal gangguan)</div>
+            <div class="layer-label">Asal gangguan</div>
             <div class="layer-value
               {% if fo == 'INTERNAL_TRAFO' %}lv-internal
               {% elif fo == 'EXTERNAL_DISTRIBUSI' %}lv-ext-dist
@@ -359,14 +359,14 @@
         <div class="layer-row">
           <div class="layer-icon">🛡</div>
           <div class="layer-body">
-            <div class="layer-label">Protection Assessment</div>
+            <div class="layer-label">Penilaian proteksi</div>
             <div class="layer-value
               {% if pa == 'BENAR' %}pa-benar
               {% elif pa == 'TIDAK_SELEKTIF' %}pa-tidak
               {% else %}pa-kurang{% endif %}">
-              {% if pa == 'BENAR' %}Proteksi Benar
-              {% elif pa == 'TIDAK_SELEKTIF' %}Tidak Selektif
-              {% else %}Evidence Belum Cukup{% endif %}
+              {% if pa == 'BENAR' %}Proteksi benar
+              {% elif pa == 'TIDAK_SELEKTIF' %}Tidak selektif
+              {% else %}Evidence belum cukup{% endif %}
             </div>
             {% if analysis.protection_assessment_reason %}
             <div class="layer-reason">{{ analysis.protection_assessment_reason }}</div>
@@ -403,7 +403,7 @@
 
     {% if analysis.supporting_relays %}
     <div class="x-card">
-      <div class="x-section-label">Supporting Relays</div>
+      <div class="x-section-label">Relay Pendukung</div>
       {% for item in analysis.supporting_relays %}
       <div style="padding:10px 0; {% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
         <div style="font-size:12px; font-weight:700; color:var(--text);">{{ item.role_label }}</div>
@@ -417,10 +417,10 @@
     <div class="x-card">
       <div class="x-section-label">Interpretasi File Primer</div>
       <div style="font-size:13px; color:var(--text); line-height:1.7;">
-        Hasil analisis file primer saat ini dibaca sebagai <strong>{{ analysis.transformer_primary_result_label }}</strong>
+        File primer terbaca sebagai <strong>{{ analysis.transformer_primary_result_label }}</strong>
         dengan keyakinan {{ "%.0f"|format((analysis.transformer_primary_confidence or 0) * 100) }}%.
-        Untuk event trafo, hasil ini dibaca sebagai evidence lokal dari relay {{ analysis.transformer_relay_role_label }},
-        bukan sebagai final cause transformer fault.
+        Untuk event trafo, ini dipakai sebagai evidence lokal dari relay {{ analysis.transformer_relay_role_label }} —
+        belum cukup untuk menyimpulkan penyebab gangguan trafo.
       </div>
     </div>
     {% endif %}
@@ -428,7 +428,7 @@
     <!-- Probability bars -->
     {% if analysis.cause_pcts and not is_transformer_context %}
     <div class="x-card">
-      <div class="x-section-label">Probabilitas Event Class</div>
+      <div class="x-section-label">Probabilitas Kelas Event</div>
       {% for item in analysis.cause_pcts %}
       <div class="prob-row">
         <div class="prob-name">{{ item.name }}</div>
@@ -492,10 +492,10 @@
     <div class="confirm-card">
       <div class="x-section-label">Langkah Berikutnya</div>
       <div style="font-size:12px; color:var(--text-muted); line-height:1.7;">
-        Jika tujuan Anda adalah menentukan origin fault atau review selektivitas, tambahkan relay pendukung seperti 87T, OCR HV, REF, atau SBEF.
+        Untuk menentukan asal gangguan atau review selektivitas, tambahkan relay pendukung (87T, OCR HV, REF, atau SBEF).
       </div>
       <a href="{{ url_for('transformer_upload') }}" class="btn btn-primary" style="width:100%;margin-top:12px;text-align:center;">Tambah Evidence Trafo</a>
-      <a href="{{ url_for('index') }}" class="btn btn-outline" style="width:100%;margin-top:8px;text-align:center;">Kembali ke Landing</a>
+      <a href="{{ url_for('index') }}" class="btn btn-outline" style="width:100%;margin-top:8px;text-align:center;">Kembali ke Beranda</a>
     </div>
     {% endif %}
 
@@ -552,17 +552,17 @@
       <div style="margin-top:14px; display:flex; flex-wrap:wrap; gap:6px;">
         {% if analysis.h2_ratio_max_pct and analysis.h2_ratio_max_pct >= 15 %}
         <span style="background:rgba(245,158,11,0.15);color:#f59e0b;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;">
-          H2 ≥ 15% → Indikasi Inrush
+          H2 ≥ 15% → indikasi inrush
         </span>
         {% endif %}
         {% if analysis.h5_ratio_max_pct and analysis.h5_ratio_max_pct >= 10 %}
         <span style="background:rgba(168,85,247,0.15);color:#a855f7;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;">
-          H5 ≥ 10% → Indikasi Overeksitasi
+          H5 ≥ 10% → indikasi overeksitasi
         </span>
         {% endif %}
         {% if (not analysis.h2_ratio_max_pct or analysis.h2_ratio_max_pct < 15) and analysis.above_slope1 %}
         <span style="background:rgba(239,68,68,0.15);color:#ef4444;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;">
-          H2 Rendah + Slope Tinggi → Indikasi Internal Fault
+          H2 rendah + slope tinggi → indikasi internal fault
         </span>
         {% endif %}
       </div>
@@ -605,13 +605,13 @@
           <label class="feat-label">DC Offset Index</label>
           <span class="feat-val">{% if analysis.dc_offset_index_max is not none %}{{ "%.3f"|format(analysis.dc_offset_index_max) }}{% else %}—{% endif %}</span>
           {% if analysis.dc_offset_index_max and analysis.dc_offset_index_max >= 0.35 %}
-          <span class="feat-flag flag-warn">Asimetri Tinggi (Inrush)</span>
+          <span class="feat-flag flag-warn">Asimetri tinggi (inrush)</span>
           {% endif %}
         </div>
 
         <div class="feat-box">
           <label class="feat-label">Energisasi</label>
-          <span class="feat-val" style="font-size:14px;">{% if analysis.energisation_flag %}YA{% else %}TIDAK{% endif %}</span>
+          <span class="feat-val" style="font-size:14px;">{% if analysis.energisation_flag %}Ya{% else %}Tidak{% endif %}</span>
           {% if analysis.energisation_flag %}
           <span class="feat-flag flag-warn">LV pre-fault ≈ 0</span>
           {% endif %}
@@ -675,7 +675,7 @@
     <!-- Multi-relay evidence table (COORDINATED mode only) -->
     {% if analysis.is_coordinated and analysis.fusion_summary %}
     <div class="x-card">
-      <div class="x-section-label">Evidence Per Relay (Coordinated)</div>
+      <div class="x-section-label">Evidence per Relay (Coordinated)</div>
 
       {% if analysis.fusion_conflicts %}
       {% for conflict in analysis.fusion_conflicts %}
@@ -709,10 +709,10 @@
         <thead>
           <tr>
             <th>Relay</th>
-            <th>Event Class</th>
-            <th>Fault Origin</th>
+            <th>Event class</th>
+            <th>Asal gangguan</th>
             <th>Proteksi</th>
-            <th style="text-align:right;">Conf.</th>
+            <th style="text-align:right;">Keyakinan</th>
           </tr>
         </thead>
         <tbody>
@@ -742,7 +742,7 @@
       </table>
 
       <div style="margin-top:10px;font-size:11px;color:#475569;line-height:1.6;">
-        Origin dan assessment di atas di-<em>fuse</em> berdasarkan bobot otoritas relay.
+        Asal gangguan dan penilaian di atas difusi berdasar bobot otoritas relay.
         Hasil akhir ditampilkan di panel kiri.
       </div>
     </div>
@@ -750,7 +750,7 @@
 
     <!-- Conclusion + Reasoning (README: Arah Berikutnya #3) -->
     <div class="x-card">
-      <div class="x-section-label">Kesimpulan &amp; Alasan</div>
+      <div class="x-section-label">Kesimpulan &amp; Alasannya</div>
 
       {% set ec = analysis.event_class or 'UNKNOWN' %}
       {% set fo = analysis.fault_origin or 'UNKNOWN' %}
@@ -759,36 +759,36 @@
       <div class="reasoning-block">
 
         <div class="reasoning-row">
-          <div class="reasoning-head">Yang terlihat dari rekaman ini</div>
+          <div class="reasoning-head">Yang terbaca dari rekaman</div>
           <div class="reasoning-text">
             {% if analysis.evidence %}
               {{ analysis.evidence }}
             {% elif analysis.description %}
               {{ analysis.description | truncate(300) }}
             {% else %}
-              Tidak ada detail evidence tersedia.
+              Detail evidence tidak tersedia.
             {% endif %}
           </div>
         </div>
 
         <div class="reasoning-row">
-          <div class="reasoning-head">Yang belum terlihat / asumsi yang dipakai</div>
+          <div class="reasoning-head">Yang belum terbaca / asumsi yang dipakai</div>
           <div class="reasoning-text">
             {% if ec == 'INRUSH' %}
-              Tidak ada konfirmasi dari relay sisi lain. Diasumsikan energisasi normal karena H2 tinggi dan DC offset kuat. Rekaman satu sisi tidak dapat mengonfirmasi apakah ada gangguan di jaringan lain pada saat bersamaan.
+              Belum ada konfirmasi dari relay sisi lain. Diasumsikan energisasi normal karena H2 tinggi dan DC offset kuat. Rekaman satu sisi belum bisa memastikan ada-tidaknya gangguan lain pada saat bersamaan.
             {% elif ec == 'INTERNAL_FAULT' %}
-              Diasumsikan fault benar-benar internal — belum dikonfirmasi dengan DGA atau inspeksi fisik. Tidak ada rekaman relay sisi LV atau OCR HV untuk koordinasi.
+              Fault diasumsikan benar-benar internal — belum dikonfirmasi dengan DGA atau inspeksi fisik. Rekaman OCR HV atau relay sisi LV belum ada untuk koordinasi.
             {% elif ec == 'THROUGH_FAULT' %}
-              Origin exact (distribusi atau transmisi) belum dapat ditentukan dari rekaman 87T saja. Relay feeder atau OCR LV diperlukan untuk konfirmasi arah gangguan.
+              Asal pasti (distribusi atau transmisi) belum bisa ditentukan dari rekaman 87T saja. Butuh relay feeder atau OCR LV untuk mengonfirmasi arah gangguan.
             {% elif ec == 'OVEREXCITATION' %}
-              Penyebab V/Hz (AVR, tap changer, atau sistem luar) belum dapat dikonfirmasi dari rekaman lokal saja.
+              Penyebab V/Hz (AVR, tap changer, atau sistem luar) belum bisa dikonfirmasi hanya dari rekaman lokal.
             {% elif ec == 'MAL_OPERATE' %}
-              Penyebab saturasi CT belum dikonfirmasi — perlu rekaman arus HV/LV detail dan data rasio CT aktual.
+              Penyebab saturasi CT belum terkonfirmasi — butuh rekaman arus HV/LV detail dan rasio CT aktual.
             {% else %}
-              Evidence tidak mencukupi untuk menentukan apakah ada gangguan, dan di mana lokasinya. Data harmonic atau differential tidak tersedia atau lemah.
+              Evidence belum cukup untuk memastikan ada-tidaknya gangguan dan lokasinya. Data harmonik atau diferensial tidak tersedia atau lemah.
             {% endif %}
             {% if analysis.limited_data %}
-              <span style="color:#f59e0b;"> ⚠ Beberapa channel tidak tersedia dalam file ini.</span>
+              <span style="color:#f59e0b;"> ⚠ Beberapa channel tidak tersedia di file ini.</span>
             {% endif %}
           </div>
         </div>
@@ -799,13 +799,13 @@
             {% if analysis.transformer_next_files %}
               Rekaman dari: {{ analysis.transformer_next_files | join(', ') }}.
             {% elif ec == 'INTERNAL_FAULT' %}
-              DGA, turns-ratio test, IR test, rekaman OCR HV.
+              DGA, turns-ratio test, IR test, dan rekaman OCR HV.
             {% elif ec == 'THROUGH_FAULT' %}
-              Rekaman relay feeder / OCR LV / incomer, status PMT sisi distribusi.
+              Rekaman relay feeder / OCR LV / incomer dan status PMT sisi distribusi.
             {% elif ec == 'MAL_OPERATE' %}
-              Rekaman OCR HV, rasio CT aktual, setting slope 87T, arus gangguan maksimum sistem.
+              Rekaman OCR HV, rasio CT aktual, setting slope 87T, dan arus gangguan maksimum sistem.
             {% else %}
-              Rekaman relay 87T, REF, GFR HV, OCR HV, OCR LV.
+              Rekaman relay 87T, REF, GFR HV, OCR HV, dan OCR LV.
             {% endif %}
           </div>
         </div>
@@ -824,11 +824,11 @@
     <!-- Evidence / rule detail -->
     {% if analysis.evidence %}
     <div class="x-card">
-      <div class="x-section-label">Bukti Klasifikasi ({{ analysis.rule_name }})</div>
+      <div class="x-section-label">Bukti klasifikasi ({{ analysis.rule_name }})</div>
       <div style="font-size:12px; color:var(--text-muted); line-height:1.7;">{{ analysis.evidence }}</div>
       {% if analysis.limited_data %}
       <div style="margin-top:8px; padding:8px 12px; background:rgba(245,158,11,0.08); border-radius:6px; font-size:11px; color:#f59e0b;">
-        ⚠ Data terbatas: beberapa channel tidak tersedia. Tingkat keyakinan mungkin lebih rendah dari seharusnya.
+        ⚠ Data terbatas — beberapa channel tidak tersedia, jadi keyakinan bisa lebih rendah dari seharusnya.
       </div>
       {% endif %}
     </div>
@@ -857,7 +857,7 @@
           </tr>
           {% endfor %}
           {% if analysis.soe | length > 20 %}
-          <tr><td colspan="3" style="color:#475569; font-size:11px;">… {{ analysis.soe | length - 20 }} event lainnya</td></tr>
+          <tr><td colspan="3" style="color:#475569; font-size:11px;">… dan {{ analysis.soe | length - 20 }} event lainnya</td></tr>
           {% endif %}
         </tbody>
       </table>
@@ -885,11 +885,11 @@
     <div class="wave-head">
         <div>
             <div class="wave-title">COMTRADE Explorer — Trafo</div>
-            <div class="wave-sub">Arus HV, arus LV, serta arus diferensial dan bias ditampilkan terpisah agar fase IA, IB, dan IC lebih jelas.</div>
+            <div class="wave-sub">Arus HV, LV, serta diferensial dan bias ditampilkan terpisah biar fasa IA, IB, IC terlihat jelas.</div>
         </div>
         <div class="wave-actions">
             <button class="btn btn-outline" id="waveResetBtn" type="button">Reset Zoom</button>
-            <button class="btn btn-primary" id="waveFocusBtn" type="button">Fokus Fault</button>
+            <button class="btn btn-primary" id="waveFocusBtn" type="button">Fokus Gangguan</button>
             <button class="btn btn-outline" id="waveExportPngBtn" type="button">⬇ PNG</button>
             <button class="btn btn-outline" id="waveExportCsvBtn" type="button">⬇ CSV</button>
             <button class="btn btn-outline" id="wavePrintBtn" type="button">🖨 Print/PDF</button>
@@ -926,8 +926,8 @@
         </div>
     </div>
     <div class="wave-measure">
-        <span>Measure:</span>
-        <button class="btn btn-outline" id="measureCurrentBtn">Current</button>
+        <span>Ukur:</span>
+        <button class="btn btn-outline" id="measureCurrentBtn">Arus</button>
         <span>Cursor aktif:</span>
         <div class="cursor-toggle" role="group" aria-label="Pilih cursor aktif">
             <button type="button" class="btn btn-outline" id="cursor1Btn">Cursor 1</button>
@@ -938,7 +938,7 @@
         <span>Δt: <strong id="cursorDeltaT">-</strong></span>
         <span id="cursorDeltaYLabel">ΔI:</span> <strong id="cursorDeltaY">-</strong>
         <button class="btn btn-outline" id="cursorResetBtn">Reset Cursor</button>
-        <button class="btn btn-outline" id="peakFindBtn">Peak Finder</button>
+        <button class="btn btn-outline" id="peakFindBtn">Cari Puncak</button>
         <span id="peakResult"></span>
     </div>
     <div class="wave-hint" id="waveHint"></div>
@@ -949,11 +949,11 @@
         <div>
             <div class="x-section-label" style="margin:0;">Fallback Waveform</div>
             <div id="waveFallbackReason" style="font-size:11px; color:var(--text-muted); margin-top:4px;">
-                Viewer interaktif tidak tersedia. Menampilkan waveform statis sebagai fallback.
+                Viewer interaktif tidak tersedia — menampilkan waveform statis sebagai fallback.
             </div>
         </div>
         <div style="font-size:11px; color:var(--text-muted);">
-            Gambar ini setara dengan output PNG/PDF server-side.
+            Gambar ini setara dengan output PNG/PDF dari server.
         </div>
     </div>
     <img src="data:image/png;base64,{{ analysis.waveform_b64 }}"
@@ -965,7 +965,7 @@
     <div style="padding:12px 20px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
         <div class="x-section-label" style="margin:0;">Waveform COMTRADE</div>
         <div style="font-size:11px; color:var(--text-muted);">
-            Viewer interaktif tidak tersedia. Menampilkan waveform statis dari server.
+            Viewer interaktif tidak tersedia — menampilkan waveform statis dari server.
         </div>
     </div>
     <img src="data:image/png;base64,{{ analysis.waveform_b64 }}"

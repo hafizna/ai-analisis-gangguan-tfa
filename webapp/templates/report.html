@@ -138,7 +138,7 @@
 <div class="rpt-header">
     <div>
         <div class="rpt-logo">⚡ <span>TFA</span></div>
-        <div style="font-size:10px; color:#64748b; margin-top:2px;">Fault Analyzer — Klasifikasi Penyebab Gangguan Berbasis AI</div>
+        <div style="font-size:10px; color:#64748b; margin-top:2px;">Fault Analyzer — Klasifikasi Penyebab Gangguan Transmisi</div>
     </div>
     <div>
         <div class="rpt-title">LAPORAN ANALISIS GANGGUAN</div>
@@ -157,8 +157,8 @@
     <div class="pred-right">
         <div class="pred-conf">{{ (analysis.confidence * 100) | int }}%</div>
         <div class="pred-tier">
-            {% if analysis.tier == 1 %}Layer 0/1 — Aturan Deterministik
-            {% elif analysis.tier == 2 %}Layer 2 — Classifier ML
+            {% if analysis.tier == 1 %}Tier 1 — Aturan Deterministik
+            {% elif analysis.tier == 2 %}Tier 2 — Classifier ML
             {% else %}Tanpa Model{% endif %}
         </div>
     </div>
@@ -187,8 +187,8 @@
     <div class="info-row"><span class="info-key">Sistem Tegangan</span><span class="info-val">{{ analysis.voltage_kv }} kV</span></div>
     <div class="info-row"><span class="info-key">Auto Reclose</span>
         <span class="info-val">
-            {% if analysis.reclose_successful == 'True' %}BERHASIL
-            {% elif analysis.reclose_successful == 'False' %}GAGAL
+            {% if analysis.reclose_successful == 'True' %}Sukses
+            {% elif analysis.reclose_successful == 'False' %}Gagal
             {% else %}Tidak teridentifikasi{% endif %}
         </span>
     </div>
@@ -196,7 +196,7 @@
 </div>
 
 <!-- Electrical parameters -->
-<div class="sec-label">Parameter Elektrik</div>
+<div class="sec-label">Parameter Listrik</div>
 <div class="param-grid">
     <div class="param-box">
         <div class="p-lbl">I Puncak</div>
@@ -256,7 +256,7 @@
 
 <!-- Description -->
 {% if analysis.description %}
-<div class="sec-label">Deskripsi Analisa</div>
+<div class="sec-label">Penjelasan Hasil</div>
 <div class="desc-box">
     {% for line in analysis.description.split('\n') %}
     <div class="desc-line">{{ line }}</div>
@@ -310,7 +310,7 @@
 
 <!-- Footer -->
 <div class="rpt-footer">
-    <span>TFA — Fault Analyzer v2.0 | Klasifikasi Penyebab Gangguan Berbasis AI</span>
+    <span>TFA — Fault Analyzer v2.0 | Klasifikasi Penyebab Gangguan Transmisi</span>
     <span>{{ analysis.original_filename }} | {{ analysis.timestamp }}</span>
 </div>
 

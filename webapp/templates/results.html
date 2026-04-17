@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Hasil Analisis Gangguan{% endblock %}
+{% block title %}Hasil Analisis — TFA{% endblock %}
 {% block topbar_title %}Hasil Analisis Gangguan{% endblock %}
 {% block topbar_sub %}{{ analysis.station_name }} — {{ analysis.original_filename }}{% endblock %}
 {% block nav_upload %}{% endblock %}
@@ -476,8 +476,8 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 {% if not analysis.scaling_ok %}
 <div class="warn-banner">
     ⚠️ <strong>Perhatian:</strong>
-    Arus puncak terdeteksi sangat kecil ({{ "%.1f"|format(analysis.peak_fault_current_a) }} A) —
-    kemungkinan nilai sisi sekunder CT. Gunakan koreksi CT/PT di bawah untuk menyesuaikan.
+    Arus puncak terbaca sangat kecil ({{ "%.1f"|format(analysis.peak_fault_current_a) }} A) —
+    kemungkinan nilai sisi sekunder CT. Sesuaikan rasio CT/VT di bawah.
 </div>
 {% endif %}
 
@@ -486,18 +486,18 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 
     <!-- Prediction card (dark) -->
     <div class="r-card-dark">
-        <div class="pred-eyebrow">Analisa AI — Penyebab Gangguan</div>
+        <div class="pred-eyebrow">Estimasi Penyebab Gangguan</div>
         <div class="pred-label">{{ analysis.label }}</div>
-        <div class="pred-sub">Hasil klasifikasi otomatis</div>
+        <div class="pred-sub">Hasil klasifikasi otomatis dari rekaman COMTRADE</div>
 
         {% set conf_pct = (analysis.confidence * 100) | int %}
         <div class="conf-bar-wrap">
             <div class="conf-bar-label">
                 <span>Keyakinan</span>
                 <span>{{ conf_pct }}%
-                    {% if conf_pct >= 75 %}<span style="color:#10b981; font-size:10px;">— TINGGI</span>
-                    {% elif conf_pct >= 50 %}<span style="color:#f59e0b; font-size:10px;">— SEDANG</span>
-                    {% else %}<span style="color:#ef4444; font-size:10px;">— RENDAH</span>{% endif %}
+                    {% if conf_pct >= 75 %}<span style="color:#10b981; font-size:10px;">— tinggi</span>
+                    {% elif conf_pct >= 50 %}<span style="color:#f59e0b; font-size:10px;">— sedang</span>
+                    {% else %}<span style="color:#ef4444; font-size:10px;">— rendah</span>{% endif %}
                 </span>
             </div>
             <div class="conf-bar">
@@ -509,9 +509,9 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         </div>
 
         {% if analysis.tier == 1 %}
-            <div class="tier-badge tier-1">Layer 0/1 — Aturan Deterministik</div>
+            <div class="tier-badge tier-1">Tier 1 — Aturan Deterministik</div>
         {% elif analysis.tier == 2 %}
-            <div class="tier-badge tier-2">Layer 2 — Classifier ML</div>
+            <div class="tier-badge tier-2">Tier 2 — Classifier ML</div>
         {% else %}
             <div class="tier-badge tier-0">Tanpa Model</div>
         {% endif %}
@@ -520,11 +520,11 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 
     {% if analysis.baseline_label %}
     <div class="r-card">
-        <div class="r-section-label">Analisa Awal (Sebelum Koreksi Rasio)</div>
+        <div class="r-section-label">Analisis Awal (Sebelum Koreksi Rasio)</div>
         <div style="font-size:13px; color:var(--text); line-height:1.7;">
             <div><strong>Label:</strong> {{ analysis.baseline_label }}</div>
             <div><strong>Keyakinan:</strong> {{ "%.0f"|format((analysis.baseline_confidence or 0) * 100) }}%</div>
-            <div><strong>Layer:</strong> {{ analysis.baseline_tier }}</div>
+            <div><strong>Tier:</strong> {{ analysis.baseline_tier }}</div>
             <div><strong>Rule/Model:</strong> {{ analysis.baseline_rule_name }}</div>
         </div>
     </div>
@@ -536,7 +536,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         {% if analysis.tier == 2 and analysis.rule_name in ['multiclass_random_forest', 'multiclass_lightgbm'] %}
         <div class="r-section-label">Probabilitas Penyebab (Model ML)</div>
         {% else %}
-        <div class="r-section-label">Estimasi Penyebab (Heuristik)</div>
+        <div class="r-section-label">Estimasi Penyebab (Aturan)</div>
         {% endif %}
         {% for c in analysis.cause_pcts %}
         {% set pct = c.pct | float %}
@@ -557,28 +557,28 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         <div class="r-section-label">Jenis Gangguan</div>
         {% set ft = analysis.fault_type | upper %}
         {% if ft == 'SLG' %}
-            <span class="fault-type-badge ft-slg">SLG ke Tanah</span>
+            <span class="fault-type-badge ft-slg">SLG</span>
             <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
-                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong> — Gangguan 1 fasa ke tanah
+                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong> — gangguan 1 fasa ke tanah
             </div>
         {% elif ft == 'DLG' %}
-            <span class="fault-type-badge ft-dlg">DLG ke Tanah</span>
+            <span class="fault-type-badge ft-dlg">DLG</span>
             <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
-                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong> — Gangguan 2 fasa ke tanah
+                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong> — gangguan 2 fasa ke tanah
             </div>
         {% elif ft == '3PH' %}
             <span class="fault-type-badge ft-3ph">3PH</span>
             <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">Gangguan 3 fasa</div>
         {% elif ft == 'LL' %}
-            <span class="fault-type-badge ft-ll">Line-Line</span>
+            <span class="fault-type-badge ft-ll">LL</span>
             <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
-                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong>
+                Fasa: <strong style="color:var(--text);">{{ analysis.faulted_phases }}</strong> — fasa-ke-fasa
             </div>
         {% else %}
             <span class="fault-type-badge ft-unk">{{ analysis.faulted_phases if analysis.faulted_phases != '-' else 'N/A' }}</span>
         {% endif %}
         <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">
-            Trip: {{ analysis.trip_type }} — Zona: {{ analysis.zone_operated }}
+            Trip: {{ analysis.trip_type }} &bull; Zona: {{ analysis.zone_operated }}
         </div>
 
         <div class="duration-grid" style="margin-top:14px;">
@@ -592,16 +592,16 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <div class="dur-val">{{ "%.0f"|format(analysis.fault_duration_ms) }}</div>
                 <div class="dur-unit">ms
                     {% if analysis.reclose_successful == true or analysis.reclose_successful == 'True' %}
-                    <br><span class="dur-badge dur-transien">TRANSIEN</span>
+                    <br><span class="dur-badge dur-transien">Transien</span>
                     {% elif analysis.reclose_successful == false or analysis.reclose_successful == 'False' %}
-                    <br><span class="dur-badge dur-permanen">PERMANEN</span>
+                    <br><span class="dur-badge dur-permanen">Permanen</span>
                     {% elif 'KONDUKTOR' in analysis.label | upper or 'PERMANEN' in analysis.label | upper %}
-                    <br><span class="dur-badge dur-permanen">PERMANEN</span>
+                    <br><span class="dur-badge dur-permanen">Permanen</span>
                     {% endif %}
                 </div>
             </div>
             <div class="dur-box">
-                <label>Total Rec</label>
+                <label>Total Rekaman</label>
                 <div class="dur-val">{{ "%.0f"|format(analysis.record_duration_ms) }}</div>
                 <div class="dur-unit">ms</div>
             </div>
@@ -617,13 +617,13 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     <!-- CT/VT correction bar -->
     <div class="ctpt-bar">
         <span class="ctpt-title">
-            Koreksi Rasio CT/VT
+            Koreksi Rasio CT / VT
             {% if analysis.ct_ratio_known and analysis.vt_ratio_known %}
-            <span class="ratio-badge ratio-verified">DARI FILE</span>
+            <span class="ratio-badge ratio-verified">Dari file</span>
             {% elif analysis.ct_ratio_source == 'meta_primary' and analysis.vt_ratio_source == 'meta_primary' %}
-            <span class="ratio-badge ratio-verified">PRIMARY DARI COMTRADE</span>
+            <span class="ratio-badge ratio-verified">Primary COMTRADE</span>
             {% else %}
-            <span class="ratio-badge ratio-estimated">META CFG</span>
+            <span class="ratio-badge ratio-estimated">Meta CFG</span>
             {% endif %}
         </span>
         <div class="ctpt-group">
@@ -642,7 +642,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <input type="number" id="vtSecondary" class="ctpt-input" value="{{ '' if analysis.vt_secondary is none else analysis.vt_secondary }}" data-current="{{ '' if analysis.vt_secondary is none else analysis.vt_secondary }}" data-default="{{ '' if analysis.vt_secondary_default is none else analysis.vt_secondary_default }}" min="0.001" step="any" placeholder="S">
             </div>
         </div>
-        <button id="reanalyzeBtn" class="btn btn-primary" style="padding:5px 14px; font-size:12px;" onclick="confirmRatiosAndReanalyze()" disabled>Terapkan Koreksi</button>
+        <button id="reanalyzeBtn" class="btn btn-primary" style="padding:5px 14px; font-size:12px;" onclick="confirmRatiosAndReanalyze()" disabled>Terapkan &amp; Analisis Ulang</button>
         <button class="btn btn-outline" style="padding:5px 14px; font-size:12px;" onclick="resetRatios()">Reset</button>
         <span class="ctpt-status" id="ctptStatus"
               data-ct-known="{{ 'true' if analysis.ct_ratio_known else 'false' }}"
@@ -658,7 +658,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 
     <!-- Electrical parameters top row -->
     <div class="r-card">
-        <div class="r-section-label">Parameter Elektrik Gangguan</div>
+        <div class="r-section-label">Parameter Listrik Gangguan</div>
         <div class="param-grid-2">
             <div class="param-box">
                 <label>I Puncak — Fasa {{ analysis.peak_fault_phase }}</label>
@@ -757,8 +757,8 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             <div class="imp-box">
                 <label>AR</label>
                 <span class="imp-val" style="font-size:13px;">
-                    {% if analysis.reclose_successful == 'True' %}<span style="color:#10b981;">BERHASIL</span>
-                    {% elif analysis.reclose_successful == 'False' %}<span style="color:#ef4444;">GAGAL</span>
+                    {% if analysis.reclose_successful == 'True' %}<span style="color:#10b981;">Sukses</span>
+                    {% elif analysis.reclose_successful == 'False' %}<span style="color:#ef4444;">Gagal</span>
                     {% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </span>
                 {% if analysis.reclose_time_ms > 0 %}<div style="font-size:10px; color:var(--text-muted);">Dead time: {{ "%.0f"|format(analysis.reclose_time_ms) }} ms</div>{% endif %}
@@ -771,7 +771,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     <!-- Description -->
     {% if analysis.description %}
     <div class="desc-panel">
-        <div class="r-section-label">Deskripsi Analisa</div>
+        <div class="r-section-label">Penjelasan Hasil</div>
         {% for line in analysis.description.split('\n') %}
         <div class="desc-line" style="font-size:13px; color:var(--text); line-height:1.7; margin-bottom:5px;">{{ line }}</div>
         {% endfor %}
@@ -794,14 +794,14 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     <div class="wave-head">
         <div>
             <div class="wave-title">COMTRADE Explorer</div>
-            <div class="wave-sub">Geser, zoom, dan isolasi kanal untuk menelusuri puncak serta lembah sinyal.</div>
+            <div class="wave-sub">Pan, zoom, dan isolasi kanal untuk menelusuri puncak/lembah sinyal.</div>
         </div>
         <div class="wave-actions">
             <button class="btn btn-outline" id="waveResetBtn" type="button">Reset Zoom</button>
             <button class="btn btn-primary" id="waveFocusBtn" type="button">Fokus Fault</button>
             <button class="btn btn-outline" id="waveExportPngBtn" type="button">⬇ PNG</button>
             <button class="btn btn-outline" id="waveExportCsvBtn" type="button">⬇ CSV</button>
-            <button class="btn btn-outline" id="wavePrintBtn" type="button">🖨 Print/PDF</button>
+            <button class="btn btn-outline" id="wavePrintBtn" type="button">🖨 Cetak / PDF</button>
         </div>
     </div>
     <div class="wave-toolbar">
@@ -829,20 +829,20 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <div id="waveCurrentLvPlot" class="wave-plot wave-plot-small"></div>
             </div>
             <div class="wave-subplot" id="waveCurrentDiffWrap">
-                <div class="wave-subplot-title">Arus Diferensial & Bias</div>
+                <div class="wave-subplot-title">Arus Diferensial &amp; Bias</div>
                 <div id="waveCurrentDiffPlot" class="wave-plot wave-plot-small"></div>
             </div>
             <div class="wave-subplot" id="waveDigitalWrap">
-                <div class="wave-subplot-title">Digital</div>
+                <div class="wave-subplot-title">Sinyal Digital</div>
                 <div id="waveDigitalPlot" class="wave-plot wave-plot-digital"></div>
             </div>
         </div>
     </div>
     <div class="wave-measure">
-        <span>Measure:</span>
-        <button class="btn btn-outline" id="measureCurrentBtn">Current</button>
-        <button class="btn btn-outline" id="measureVoltageBtn">Voltage</button>
-        <span>Cursor aktif:</span>
+        <span>Ukur:</span>
+        <button class="btn btn-outline" id="measureCurrentBtn">Arus</button>
+        <button class="btn btn-outline" id="measureVoltageBtn">Tegangan</button>
+        <span>Cursor:</span>
         <div class="cursor-toggle" role="group" aria-label="Pilih cursor aktif">
             <button type="button" class="btn btn-outline" id="cursor1Btn">Cursor 1</button>
             <button type="button" class="btn btn-outline" id="cursor2Btn">Cursor 2</button>
@@ -852,7 +852,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         <span>Δt: <strong id="cursorDeltaT">-</strong></span>
         <span id="cursorDeltaYLabel">ΔI:</span> <strong id="cursorDeltaY">-</strong>
         <button class="btn btn-outline" id="cursorResetBtn">Reset Cursor</button>
-        <button class="btn btn-outline" id="peakFindBtn">Peak Finder</button>
+        <button class="btn btn-outline" id="peakFindBtn">Cari Puncak</button>
         <span id="peakResult"></span>
     </div>
     <div class="wave-hint" id="waveHint"></div>
@@ -907,11 +907,11 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 <!-- ══ CONFIRM (full width) ════════════════════════════════════ -->
 <div class="confirm-panel">
     <h3>Konfirmasi Penyebab</h3>
-    <p>Pilih penyebab aktual untuk menyimpan ke riwayat dan meningkatkan akurasi model.</p>
+    <p>Pilih penyebab sebenarnya dari hasil inspeksi lapangan. Data ini dipakai untuk retraining model.</p>
     <form action="{{ url_for('confirm_prediction') }}" method="POST" data-loading-msg="Menyimpan konfirmasi...">
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
             <div class="form-group">
-                <label for="fault_cause">Penyebab aktual</label>
+                <label for="fault_cause">Penyebab sebenarnya</label>
                 <select id="fault_cause" name="fault_cause" class="form-control" required>
                     {% for cat in fault_categories %}
                         <option value="{{ cat }}"
@@ -924,7 +924,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             <div class="form-group">
                 <label for="notes">Catatan lapangan (opsional)</label>
                 <textarea id="notes" name="notes" class="form-control"
-                    placeholder="Catatan observasi atau data pendukung..."></textarea>
+                    placeholder="Hasil patrol, observasi, atau data pendukung lain..."></textarea>
             </div>
         </div>
         <div class="btn-row">
@@ -1034,7 +1034,7 @@ function confirmRatiosAndReanalyze() {
         vtP = _readStatusRatio('baseVtPrimary') ?? 1;
         vtS = _readStatusRatio('baseVtSecondary') ?? 1;
     } else if (!_allRatioFieldsComplete(values)) {
-        window.alert('Isi lengkap rasio CT dan VT aktual, atau kosongkan semuanya untuk kembali ke bacaan asli file/meta.');
+        window.alert('Isi semua rasio CT dan VT, atau kosongkan semua untuk pakai rasio asli dari file.');
         return;
     }
 
@@ -1057,7 +1057,7 @@ function confirmRatiosAndReanalyze() {
         form.appendChild(input);
     }
     document.body.appendChild(form);
-    showLoading('Menghitung ulang dengan rasio baru...');
+    showLoading('Menghitung ulang dengan rasio CT/VT baru...');
     form.submit();
 }
 
@@ -1100,26 +1100,26 @@ function _setCtptStatus(values) {
 
     if (!changed) {
         if (overrideActive) {
-            el.textContent = `Override manual aktif: CT=${_formatRatioText(current.ctP, current.ctS)}, VT=${_formatRatioText(current.vtP, current.vtS)}. Nilai saat ini dihitung ulang dari baseline asli file/meta, bukan dari hasil override sebelumnya.`;
+            el.textContent = `Override manual aktif: CT=${_formatRatioText(current.ctP, current.ctS)}, VT=${_formatRatioText(current.vtP, current.vtS)}. Nilai dihitung ulang dari baseline file, bukan dari override sebelumnya.`;
             el.style.color = 'var(--accent)';
         } else if (ctKnown || vtKnown) {
-            el.textContent = `Metadata file terbaca sebagai CT=${_formatRatioText(defaults.ctP, defaults.ctS)} dan VT=${_formatRatioText(defaults.vtP, defaults.vtS)}. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.`;
+            el.textContent = `Metadata file: CT=${_formatRatioText(defaults.ctP, defaults.ctS)}, VT=${_formatRatioText(defaults.vtP, defaults.vtS)}. Kalau setting lapangan beda, isi rasio aktual lalu klik Terapkan.`;
             el.style.color = '';
         } else if (bothPrimaryNative) {
-            el.textContent = `Berdasarkan metadata COMTRADE, nilai analog saat ini sudah berada pada primary values. Koreksi rasio CT/VT tidak wajib untuk membaca hasil ini; gunakan hanya bila ingin membandingkan dengan setting lapangan. Untuk pembanding perhitungan, scaling saat ini diperlakukan setara dengan CT≈${baseCtText} dan VT≈${baseVtText}.`;
+            el.textContent = `Metadata COMTRADE menandai nilai analog sudah dalam primary values. Koreksi rasio tidak wajib — pakai hanya kalau mau bandingkan dengan setting lapangan. Scaling saat ini setara CT≈${baseCtText} dan VT≈${baseVtText}.`;
             el.style.color = '';
         } else if (ctPrimaryNative || vtPrimaryNative) {
-            el.textContent = `Sebagian kanal analog terdeteksi sudah primary dari COMTRADE, tetapi metadata rasio belum lengkap untuk semua pengukuran. Nilai analisa tetap ditampilkan apa adanya dari scaling meta COMTRADE/CFG. Jika setting lapangan berbeda, masukkan rasio aktual lalu Terapkan Koreksi.`;
+            el.textContent = `Sebagian kanal sudah primary dari COMTRADE, tapi metadata rasio belum lengkap. Nilai tetap dihitung dari scaling meta CFG. Kalau setting lapangan beda, isi rasio aktual lalu klik Terapkan.`;
             el.style.color = 'var(--amber)';
         } else {
-            el.textContent = `Rasio CT/VT tidak tersedia di metadata file dan rekaman belum terverifikasi sebagai primary values. Nilai analisa tetap ditampilkan apa adanya dari scaling meta COMTRADE/CFG, tetapi koreksi ratio lebih relevan untuk kasus seperti ini. Untuk pembanding perhitungan, scaling saat ini diperlakukan setara dengan CT≈${baseCtText} dan VT≈${baseVtText}.`;
+            el.textContent = `Rasio CT/VT tidak ada di metadata dan rekaman belum teridentifikasi sebagai primary values. Nilai dihitung dari scaling meta CFG — koreksi rasio disarankan. Scaling saat ini setara CT≈${baseCtText} dan VT≈${baseVtText}.`;
             el.style.color = 'var(--amber)';
         }
     } else if (_allRatioFieldsEmpty(values)) {
-        el.textContent = 'Input rasio dikosongkan. Klik Terapkan untuk kembali ke bacaan asli file/meta tanpa override manual.';
+        el.textContent = 'Input rasio kosong. Klik Terapkan untuk kembali ke rasio asli file tanpa override manual.';
         el.style.color = 'var(--accent)';
     } else if (!_allRatioFieldsComplete(values)) {
-        el.textContent = 'Isi lengkap rasio CT dan VT aktual terlebih dahulu, atau kosongkan semuanya untuk kembali ke bacaan asli file/meta.';
+        el.textContent = 'Isi semua rasio CT dan VT, atau kosongkan semua untuk kembali ke rasio asli file.';
         el.style.color = 'var(--amber)';
     } else {
         const baseCt = _ratio(_readStatusRatio('baseCtPrimary'), _readStatusRatio('baseCtSecondary'));
@@ -1130,12 +1130,12 @@ function _setCtptStatus(values) {
         const vtRelative = (baseVt && nextVt) ? (nextVt / baseVt) : null;
         let factorNote = '';
         if (ctRelative !== null && vtRelative !== null) {
-            factorNote = ` Faktor relatif: arus ×${ctRelative.toFixed(3)}, tegangan ×${vtRelative.toFixed(3)} terhadap baseline file/meta.`;
+            factorNote = ` Faktor: arus ×${ctRelative.toFixed(3)}, tegangan ×${vtRelative.toFixed(3)} dari baseline file.`;
             if (Math.abs(ctRelative - 1) < 1e-9 && Math.abs(vtRelative - 1) < 1e-9) {
-                factorNote = ' Input ini ekuivalen dengan pembanding scaling COMTRADE saat ini, jadi hasil analisa akan tetap sama.';
+                factorNote = ' Input ini sama dengan scaling COMTRADE saat ini — hasilnya tidak berubah.';
             }
         }
-        el.textContent = `Override siap diterapkan: CT=${_formatRatioText(values.ctP, values.ctS)}, VT=${_formatRatioText(values.vtP, values.vtS)}. Perhitungan ulang akan memakai baseline asli file, bukan hasil override sebelumnya.${factorNote}`;
+        el.textContent = `Override siap: CT=${_formatRatioText(values.ctP, values.ctS)}, VT=${_formatRatioText(values.vtP, values.vtS)}. Perhitungan ulang pakai baseline asli file, bukan override sebelumnya.${factorNote}`;
         el.style.color = 'var(--accent)';
     }
 }

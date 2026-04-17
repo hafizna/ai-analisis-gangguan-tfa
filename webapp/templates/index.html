@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Mulai Analisis — TFA{% endblock %}
 {% block topbar_title %}Pilih Jalur Analisis{% endblock %}
-{% block topbar_sub %}Bedakan gangguan jaringan dan gangguan trafo sejak awal{% endblock %}
+{% block topbar_sub %}Pisahkan gangguan jaringan dan trafo sejak awal{% endblock %}
 {% block nav_upload %}active{% endblock %}
 
 {% block extra_css %}
@@ -69,10 +69,10 @@
 <div class="landing-shell">
     <section class="landing-hero">
         <div>
-            <h1>Mulai dari domain gangguan yang benar, bukan dari satu upload box yang sama.</h1>
+            <h1>Pilih jalur analisis sesuai domain gangguannya.</h1>
             <p>
-                Jaringan transmisi dan transformator punya filosofi analisis yang berbeda.
-                Pilih jalur yang sesuai supaya input, hasil, dan evidence yang diminta selaras dengan cara engineer membaca gangguan di lapangan.
+                Jaringan dan trafo punya alur berbeda. Pilih jalur yang tepat supaya input,
+                hasil, dan evidence yang diminta sesuai cara baca gangguan di lapangan.
             </p>
             <div class="hero-tag-row">
                 <span class="hero-tag">Distance / 21</span>
@@ -85,9 +85,9 @@
         <div class="hero-side">
             <h3>Prinsip Kerja</h3>
             <ul>
-                <li>Jaringan: cepat ke pola arus-tegangan, AR, dan cause classification.</li>
-                <li>Trafo: mulai dari relay role, event meaning, lalu origin fault dan selectivity.</li>
-                <li>Jika evidence belum cukup, sistem seharusnya minta relay tambahan, bukan memaksa final cause.</li>
+                <li>Jaringan: baca pola arus-tegangan, auto-reclose, lalu cause ranking.</li>
+                <li>Trafo: mulai dari relay role, event meaning, origin fault, lalu selectivity.</li>
+                <li>Kalau evidence kurang, sistem minta relay tambahan, bukan memaksa final cause.</li>
             </ul>
         </div>
     </section>
@@ -95,34 +95,34 @@
     <section class="choice-grid">
         <article class="choice-card line">
             <div class="choice-eyebrow">Jaringan Transmisi</div>
-            <div class="choice-title">Input Jaringan</div>
+            <div class="choice-title">Unggah Jaringan</div>
             <div class="choice-copy">
-                Dipakai untuk rele jarak, DFR jaringan, dan analisis cepat penyebab seperti petir, layang-layang, hewan, benda asing, pohon, atau konduktor/tower.
+                Untuk distance relay, DFR jaringan, dan screening cepat penyebab gangguan penghantar.
             </div>
             <div class="bullet-list">
-                <div class="bullet-item">Satu pasangan file `.cfg + .dat`</div>
-                <div class="bullet-item">Cocok untuk distance relay, DFR eksternal, atau screening cepat gangguan jaringan</div>
-                <div class="bullet-item">Hasil fokus ke transien/permanen dan cause ranking</div>
+                <div class="bullet-item">Satu pasang file <code>.cfg + .dat</code></div>
+                <div class="bullet-item">Cocok untuk distance relay, DFR eksternal, atau screening transmisi</div>
+                <div class="bullet-item">Output: transien/permanen dan cause ranking (petir, layang, hewan, dll)</div>
             </div>
             <div class="card-actions">
-                <a href="{{ url_for('line_upload') }}" class="btn btn-primary">Masuk ke Input Jaringan</a>
+                <a href="{{ url_for('line_upload') }}" class="btn btn-primary">Unggah File Jaringan</a>
                 <a href="{{ url_for('browse') }}" class="btn btn-outline">Pilih dari Raw Data</a>
             </div>
         </article>
 
         <article class="choice-card xfmr">
             <div class="choice-eyebrow">Transformator</div>
-            <div class="choice-title">Input Trafo</div>
+            <div class="choice-title">Unggah Trafo</div>
             <div class="choice-copy">
-                Dipakai untuk 87T dan juga relay pendukung seperti OCR HV, OCR LV, REF, GFR HV, atau SBEF. Sistem membedakan quick local analysis dan coordinated multi-relay analysis.
+                Untuk 87T dan relay pendukung (OCR HV/LV, REF, GFR HV, SBEF). Bisa quick analysis satu relay atau coordinated multi-relay.
             </div>
             <div class="bullet-list">
-                <div class="bullet-item">Mulai dari relay yang tersedia sekarang</div>
-                <div class="bullet-item">Cocok untuk localization, selectivity review, dan event interpretation</div>
-                <div class="bullet-item">Jika file awal hanya OCR LV, hasil diposisikan sebagai partial evidence, bukan final transformer cause</div>
+                <div class="bullet-item">Mulai dari relay yang tersedia</div>
+                <div class="bullet-item">Untuk localization, selectivity, dan event interpretation</div>
+                <div class="bullet-item">File awal hanya OCR LV dianggap partial evidence, bukan final cause</div>
             </div>
             <div class="card-actions">
-                <a href="{{ url_for('transformer_upload') }}" class="btn btn-primary">Masuk ke Input Trafo</a>
+                <a href="{{ url_for('transformer_upload') }}" class="btn btn-primary">Unggah File Trafo</a>
                 <a href="{{ url_for('transformer_history') }}" class="btn btn-outline">Lihat Riwayat 87T</a>
             </div>
         </article>
@@ -131,15 +131,15 @@
     <section class="notes-grid">
         <div class="note-card">
             <h4>Kapan Pilih Jaringan</h4>
-            <p>Jika fokus utamanya adalah penyebab gangguan penghantar, auto-reclose, waveform line current, dan klasifikasi petir/hewan/benda asing.</p>
+            <p>Kalau fokusnya penyebab gangguan penghantar, auto-reclose, waveform, atau cause ranking (petir, hewan, benda asing).</p>
         </div>
         <div class="note-card">
             <h4>Kapan Pilih Trafo</h4>
-            <p>Jika event melibatkan transformator, relay sisi HV/LV, 87T, atau Anda ingin menilai apakah origin fault sebenarnya internal, distribusi, atau hanya backup trip.</p>
+            <p>Kalau event melibatkan trafo, relay HV/LV, 87T, atau perlu cek origin fault: internal, distribusi, atau sekadar backup trip.</p>
         </div>
         <div class="note-card">
             <h4>Kaidah Umum</h4>
-            <p>Untuk domain trafo, relay coordination tetap menjadi sumber kebenaran utama untuk localization. ML hanya membantu membaca waveform lokal ketika koordinasi belum menjawab cukup.</p>
+            <p>Untuk trafo, relay coordination jadi sumber utama localization. ML hanya bantu baca waveform lokal kalau koordinasi belum jelas.</p>
         </div>
     </section>
 </div>
