@@ -74,7 +74,10 @@ from models.predict import (
     extract_soe_from_file,
     _load_model,
     _build_feature_vector,
+    _calibrate_proba,
     _compute_cause_pcts,
+    _apply_transient_ambiguity_confidence_cap,
+    _apply_equipment_caution_cap,
     _transient_recommendation,
 )
 from models.rules import apply_rules
@@ -708,6 +711,7 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         "reclose_time_ms": _f(updated.get("reclose_time_ms")),
         "thd_percent": _f(updated.get("thd_percent")),
         "inception_angle_degrees": _f(updated.get("inception_angle_degrees"), -1),
+        "protection_type": _s(updated.get("protection_type"), ""),
     }
 
     rule_result = apply_rules(row)
@@ -745,20 +749,49 @@ def _recalculate_analysis_with_ratio(analysis: dict, ct_p: float, ct_s: float, v
         proba_classes = list(getattr(clf, "classes_", classes))
         if model_type in MULTICLASS_MODEL_TYPES and proba_classes:
             from models.predict import _label_recommendation
+            raw_proba = proba
+            proba = _calibrate_proba(raw_proba, temperature=1.5)
             label_id = MULTICLASS_LABEL_MAP.get(pred_raw, pred_raw)
             reclose_ok = _to_bool_or_none(row.get("reclose_successful"))
             reclose_note = "  AR berhasil — transien terkonfirmasi." if (
                 reclose_ok is True and row["peak_fault_current_a"] > 200) else ""
+
+            confidence = float(proba.max())
+            ml_ceiling = 0.92
+            if confidence > ml_ceiling:
+                confidence = ml_ceiling
+            sorted_p = sorted([float(x) for x in proba], reverse=True)
+            margin = sorted_p[0] - sorted_p[1] if len(sorted_p) >= 2 else 1.0
+            confidence, ambiguity_note = _apply_transient_ambiguity_confidence_cap(
+                confidence=confidence,
+                pred_label=str(pred_raw),
+                proba_classes=proba_classes,
+                proba=proba,
+                margin=margin,
+            )
+            confidence, equipment_note = _apply_equipment_caution_cap(
+                pred_label=str(pred_raw),
+                confidence=confidence,
+                class_counts=model_bundle.get("class_counts"),
+                soe=[],
+                protection_name=_s(updated.get("protection_type"), "UNKNOWN").upper(),
+            )
+
             updated["label"] = label_id
-            updated["confidence"] = float(proba.max())
+            updated["confidence"] = confidence
             updated["tier"] = 2
             updated["rule_name"] = model_type
             updated["cause_pcts"] = [
                 {"name": MULTICLASS_LABEL_MAP.get(c, c), "pct": round(float(p) * 100, 1)}
-                for c, p in sorted(zip(proba_classes, proba), key=lambda x: -x[1])
+                for c, p in sorted(zip(proba_classes, raw_proba), key=lambda x: -x[1])
             ]
             updated["recommendation"] = _label_recommendation(pred_raw)
-            updated["evidence"] = f"ML multi-kelas: {pred_raw} ({updated['confidence']:.0%}).{reclose_note} Dihitung ulang dengan rasio CT/VT."
+            updated["evidence"] = (
+                f"ML multi-kelas (kalibrasi T=1.5, plafon {ml_ceiling:.0%}): "
+                f"{pred_raw} ({updated['confidence']:.0%}).{reclose_note}"
+                f" Margin ke runner-up: {margin * 100:.1f} pp.{ambiguity_note}{equipment_note} "
+                "Dihitung ulang dengan rasio CT/VT."
+            )
         else:
             pred = int(pred_raw)
             p_trans = float(proba[1])
