@@ -45,9 +45,11 @@ Run from the pipeline/ directory:
 """
 
 import sys
+import argparse
 import pickle
 import warnings
 from pathlib import Path
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -208,9 +210,47 @@ def load_and_prepare(csv_path: Path):
     return X, y, df
 
 
+def _balanced_class_weight(y_series: pd.Series) -> dict:
+    """Compute sklearn-like balanced class weights from current training labels."""
+    counts = y_series.value_counts().to_dict()
+    n_samples = float(len(y_series))
+    n_classes = float(len(counts)) if counts else 1.0
+    return {cls: n_samples / (n_classes * float(cnt)) for cls, cnt in counts.items() if cnt > 0}
+
+
+def build_class_weight(
+    y_series: pd.Series,
+    focus_transient_lines: bool = True,
+    petir_multiplier: float = 0.80,
+    non_petir_transient_multiplier: float = 1.35,
+) -> dict:
+    """
+    Build class weights with optional transmission-line transient focus.
+
+    Starting from balanced weights, we down-weight PETIR slightly and up-weight
+    LAYANG/HEWAN/BENDA_ASING to reduce PETIR over-call when signatures overlap.
+    """
+    weights = _balanced_class_weight(y_series)
+    if not focus_transient_lines:
+        return weights
+
+    if "PETIR" in weights:
+        weights["PETIR"] *= float(petir_multiplier)
+    for cls in ("LAYANG", "HEWAN", "BENDA_ASING"):
+        if cls in weights:
+            weights[cls] *= float(non_petir_transient_multiplier)
+    return weights
+
+
 # ── Training ─────────────────────────────────────────────────────────────────
 
-def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
+def train(
+    csv_path: Path = FEATURES_CSV,
+    model_out: Path = MODEL_OUT,
+    focus_transient_lines: bool = True,
+    petir_multiplier: float = 0.80,
+    non_petir_transient_multiplier: float = 1.35,
+):
     if not csv_path.exists():
         print(f"ERROR: {csv_path} not found — run batch_extract.py first")
         sys.exit(1)
@@ -233,12 +273,23 @@ def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
 
     print(f"Training on {len(X_tr)} rows across {len(trainable)} classes: {trainable}\n")
 
+    class_weight = build_class_weight(
+        y_tr,
+        focus_transient_lines=focus_transient_lines,
+        petir_multiplier=petir_multiplier,
+        non_petir_transient_multiplier=non_petir_transient_multiplier,
+    )
+    print("Class weight (effective):")
+    for cls in sorted(class_weight):
+        print(f"  {cls:<15} {class_weight[cls]:.3f}")
+    print()
+
     clf = LGBMClassifier(
         n_estimators=500,
         learning_rate=0.05,
         max_depth=6,
         num_leaves=31,
-        class_weight="balanced",  # handles imbalance natively — no SMOTE needed
+        class_weight=class_weight,
         random_state=42,
         n_jobs=-1,
         verbose=-1,
@@ -297,6 +348,13 @@ def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
         "all_classes": ALL_CLASSES,
         "class_counts": dict(class_counts),
         "model_type": "multiclass_lightgbm",
+        "training_profile": {
+            "focus_transient_lines": bool(focus_transient_lines),
+            "petir_multiplier": float(petir_multiplier),
+            "non_petir_transient_multiplier": float(non_petir_transient_multiplier),
+            "class_weight": class_weight,
+            "trained_at_utc": datetime.now(timezone.utc).isoformat(),
+        },
     }
     with open(model_out, "wb") as f:
         pickle.dump(payload, f)
@@ -310,5 +368,38 @@ def train(csv_path: Path = FEATURES_CSV, model_out: Path = MODEL_OUT):
     return clf
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser(
+        description="Train Tier-2 multiclass model for transmission-line fault causes."
+    )
+    parser.add_argument("--csv", type=Path, default=FEATURES_CSV, help="Path to labeled_features.csv")
+    parser.add_argument("--out", type=Path, default=MODEL_OUT, help="Output model path")
+    parser.add_argument(
+        "--no-focus-transient-lines",
+        action="store_true",
+        help="Disable extra up-weighting for non-PETIR transient classes.",
+    )
+    parser.add_argument(
+        "--petir-multiplier",
+        type=float,
+        default=0.80,
+        help="Multiplier applied to PETIR class weight (default: 0.80).",
+    )
+    parser.add_argument(
+        "--non-petir-transient-multiplier",
+        type=float,
+        default=1.35,
+        help="Multiplier applied to LAYANG/HEWAN/BENDA_ASING class weights (default: 1.35).",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    train()
+    args = _parse_args()
+    train(
+        csv_path=args.csv,
+        model_out=args.out,
+        focus_transient_lines=not args.no_focus_transient_lines,
+        petir_multiplier=args.petir_multiplier,
+        non_petir_transient_multiplier=args.non_petir_transient_multiplier,
+    )

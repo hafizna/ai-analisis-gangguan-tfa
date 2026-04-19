@@ -243,7 +243,9 @@ _CAUSE_RECOMMENDATIONS = {
     "PERALATAN": (
         "Periksa peralatan proteksi dan telekomunikasi terkait gangguan. "
         "Verifikasi pilot wire / teleprotection / PLCC, rangkaian CT/VT/CVT, mekanisme PMT, "
-        "serta suplai DC dan rangkaian auxiliary sebelum memastikan penyebab."
+        "serta suplai DC dan rangkaian auxiliary sebelum memastikan penyebab. "
+        "Jika bukti digital minim dan dominan analog, perlakukan hasil sebagai indikasi awal "
+        "sampai data latih peralatan mencukupi."
     ),
 }
 
@@ -577,6 +579,103 @@ def _calibrate_proba(proba: np.ndarray, temperature: float = 1.5) -> np.ndarray:
     return exp / exp.sum()
 
 
+_TRANSIENT_CLASS_SET = {"PETIR", "LAYANG", "HEWAN", "BENDA_ASING"}
+_EQUIPMENT_DIGITAL_HINTS = (
+    "TELE", "PLCC", "PILOT", "SYNC", "COMM", "CHANNEL", "CB FAIL",
+    "TRIP CKT", "AUX", "DC FAIL", "VT FAIL", "CT FAIL", "CVT", "PROT",
+)
+
+
+def _apply_transient_ambiguity_confidence_cap(
+    confidence: float, pred_label: str, proba_classes: list, proba: np.ndarray, margin: float
+) -> tuple[float, str]:
+    """
+    Apply an extra confidence cap for close calls inside transient-line causes.
+
+    Even after temperature calibration, PETIR/LAYANG/HEWAN/BENDA_ASING often share
+    similar waveform signatures. When top-2 candidates are both transient classes and
+    their margin is small, we cap confidence to better reflect epistemic uncertainty.
+    """
+    ranked = sorted(zip(proba_classes, proba), key=lambda x: -x[1])
+    if len(ranked) < 2:
+        return confidence, ""
+
+    top1, top2 = ranked[0][0], ranked[1][0]
+    if pred_label not in _TRANSIENT_CLASS_SET:
+        return confidence, ""
+    if top1 not in _TRANSIENT_CLASS_SET or top2 not in _TRANSIENT_CLASS_SET:
+        return confidence, ""
+
+    cap = None
+    if margin < 0.10:
+        cap = 0.70
+    elif margin < 0.15:
+        cap = 0.78
+
+    if cap is None or confidence <= cap:
+        return confidence, ""
+
+    note = (
+        f" [Keyakinan dibatasi {cap:.0%}: kandidat {top1} vs {top2} sangat berdekatan "
+        f"(margin {margin * 100:.1f} pp).]"
+    )
+    return cap, note
+
+
+def _apply_equipment_caution_cap(
+    pred_label: str,
+    confidence: float,
+    class_counts: dict | None,
+    soe: list | None,
+    protection_name: str,
+) -> tuple[float, str]:
+    """
+    Cap PERALATAN confidence when evidence/data coverage is weak.
+
+    Equipment/protection failures are often under-represented and not always
+    accompanied by explicit digital-channel breadcrumbs. In that setting,
+    analog waveform-only evidence can be ambiguous; confidence should stay cautious.
+    """
+    if str(pred_label) != "PERALATAN":
+        return confidence, ""
+
+    caps = []
+    notes = []
+
+    if isinstance(class_counts, dict):
+        n_eq = int(class_counts.get("PERALATAN", 0) or 0)
+        if 0 < n_eq < 20:
+            caps.append(0.52)
+            notes.append(f"data latih PERALATAN masih sangat sedikit ({n_eq} sampel)")
+        elif n_eq < 40:
+            caps.append(0.58)
+            notes.append(f"data latih PERALATAN masih terbatas ({n_eq} sampel)")
+        elif n_eq < 60:
+            caps.append(0.64)
+            notes.append(f"data latih PERALATAN belum kuat ({n_eq} sampel)")
+
+    fired_channels = [
+        str(ev.get("channel", "")).upper()
+        for ev in (soe or [])
+        if int(ev.get("state", 0) or 0) == 1
+    ]
+    has_digital_hint = any(any(k in ch for k in _EQUIPMENT_DIGITAL_HINTS) for ch in fired_channels)
+    if not has_digital_hint:
+        caps.append(0.60)
+        notes.append("indikasi kanal digital peralatan/proteksi tidak terlihat")
+
+    if str(protection_name) in ("UNKNOWN", "OVERCURRENT", "DIFFERENTIAL"):
+        caps.append(0.62)
+        notes.append(f"rekaman {protection_name} cenderung minim konteks kegagalan peralatan")
+
+    cap = min(caps) if caps else None
+    if cap is None or confidence <= cap:
+        return confidence, ""
+
+    note = f" [Keyakinan dibatasi {cap:.0%}: " + "; ".join(notes) + ".]"
+    return cap, note
+
+
 def _load_model() -> Optional[dict]:
     if not MODEL_PATH.exists():
         return None
@@ -877,6 +976,20 @@ def classify_file(cfg_path: str) -> ClassificationResult:
             # Margin to runner-up as a "close call" signal for the UI.
             _sorted_p = np.sort(proba)[::-1]
             margin = float(_sorted_p[0] - _sorted_p[1]) if len(_sorted_p) >= 2 else 1.0
+            confidence, _ambiguity_note = _apply_transient_ambiguity_confidence_cap(
+                confidence=confidence,
+                pred_label=str(pred),
+                proba_classes=proba_classes,
+                proba=proba,
+                margin=margin,
+            )
+            confidence, _equipment_note = _apply_equipment_caution_cap(
+                pred_label=str(pred),
+                confidence=confidence,
+                class_counts=model_bundle.get("class_counts"),
+                soe=_soe,
+                protection_name=prot.primary_protection.name,
+            )
 
             # ── Confidence penalty for missing voltage features ───────────────
             # The model was trained predominantly on distance relay recordings that
@@ -949,6 +1062,8 @@ def classify_file(cfg_path: str) -> ClassificationResult:
                     f"i0/i1={row.get('i0_i1_ratio', 0):.2f}  "
                     f"zone={row.get('zone_operated', '?')}"
                     + _margin_note
+                    + _ambiguity_note
+                    + _equipment_note
                     + (_routing_caveat or "")
                 ),
                 recommendation=_label_recommendation(pred),
