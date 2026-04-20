@@ -890,7 +890,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             <button class="btn btn-outline locus-tab active" id="locusTabBoth" onclick="LOCUS.setTab('both')">Keduanya</button>
             <button class="btn btn-outline locus-tab" id="locusTabGnd" onclick="LOCUS.setTab('gnd')">Phase-Ground</button>
             <button class="btn btn-outline locus-tab" id="locusTabPP" onclick="LOCUS.setTab('pp')">Phase-Phase</button>
-            <button class="btn btn-outline" id="locusFocusBtn" onclick="LOCUS.toggleFocusMode()">Fokus Gangguan</button>
+            <button class="btn btn-outline" id="locusFocusBtn" onclick="LOCUS.toggleFocusMode()">Sorot Gangguan</button>
             <button class="btn btn-outline" onclick="LOCUS.autoScale()">Auto Scale</button>
             <span style="display:inline-flex; align-items:center; gap:6px; border-left:1px solid var(--border); padding-left:10px; margin-left:2px;">
                 <button class="btn btn-outline" id="locusPlayBtn" onclick="LOCUS.playToggle()" title="Play/Pause locus animation">&#9654; Play</button>
@@ -935,11 +935,11 @@ textarea.form-control { min-height: 80px; resize: vertical; }
         <div id="locusChartsGrid" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
             <div id="locusWrapGnd" style="background:#fff; border-radius:10px; padding:8px 8px 4px; border:1px solid rgba(0,0,0,.08); box-shadow:0 4px 14px rgba(0,0,0,.08);">
                 <div style="color:#374151; text-align:center; font-size:11px; font-weight:700; letter-spacing:.01em; margin-bottom:4px;">Phase-to-Ground &mdash; Z L1E, L2E, L3E</div>
-                <div id="locusPlotGnd" style="height:380px;"></div>
+                <div id="locusPlotGnd" style="height:430px;"></div>
             </div>
             <div id="locusWrapPP" style="background:#fff; border-radius:10px; padding:8px 8px 4px; border:1px solid rgba(0,0,0,.08); box-shadow:0 4px 14px rgba(0,0,0,.08);">
                 <div style="color:#374151; text-align:center; font-size:11px; font-weight:700; letter-spacing:.01em; margin-bottom:4px;">Phase-to-Phase &mdash; Z L12, L23, L31</div>
-                <div id="locusPlotPP" style="height:380px;"></div>
+                <div id="locusPlotPP" style="height:430px;"></div>
             </div>
         </div>
     </div>
@@ -1268,11 +1268,26 @@ _refreshCtptStatusOnly();
     var FOCUSED_LOOPS = Array.isArray(FOCUS.focused_loops) ? FOCUS.focused_loops.slice() : [];
 
     function visibleLoopNames(loopNames) {
-        var available = loopNames.filter(function (name) { return loops[name]; });
-        if (ST.focusMode === 'faulted' && FOCUSED_LOOPS.length) {
-            return available.filter(function (name) { return FOCUSED_LOOPS.indexOf(name) >= 0; });
-        }
-        return available;
+        return loopNames.filter(function (name) { return loops[name]; });
+    }
+
+    function isFocusedLoop(name) {
+        return !FOCUSED_LOOPS.length || FOCUSED_LOOPS.indexOf(name) >= 0;
+    }
+
+    function traceStyle(name) {
+        var focused = isFocusedLoop(name);
+        return {
+            focused: focused,
+            prefaultWidth: focused ? 1.1 : 0.8,
+            prefaultOpacity: focused ? 0.42 : 0.18,
+            lineWidth: focused ? 3.1 : 1.55,
+            opacity: focused ? 1 : 0.52,
+            startSize: focused ? 10 : 7,
+            startBorder: focused ? 1.7 : 1.1,
+            endSize: focused ? 10 : 7,
+            endBorder: focused ? 2.6 : 1.5
+        };
     }
 
     function shouldDrawPrefault() {
@@ -1283,8 +1298,10 @@ _refreshCtptStatusOnly();
         var btn = document.getElementById('locusFocusBtn');
         if (!btn) return;
         var focused = ST.focusMode === 'faulted';
-        btn.textContent = focused ? 'Fokus Gangguan' : 'Semua Loop';
-        btn.title = focused ? 'Klik untuk melihat semua loop termasuk pra-gangguan' : 'Klik untuk kembali fokus ke loop gangguan';
+        btn.textContent = focused ? 'Sorot Gangguan' : 'Semua + Pra-Gangguan';
+        btn.title = focused
+            ? 'Mode fokus: semua loop tetap tampil, loop gangguan ditebalkan, dan pra-gangguan disembunyikan'
+            : 'Mode konteks penuh: tampilkan semua loop termasuk lintasan pra-gangguan';
         btn.style.borderColor = focused ? 'rgba(77,212,166,.45)' : '';
         btn.style.color = focused ? 'var(--accent)' : '';
     }
@@ -1379,21 +1396,25 @@ _refreshCtptStatusOnly();
             }
             var col = COLORS[name] || '#888';
             var lbl = name.replace('Z_', 'Z ');
+            var style = traceStyle(name);
             if (shouldDrawPrefault() && rPre.length > 1)
                 traces.push({ x:rPre, y:xPre, type:'scatter', mode:'lines', name:lbl+' (pra)',
-                               line:{ color:col, width:0.8, dash:'dot' }, showlegend:false, hoverinfo:'x+y+name' });
+                               line:{ color:col, width:style.prefaultWidth, dash:'dot' }, opacity:style.prefaultOpacity,
+                               showlegend:false, hoverinfo:'x+y+name' });
             if (rFlt.length > 0)
                 traces.push({ x:rFlt, y:xFlt, type:'scatter', mode:'lines', name:lbl,
-                               line:{ color:col, width:2.0 },
+                               line:{ color:col, width:style.lineWidth }, opacity:style.opacity,
                                hovertemplate:'<b>'+lbl+'</b><br>R: %{x:.3f} \u03a9<br>X: %{y:.3f} \u03a9<extra></extra>' });
             if (rFlt.length > 0)
                 traces.push({ x:[rFlt[0]], y:[xFlt[0]], type:'scatter', mode:'markers', name:lbl+' inception',
-                               marker:{ color:col, size:9, symbol:'circle', line:{ color:'#fff', width:1.5 } },
+                               marker:{ color:col, size:style.startSize, symbol:'circle', line:{ color:'#fff', width:style.startBorder } },
+                               opacity:style.opacity,
                                showlegend:false,
                                hovertemplate:'<b>'+lbl+' Inception</b><br>R: %{x:.3f} \u03a9<br>X: %{y:.3f} \u03a9<extra></extra>' });
             if (rFlt.length > 1)
                 traces.push({ x:[rFlt[rFlt.length-1]], y:[xFlt[xFlt.length-1]], type:'scatter', mode:'markers', name:lbl+' clearing',
-                               marker:{ color:col, size:9, symbol:'x-thin', line:{ color:col, width:2.5 } },
+                               marker:{ color:col, size:style.endSize, symbol:'x-thin', line:{ color:col, width:style.endBorder } },
+                               opacity:style.opacity,
                                showlegend:false,
                                hovertemplate:'<b>'+lbl+' Clearing</b><br>R: %{x:.3f} \u03a9<br>X: %{y:.3f} \u03a9<extra></extra>' });
         });
@@ -1502,7 +1523,7 @@ _refreshCtptStatusOnly();
         exportPng: function () {
             var id = ST.tab === 'pp' ? 'locusPlotPP' : 'locusPlotGnd';
             if (document.getElementById(id))
-                Plotly.downloadImage(id, { format:'png', width:900, height:620, filename:'impedansi_locus' });
+                Plotly.downloadImage(id, { format:'png', width:1120, height:720, filename:'impedansi_locus' });
         }
     };
 
