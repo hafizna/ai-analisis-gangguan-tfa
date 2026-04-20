@@ -878,6 +878,62 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 </div>
 {% endif %}
 
+{% if analysis.locus_data and analysis.locus_data.loops %}
+<!-- ══ IMPEDANSI LOCUS ══════════════════════════════════════════ -->
+<div class="wave-shell" id="locusShell">
+    <div class="wave-head">
+        <div>
+            <div class="wave-title">Diagram R-X &mdash; Impedansi Locus</div>
+            <div class="wave-sub">Trajektori impedansi gangguan pada bidang R-X dengan overlay zona proteksi jarak</div>
+        </div>
+        <div class="wave-actions">
+            <button class="btn btn-outline locus-tab active" id="locusTabBoth" onclick="LOCUS.setTab('both')">Keduanya</button>
+            <button class="btn btn-outline locus-tab" id="locusTabGnd" onclick="LOCUS.setTab('gnd')">Phase-Ground</button>
+            <button class="btn btn-outline locus-tab" id="locusTabPP" onclick="LOCUS.setTab('pp')">Phase-Phase</button>
+            <button class="btn btn-outline" onclick="LOCUS.autoScale()">Auto Scale</button>
+            <button class="btn btn-outline" onclick="LOCUS.exportPng()">&#8595; PNG</button>
+        </div>
+    </div>
+    <!-- Zone settings bar -->
+    <div style="border-bottom:1px solid var(--border); background:rgba(0,0,0,.06);">
+        <!-- Row 1: characteristic toggle + manual zone inputs -->
+        <div style="padding:10px 16px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+            <div style="display:flex; border-radius:7px; overflow:hidden; border:1px solid var(--border); flex-shrink:0;">
+                <button id="locusBtnQuad" onclick="LOCUS.setChar('quad')" style="padding:5px 12px; border:none; cursor:pointer; font-size:11px; font-weight:700; background:var(--accent); color:#0b0e13; transition:background .15s,color .15s;">Quadrilateral</button>
+                <button id="locusBtnMho"  onclick="LOCUS.setChar('mho')"  style="padding:5px 12px; border:none; cursor:pointer; font-size:11px; font-weight:700; background:transparent; color:var(--text-muted); transition:background .15s,color .15s;">MHO</button>
+            </div>
+            <div id="locusZonesContainer" style="display:flex; gap:10px; flex-wrap:wrap; flex:1;"></div>
+            <button onclick="LOCUS.redraw()" style="padding:5px 12px; border:1px solid rgba(77,212,166,.4); border-radius:7px; background:rgba(77,212,166,.12); color:var(--accent); font-size:11px; font-weight:700; cursor:pointer; flex-shrink:0;">&#8635; Terapkan</button>
+        </div>
+        <!-- Row 2: RIO/XRIO relay file import -->
+        <div style="padding:8px 16px 10px; border-top:1px solid rgba(255,255,255,.06); display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <span style="font-size:10px; color:var(--text-muted); font-weight:700; white-space:nowrap; flex-shrink:0;">Import Relay Settings:</span>
+            <label style="display:flex; align-items:center; gap:7px; padding:4px 10px; border:1px dashed rgba(255,255,255,.18); border-radius:7px; cursor:pointer; font-size:10px; color:var(--text-muted); background:rgba(0,0,0,.12); flex-shrink:0;">
+                &#128194; Pilih .rio / .xrio
+                <input type="file" id="locusRelayFile" accept=".rio,.xrio" style="display:none;">
+            </label>
+            <div id="locusRelayStatus" style="font-size:10px; color:var(--text-muted); flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">Belum ada file relay dimuat.</div>
+            <button id="locusApplyGnd" onclick="LOCUS.applyRelay('phGnd')" disabled style="padding:4px 10px; border:1px solid rgba(255,255,255,.12); border-radius:6px; background:transparent; color:var(--text-muted); font-size:10px; font-weight:700; cursor:not-allowed; flex-shrink:0;">&#10142; Phase-Ground</button>
+            <button id="locusApplyPP"  onclick="LOCUS.applyRelay('phPh')"  disabled style="padding:4px 10px; border:1px solid rgba(255,255,255,.12); border-radius:6px; background:transparent; color:var(--text-muted); font-size:10px; font-weight:700; cursor:not-allowed; flex-shrink:0;">&#10142; Phase-Phase</button>
+            <button id="locusClearRelay" onclick="LOCUS.clearRelay()" disabled style="padding:4px 10px; border:1px solid rgba(255,255,255,.08); border-radius:6px; background:transparent; color:var(--text-muted); font-size:10px; cursor:not-allowed; flex-shrink:0;">&#10006; Hapus Overlay</button>
+        </div>
+    </div>
+    <!-- Chart area -->
+    <div style="padding:12px;">
+        <div id="locusChartsGrid" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div id="locusWrapGnd" style="background:#fff; border-radius:10px; padding:8px 8px 4px; border:1px solid rgba(0,0,0,.08); box-shadow:0 4px 14px rgba(0,0,0,.08);">
+                <div style="color:#374151; text-align:center; font-size:11px; font-weight:700; letter-spacing:.01em; margin-bottom:4px;">Phase-to-Ground &mdash; Z L1E, L2E, L3E</div>
+                <div id="locusPlotGnd" style="height:380px;"></div>
+            </div>
+            <div id="locusWrapPP" style="background:#fff; border-radius:10px; padding:8px 8px 4px; border:1px solid rgba(0,0,0,.08); box-shadow:0 4px 14px rgba(0,0,0,.08);">
+                <div style="color:#374151; text-align:center; font-size:11px; font-weight:700; letter-spacing:.01em; margin-bottom:4px;">Phase-to-Phase &mdash; Z L12, L23, L31</div>
+                <div id="locusPlotPP" style="height:380px;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% if analysis.soe %}
 <!-- ══ SOE full-width ══════════════════════════════════════════ -->
 <div class="r-card soe-full">
@@ -1161,4 +1217,473 @@ _refreshCtptStatusOnly();
 </script>
 
 {% include "_wave_viewer_inc.html" %}
+
+{% if analysis.locus_data and analysis.locus_data.loops %}
+{% if not analysis.waveform_data %}
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+{% endif %}
+<script id="locusData" type="application/json">{{ analysis.locus_data | tojson }}</script>
+<script id="locusCfg" type="application/json">{"durMs": {{ analysis.fault_duration_ms | default(0) | float }}, "voltKv": {{ analysis.voltage_kv | default('150') | int(default=150) }}}</script>
+<script>
+(function () {
+    if (typeof Plotly === 'undefined') return;
+    var _ld, _cfg;
+    try { _ld  = JSON.parse(document.getElementById('locusData').textContent); } catch (e) { return; }
+    try { _cfg = JSON.parse(document.getElementById('locusCfg').textContent);  } catch (e) { _cfg = {}; }
+
+    var tArr   = _ld.t    || [];
+    var loops  = _ld.loops || {};
+    var durMs  = _cfg.durMs  || 0;
+    var voltKv = _cfg.voltKv || 150;
+
+    var GND = ['Z_L1E', 'Z_L2E', 'Z_L3E'];
+    var PP  = ['Z_L12', 'Z_L23', 'Z_L31'];
+    var COLORS = { 'Z_L1E': '#1d4ed8', 'Z_L2E': '#16a34a', 'Z_L3E': '#7c3aed',
+                   'Z_L12': '#0891b2', 'Z_L23': '#b45309', 'Z_L31': '#be123c' };
+    var ZC = ['#10b981', '#3b82f6', '#f97316'];  // zone colours
+    var gndOk = false, ppOk = false;
+
+    /* ---- default zone reach presets by voltage level ---- */
+    function defZones(kv) {
+        var p = {
+            500: [{xF:30,xR:3,rF:20,rR:5,ang:85,reach:40},{xF:50,xR:5,rF:35,rR:8,ang:85,reach:65},{xF:80,xR:8,rF:60,rR:15,ang:85,reach:100}],
+            275: [{xF:20,xR:2,rF:15,rR:4,ang:85,reach:28},{xF:35,xR:4,rF:25,rR:6,ang:85,reach:47},{xF:55,xR:6,rF:40,rR:10,ang:85,reach:72}],
+            150: [{xF:8,xR:1,rF:6,rR:2,ang:85,reach:12},{xF:15,xR:2,rF:12,rR:4,ang:85,reach:22},{xF:25,xR:3,rF:20,rR:7,ang:85,reach:35}],
+            70:  [{xF:4,xR:0.5,rF:3,rR:1,ang:85,reach:6},{xF:7,xR:1,rF:5,rR:2,ang:85,reach:10},{xF:12,xR:1.5,rF:8,rR:3,ang:85,reach:16}]
+        };
+        var lvls = [70, 150, 275, 500], best = 150, bd = 1e9;
+        lvls.forEach(function (l) { var d = Math.abs(l - kv); if (d < bd) { bd = d; best = l; } });
+        return JSON.parse(JSON.stringify(p[best]));  // deep copy
+    }
+
+    var ST = { char: 'quad', zones: defZones(voltKv), tab: 'both' };
+
+    /* ---- zone settings UI ---- */
+    function renderZoneInputs() {
+        var c = document.getElementById('locusZonesContainer');
+        if (!c) return;
+        c.innerHTML = '';
+        ST.zones.forEach(function (z, i) {
+            var div = document.createElement('div');
+            div.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 9px;background:rgba(0,0,0,.15);border-radius:7px;border-left:3px solid ' + ZC[i] + ';';
+            var nm = document.createElement('span');
+            nm.textContent = 'Z' + (i + 1);
+            nm.style.cssText = 'font-size:11px;font-weight:700;color:' + ZC[i] + ';white-space:nowrap;min-width:18px;';
+            div.appendChild(nm);
+            var fields = ST.char === 'quad'
+                ? [['xF','X&#8593;'],['xR','X&#8595;'],['rF','R&#8594;'],['rR','R&#8592;'],['ang','&#952;&#176;']]
+                : [['reach','Reach'],['ang','&#952;&#176;']];
+            fields.forEach(function (f) {
+                var g = document.createElement('div');
+                g.style.cssText = 'display:flex;flex-direction:column;gap:1px;';
+                var lb = document.createElement('label');
+                lb.innerHTML = f[1];
+                lb.style.cssText = 'font-size:9px;color:var(--text-muted);';
+                var inp = document.createElement('input');
+                inp.type = 'number'; inp.value = z[f[0]]; inp.step = '0.5';
+                inp.style.cssText = 'width:' + (f[0] === 'ang' ? '40' : '50') + 'px;padding:2px 4px;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.12);border-radius:5px;color:var(--text);font-size:11px;';
+                (function (zo, key, el) {
+                    el.addEventListener('change', function () { zo[key] = parseFloat(el.value) || 0; });
+                })(z, f[0], inp);
+                g.appendChild(lb); g.appendChild(inp);
+                div.appendChild(g);
+            });
+            c.appendChild(div);
+        });
+    }
+
+    /* ---- zone shape geometry ---- */
+    function zoneShapes() {
+        return ST.zones.map(function (z, i) {
+            if (ST.char === 'quad') {
+                var a = z.ang * Math.PI / 180, tilt = z.ang !== 90 ? 1 / Math.tan(a) : 0;
+                var pts = [[-z.rR - z.xR*tilt, -z.xR], [z.rF - z.xR*tilt, -z.xR],
+                           [ z.rF + z.xF*tilt,  z.xF], [-z.rR + z.xF*tilt, z.xF]];
+                var path = 'M ' + pts[0][0] + ',' + pts[0][1] +
+                           ' L ' + pts[1][0] + ',' + pts[1][1] +
+                           ' L ' + pts[2][0] + ',' + pts[2][1] +
+                           ' L ' + pts[3][0] + ',' + pts[3][1] + ' Z';
+                return { type:'path', path:path, fillcolor:ZC[i]+'2a',
+                         line:{ color:ZC[i], width:1.5, dash:'dot' }, layer:'below' };
+            } else {
+                var a2 = z.ang * Math.PI / 180, cx = z.reach*Math.cos(a2)/2, cy = z.reach*Math.sin(a2)/2, r = z.reach/2;
+                return { type:'circle', x0:cx-r, y0:cy-r, x1:cx+r, y1:cy+r,
+                         fillcolor:ZC[i]+'2a', line:{ color:ZC[i], width:1.5, dash:'dot' }, layer:'below' };
+            }
+        });
+    }
+
+    /* ---- trace building ---- */
+    function buildTraces(loopNames) {
+        var traces = [];
+        loopNames.forEach(function (name) {
+            var d = loops[name];
+            if (!d || !d.r) return;
+            var rPre=[], xPre=[], rFlt=[], xFlt=[];
+            for (var i = 0; i < tArr.length; i++) {
+                var t = tArr[i], r = d.r[i], x = d.x[i];
+                if (t === null || r === null || x === null) continue;
+                if (t < 0) { rPre.push(r); xPre.push(x); }
+                else if (durMs <= 0 || t <= durMs + 20) { rFlt.push(r); xFlt.push(x); }
+            }
+            var col = COLORS[name] || '#888';
+            var lbl = name.replace('Z_', 'Z ');
+            if (rPre.length > 1)
+                traces.push({ x:rPre, y:xPre, type:'scatter', mode:'lines', name:lbl+' (pra)',
+                               line:{ color:col, width:0.8, dash:'dot' }, showlegend:false, hoverinfo:'x+y+name' });
+            if (rFlt.length > 0)
+                traces.push({ x:rFlt, y:xFlt, type:'scatter', mode:'lines', name:lbl,
+                               line:{ color:col, width:2.0 },
+                               hovertemplate:'<b>'+lbl+'</b><br>R: %{x:.3f} \u03a9<br>X: %{y:.3f} \u03a9<extra></extra>' });
+            if (rFlt.length > 0)
+                traces.push({ x:[rFlt[0]], y:[xFlt[0]], type:'scatter', mode:'markers', name:lbl+' inception',
+                               marker:{ color:col, size:9, symbol:'circle', line:{ color:'#fff', width:1.5 } },
+                               showlegend:false,
+                               hovertemplate:'<b>'+lbl+' Inception</b><br>R: %{x:.3f} \u03a9<br>X: %{y:.3f} \u03a9<extra></extra>' });
+            if (rFlt.length > 1)
+                traces.push({ x:[rFlt[rFlt.length-1]], y:[xFlt[xFlt.length-1]], type:'scatter', mode:'markers', name:lbl+' clearing',
+                               marker:{ color:col, size:9, symbol:'x-thin', line:{ color:col, width:2.5 } },
+                               showlegend:false,
+                               hovertemplate:'<b>'+lbl+' Clearing</b><br>R: %{x:.3f} \u03a9<br>X: %{y:.3f} \u03a9<extra></extra>' });
+        });
+        return traces;
+    }
+
+    /* ---- layout ---- */
+    function buildLayout() {
+        var ann = ST.zones.map(function (z, i) {
+            var ax = ST.char === 'quad' ? z.rF * 0.8 : z.reach * Math.cos(z.ang * Math.PI / 180) * 0.85;
+            var ay = ST.char === 'quad' ? z.xF * 0.85 : z.reach * Math.sin(z.ang * Math.PI / 180) * 0.85;
+            return { x:ax, y:ay, xref:'x', yref:'y', text:'<b>Z'+(i+1)+'</b>',
+                     font:{ size:9, color:ZC[i] }, showarrow:false, bgcolor:'rgba(255,255,255,.75)' };
+        });
+        return {
+            xaxis: { title:{ text:'R (\u03a9)', font:{size:11} }, zeroline:true, zerolinecolor:'#9ca3af', zerolinewidth:1, gridcolor:'#e5e7eb', gridwidth:0.5, automargin:true },
+            yaxis: { title:{ text:'X (\u03a9)', font:{size:11} }, zeroline:true, zerolinecolor:'#9ca3af', zerolinewidth:1, gridcolor:'#e5e7eb', gridwidth:0.5, automargin:true },
+            paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
+            margin: { l:52, r:14, t:10, b:44 },
+            legend: { x:1, xanchor:'right', y:1, font:{ size:9 }, bgcolor:'rgba(255,255,255,.9)' },
+            shapes: zoneShapes(),
+            annotations: ann
+        };
+    }
+
+    var CFG = { responsive: true, displayModeBar: false };
+
+    function initPlots() {
+        var gT = buildTraces(GND), pT = buildTraces(PP), ly = buildLayout();
+        if (document.getElementById('locusPlotGnd') && gT.length) { Plotly.newPlot('locusPlotGnd', gT, ly, CFG); gndOk = true; }
+        if (document.getElementById('locusPlotPP')  && pT.length) { Plotly.newPlot('locusPlotPP',  pT, ly, CFG); ppOk  = true; }
+    }
+
+    /* ---- public API exposed on window.LOCUS ---- */
+    window.LOCUS = {
+        redraw: function () {
+            var gT = buildTraces(GND), pT = buildTraces(PP), ly = buildLayout();
+            if (gndOk) Plotly.react('locusPlotGnd', gT, ly);
+            if (ppOk)  Plotly.react('locusPlotPP',  pT, ly);
+        },
+        setChar: function (t) {
+            ST.char = t;
+            var bQ = document.getElementById('locusBtnQuad'), bM = document.getElementById('locusBtnMho');
+            if (bQ) { bQ.style.background = t === 'quad' ? 'var(--accent)' : 'transparent'; bQ.style.color = t === 'quad' ? '#0b0e13' : 'var(--text-muted)'; }
+            if (bM) { bM.style.background = t === 'mho'  ? 'var(--accent)' : 'transparent'; bM.style.color = t === 'mho'  ? '#0b0e13' : 'var(--text-muted)'; }
+            renderZoneInputs();
+            LOCUS.redraw();
+        },
+        setTab: function (tab) {
+            ST.tab = tab;
+            document.querySelectorAll('.locus-tab').forEach(function (b) { b.classList.remove('active'); });
+            var map = { both:'locusTabBoth', gnd:'locusTabGnd', pp:'locusTabPP' };
+            var ab = document.getElementById(map[tab]); if (ab) ab.classList.add('active');
+            var grid = document.getElementById('locusChartsGrid');
+            var wG = document.getElementById('locusWrapGnd'), wP = document.getElementById('locusWrapPP');
+            if (!grid) return;
+            if (tab === 'both') {
+                grid.style.gridTemplateColumns = '1fr 1fr';
+                if (wG) wG.style.display = ''; if (wP) wP.style.display = '';
+            } else if (tab === 'gnd') {
+                grid.style.gridTemplateColumns = '1fr';
+                if (wG) wG.style.display = ''; if (wP) wP.style.display = 'none';
+            } else {
+                grid.style.gridTemplateColumns = '1fr';
+                if (wG) wG.style.display = 'none'; if (wP) wP.style.display = '';
+            }
+            setTimeout(function () {
+                if (gndOk) Plotly.relayout('locusPlotGnd', { autosize: true });
+                if (ppOk)  Plotly.relayout('locusPlotPP',  { autosize: true });
+            }, 50);
+        },
+        autoScale: function () {
+            var allR = [], allX = [];
+            GND.concat(PP).forEach(function (name) {
+                var d = loops[name]; if (!d) return;
+                d.r.forEach(function (v, i) { if (v !== null && d.x[i] !== null) { allR.push(v); allX.push(d.x[i]); } });
+            });
+            ST.zones.forEach(function (z) {
+                if (ST.char === 'quad') { allR.push(z.rF, -z.rR); allX.push(z.xF, -z.xR); }
+                else { allR.push(z.reach, -z.reach * 0.3); allX.push(z.reach, -z.reach * 0.3); }
+            });
+            if (!allR.length) return;
+            var rMn = Math.min.apply(null, allR), rMx = Math.max.apply(null, allR);
+            var xMn = Math.min.apply(null, allX), xMx = Math.max.apply(null, allX);
+            var rP = (rMx - rMn) * 0.13 || 1, xP = (xMx - xMn) * 0.13 || 1;
+            var upd = { 'xaxis.range': [rMn - rP, rMx + rP], 'yaxis.range': [xMn - xP, xMx + xP] };
+            if (gndOk) Plotly.relayout('locusPlotGnd', upd);
+            if (ppOk)  Plotly.relayout('locusPlotPP',  upd);
+        },
+        exportPng: function () {
+            var id = ST.tab === 'pp' ? 'locusPlotPP' : 'locusPlotGnd';
+            if (document.getElementById(id))
+                Plotly.downloadImage(id, { format:'png', width:900, height:620, filename:'impedansi_locus' });
+        }
+    };
+
+    /* ================================================================
+       RIO / XRIO relay settings import
+       Ported from comtrade_locus_analyzer_v3 (Siemens RIO + generic XRIO)
+       ================================================================ */
+
+    var importedRelay = null;
+    var relayOverlays = { phGnd: [], phPh: [] };  // extra Plotly shapes from relay
+
+    function polygonFromLineChain(lines) {
+        if (!lines || lines.length < 3) return null;
+        var coeffs = lines.map(function (L) {
+            var th = L.ang * Math.PI / 180, dx = Math.cos(th), dy = Math.sin(th);
+            var a = -dy, b = dx, c = a * L.r + b * L.x;
+            return { a: a, b: b, c: c };
+        });
+        var verts = [];
+        for (var i = 0; i < coeffs.length; i++) {
+            var L1 = coeffs[i], L2 = coeffs[(i + 1) % coeffs.length];
+            var det = L1.a * L2.b - L2.a * L1.b;
+            if (Math.abs(det) < 1e-12) continue;
+            var r = (L1.c * L2.b - L2.c * L1.b) / det;
+            var x = (L1.a * L2.c - L2.a * L1.c) / det;
+            if (isFinite(r) && isFinite(x)) verts.push({ r: r, x: x });
+        }
+        var out = [], eps = 1e-6;
+        verts.forEach(function (p) {
+            if (!out.find(function (q) { return Math.abs(q.r - p.r) < eps && Math.abs(q.x - p.x) < eps; })) out.push(p);
+        });
+        return out.length >= 3 ? out : null;
+    }
+
+    function parseRIO(text) {
+        var zones = [];
+        var blocks = text.match(/BEGIN\s+ZONE[\s\S]*?END\s+ZONE/gmi) || [];
+        blocks.forEach(function (block) {
+            var index     = parseInt(((block.match(/\bINDEX\s+([0-9]+)/i) || [])[1] || 'NaN'), 10);
+            var faultLoop = ((block.match(/\bFAULTLOOP\s+([A-Z]+)/i) || [])[1] || '').toUpperCase();
+            var label     = ((block.match(/\bLABEL\s+(.+)/i) || [])[1] || '').trim();
+            var active    = ((block.match(/\bACTIVE\s+(YES|NO)/i) || [])[1] || 'YES').toUpperCase() === 'YES';
+            if (!active) return;
+
+            var mhoBlock = block.match(/BEGIN\s+MHOSHAPE[\s\S]*?END\s+MHOSHAPE/mi);
+            if (mhoBlock) {
+                var ang   = parseFloat(((mhoBlock[0].match(/\bANGLE\s+([-0-9.]+)/i) || [])[1] || 'NaN'));
+                var reach = parseFloat(((mhoBlock[0].match(/\bREACH\s+([-0-9.]+)/i) || [])[1] || 'NaN'));
+                zones.push({ index: index, faultLoop: faultLoop, label: label, shapeType: 'mho', angle: ang, reach: reach });
+                return;
+            }
+            var shpBlock = block.match(/BEGIN\s+SHAPE[\s\S]*?END\s+SHAPE/mi);
+            if (shpBlock) {
+                var lineRe = /LINE\s+([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*(LEFT|RIGHT)/gmi;
+                var lm, lineArr = [];
+                while ((lm = lineRe.exec(shpBlock[0])) !== null)
+                    lineArr.push({ r: parseFloat(lm[1]), x: parseFloat(lm[2]), ang: parseFloat(lm[3]), side: lm[4].toUpperCase() });
+                var poly = polygonFromLineChain(lineArr);
+                if (poly && poly.length >= 3) zones.push({ index: index, faultLoop: faultLoop, label: label, shapeType: 'poly', poly: poly });
+            }
+        });
+        var phGnd = zones.filter(function (z) { return z.faultLoop === 'LN'; }).sort(function (a, b) { return a.index - b.index; });
+        var phPh  = zones.filter(function (z) { return z.faultLoop === 'LL'; }).sort(function (a, b) { return a.index - b.index; });
+        return { kind: 'rio', phGnd: phGnd, phPh: phPh };
+    }
+
+    function parseXRIO(text) {
+        var parser = new DOMParser();
+        var xml = parser.parseFromString(text, 'application/xml');
+        var params = Array.from(xml.querySelectorAll('Parameter'));
+        var dist = params.filter(function (p) { return (p.getAttribute('Id') || '').includes('APP1_DISTANCE'); });
+        function get(name) {
+            var p = dist.find(function (x) { return x.querySelector('Name') && x.querySelector('Name').textContent === name; });
+            return p ? (p.querySelector('Value') ? p.querySelector('Value').textContent : null) : null;
+        }
+        function buildZones(prefix) {
+            var out = [];
+            for (var i = 1; i <= 5; i++) {
+                var X  = get('X1' + prefix + i);
+                var R  = get('R1' + prefix + i);
+                var RF = get('RF' + prefix + i);
+                var t  = get('t'  + prefix + i);
+                if (X != null && X !== '' && R != null && R !== '')
+                    out.push({ index: i, X: parseFloat(X), R: parseFloat(R),
+                               RF: (RF != null && RF !== '') ? parseFloat(RF) : null,
+                               t:  (t  != null && t  !== '') ? parseFloat(t)  : null });
+            }
+            return out;
+        }
+        return { kind: 'xrio', phGnd: buildZones('PEZ'), phPh: buildZones('PPZ') };
+    }
+
+    function _relayZoneColor(i) { return ZC[i] || '#888'; }
+
+    function _polyToPlotlyShape(pts, color) {
+        if (!pts || pts.length < 3) return null;
+        var path = 'M ' + pts[0].r + ',' + pts[0].x;
+        for (var i = 1; i < pts.length; i++) path += ' L ' + pts[i].r + ',' + pts[i].x;
+        path += ' Z';
+        return { type: 'path', path: path, fillcolor: color + '22',
+                 line: { color: color, width: 2, dash: 'solid' }, layer: 'above' };
+    }
+
+    function _mhoToPlotlyShape(reach, angle, color) {
+        var a = angle * Math.PI / 180, cx = reach * Math.cos(a) / 2, cy = reach * Math.sin(a) / 2, r = reach / 2;
+        return { type: 'circle', x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r,
+                 fillcolor: color + '22', line: { color: color, width: 2, dash: 'solid' }, layer: 'above' };
+    }
+
+    function applyRelayToZones(loopKey) {
+        if (!importedRelay) return;
+        var list = importedRelay[loopKey] || [];
+        if (!list.length) return;
+
+        relayOverlays[loopKey] = [];
+
+        list.slice(0, 3).forEach(function (z, idx) {
+            var color = _relayZoneColor(idx);
+
+            if (importedRelay.kind === 'rio') {
+                if (z.shapeType === 'mho') {
+                    // Update zone to MHO mode with imported reach/angle
+                    if (idx < ST.zones.length) {
+                        ST.zones[idx].reach = z.reach;
+                        ST.zones[idx].ang   = z.angle || 85;
+                    }
+                    relayOverlays[loopKey].push(_mhoToPlotlyShape(z.reach, z.angle || 85, color));
+                } else if (z.shapeType === 'poly') {
+                    // Keep manual inputs, overlay exact polygon as additional shape
+                    var sh = _polyToPlotlyShape(z.poly, color);
+                    if (sh) relayOverlays[loopKey].push(sh);
+                }
+            } else if (importedRelay.kind === 'xrio') {
+                // Map X1/RF to quad parameters
+                if (idx < ST.zones.length) {
+                    ST.zones[idx].xF  = z.X;
+                    ST.zones[idx].rF  = z.RF != null ? z.RF : (z.R * 0.8);
+                    ST.zones[idx].xR  = Math.max(0.5, z.X * 0.15);
+                    ST.zones[idx].rR  = Math.max(1.0, (z.RF != null ? z.RF : z.R) * 0.3);
+                    ST.zones[idx].ang = z.R > 0 ? Math.round(Math.atan2(z.X, z.R) * 180 / Math.PI) : 85;
+                }
+            }
+        });
+
+        renderZoneInputs();
+        LOCUS.redraw();
+    }
+
+    function buildZoneShapesWithOverlay(loopKey) {
+        var base = zoneShapes();
+        var overlays = relayOverlays[loopKey] || [];
+        return base.concat(overlays);
+    }
+
+    function setRelayStatus(msg, ok) {
+        var el = document.getElementById('locusRelayStatus');
+        if (el) { el.textContent = msg; el.style.color = ok ? 'var(--accent)' : 'var(--text-muted)'; }
+    }
+
+    function updateRelayButtons() {
+        var imp = importedRelay;
+        var hasGnd = imp && imp.phGnd && imp.phGnd.length > 0;
+        var hasPP  = imp && imp.phPh  && imp.phPh.length  > 0;
+        var hasOv  = relayOverlays.phGnd.length || relayOverlays.phPh.length;
+        function setBtn(id, enabled) {
+            var b = document.getElementById(id);
+            if (!b) return;
+            b.disabled = !enabled;
+            b.style.cursor = enabled ? 'pointer' : 'not-allowed';
+            b.style.color  = enabled ? 'var(--text)' : 'var(--text-muted)';
+            b.style.borderColor = enabled ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.08)';
+        }
+        setBtn('locusApplyGnd',  hasGnd);
+        setBtn('locusApplyPP',   hasPP);
+        setBtn('locusClearRelay', hasOv);
+    }
+
+    function wireRelayImport() {
+        var fileInput = document.getElementById('locusRelayFile');
+        if (!fileInput) return;
+        fileInput.addEventListener('change', function (e) {
+            var file = e.target.files && e.target.files[0];
+            if (!file) return;
+            var ext = (file.name.split('.').pop() || '').toLowerCase();
+            var reader = new FileReader();
+            reader.onload = function (ev) {
+                var text = ev.target.result;
+                try {
+                    if (ext === 'rio')       importedRelay = parseRIO(text);
+                    else if (ext === 'xrio') importedRelay = parseXRIO(text);
+                    else { setRelayStatus('Format tidak didukung (butuh .rio atau .xrio).', false); return; }
+
+                    var gn = importedRelay.phGnd.length, pn = importedRelay.phPh.length;
+                    setRelayStatus(
+                        file.name + ' \u2014 ' + importedRelay.kind.toUpperCase() +
+                        ' | Ph-Gnd: ' + gn + ' zona, Ph-Ph: ' + pn + ' zona. Tekan tombol \u2192 untuk terapkan.',
+                        true
+                    );
+                    updateRelayButtons();
+                } catch (err) {
+                    setRelayStatus('Gagal parse file relay: ' + (err && err.message ? err.message : String(err)), false);
+                    importedRelay = null;
+                    updateRelayButtons();
+                }
+            };
+            reader.readAsText(file);
+        });
+    }
+
+    /* ---- override buildLayout to inject relay overlays ---- */
+    var _origBuildLayout = buildLayout;
+    var _activeRelayLoop = 'phGnd';  // tracks which loop is being drawn
+    function buildLayoutWithOverlay(loopKey) {
+        var ly = _origBuildLayout();
+        ly.shapes = (ly.shapes || []).concat(relayOverlays[loopKey] || []);
+        return ly;
+    }
+
+    /* patch initPlots / redraw to pass loopKey to layout builder */
+    function initPlotsRelay() {
+        var gT = buildTraces(GND), pT = buildTraces(PP);
+        if (document.getElementById('locusPlotGnd') && gT.length) {
+            Plotly.newPlot('locusPlotGnd', gT, buildLayoutWithOverlay('phGnd'), CFG); gndOk = true;
+        }
+        if (document.getElementById('locusPlotPP') && pT.length) {
+            Plotly.newPlot('locusPlotPP', pT, buildLayoutWithOverlay('phPh'), CFG); ppOk = true;
+        }
+    }
+
+    /* expose on LOCUS namespace */
+    LOCUS.applyRelay = function (loopKey) { applyRelayToZones(loopKey); updateRelayButtons(); };
+    LOCUS.clearRelay = function () {
+        relayOverlays = { phGnd: [], phPh: [] };
+        updateRelayButtons();
+        LOCUS.redraw();
+    };
+    /* patch redraw to include overlays */
+    var _origRedraw = LOCUS.redraw;
+    LOCUS.redraw = function () {
+        var gT = buildTraces(GND), pT = buildTraces(PP);
+        if (gndOk) Plotly.react('locusPlotGnd', gT, buildLayoutWithOverlay('phGnd'));
+        if (ppOk)  Plotly.react('locusPlotPP',  pT, buildLayoutWithOverlay('phPh'));
+    };
+
+    wireRelayImport();
+    renderZoneInputs();
+    initPlotsRelay();
+})();
+</script>
+{% endif %}
 {% endblock %}
