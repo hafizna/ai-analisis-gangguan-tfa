@@ -1361,6 +1361,10 @@ def _build_analysis_payload(result, original_filename: str, ts: str, cfg_path: s
         analysis_payload["fault_inception_ms"],
         analysis_payload["fault_duration_ms"],
     )
+    analysis_payload["locus_data"] = _build_locus_payload(
+        str(cfg_path),
+        analysis_payload["fault_inception_ms"],
+    )
     return analysis_payload
 
 
@@ -2102,6 +2106,145 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
         "channels": channels,
         "digital": digital,
     }
+
+def _build_locus_payload(cfg_path: str, inception_ms: float = 0.0) -> dict:
+    """
+    Compute per-sample impedance locus (R-X plane) for all 6 measurement loops.
+
+    Uses a sliding 1-cycle DFT phasor (k=1) computed via numpy fancy indexing so
+    the whole operation is vectorised and avoids Python loops over samples.
+
+    Returns: {"t": [...ms...], "loops": {"Z_L1E": {"r":[...], "x":[...]}, ...}, "meta": {...}}
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return {}
+
+    try:
+        record = parse_comtrade(cfg_path)
+    except Exception:
+        return {}
+
+    if record is None or not hasattr(record, "time") or len(record.time) < 10:
+        return {}
+
+    freq = float(record.frequency or 50.0)
+    t_s = np.array(record.time, dtype=float)
+    n = len(t_s)
+    if n < 10:
+        return {}
+
+    dt = float(np.median(np.diff(t_s))) if n > 1 else 0.0
+    if not (dt > 0 and np.isfinite(dt)):
+        return {}
+
+    sample_rate = 1.0 / dt
+    N = max(8, int(round(sample_rate / freq)))  # samples per cycle
+
+    # Collect signals by canonical name (first match wins)
+    sigs: dict = {}
+    for ch in record.analog_channels:
+        canon = (getattr(ch, "canonical_name", None) or "").upper().strip()
+        if canon in ("VA", "VB", "VC", "IA", "IB", "IC", "IN") and canon not in sigs:
+            arr = np.array(ch.samples, dtype=float)
+            if len(arr) == n:
+                sigs[canon] = arr
+
+    if not any(f"V{p}" in sigs for p in "ABC") or not any(f"I{p}" in sigs for p in "ABC"):
+        return {}
+
+    # Output indices: spread evenly, capped at TARGET points
+    TARGET = 1500
+    stride = max(1, n // TARGET)
+    out_idx = np.arange(0, n, stride)
+    m = len(out_idx)
+
+    def slide_phasor(sig: "np.ndarray") -> "np.ndarray":
+        """DFT bin k=1 of a sliding N-sample causal window, evaluated at out_idx."""
+        padded = np.concatenate([np.zeros(N - 1, dtype=float), sig])
+        row_i = out_idx[:, None] + np.arange(N, dtype=int)[None, :]  # (m, N)
+        windows = padded[row_i].astype(complex)                        # (m, N)
+        kernel = np.exp(-1j * 2.0 * np.pi * np.arange(N, dtype=float) / N)
+        return windows @ kernel                                         # (m,) complex
+
+    # Voltages stored as kV (primary) → multiply 1000 so Z comes out in Ohms
+    KSCALE = 1000.0
+    vp = {ph: slide_phasor(sigs[f"V{ph}"] * KSCALE) for ph in "ABC" if f"V{ph}" in sigs}
+    ip = {ph: slide_phasor(sigs[f"I{ph}"])           for ph in "ABCN" if f"I{ph}" in sigs}
+
+    if not vp or not ip:
+        return {}
+
+    # Residual / neutral current for zero-sequence compensation
+    if "N" in ip:
+        i_res = ip["N"]
+    elif all(p in ip for p in "ABC"):
+        i_res = ip["A"] + ip["B"] + ip["C"]
+    else:
+        i_res = np.zeros(m, dtype=complex)
+
+    # k0 factor (typical overhead line: 0.85 ∠ -5°)
+    k0 = 0.85 * np.exp(-1j * 5.0 * np.pi / 180.0)
+    MIN_I = 1.0  # A — avoid division noise
+
+    def z_gnd(ph: str):
+        if ph not in vp or ph not in ip:
+            return None
+        ic = ip[ph] + k0 * i_res
+        mag = np.abs(ic)
+        safe = np.where(mag > MIN_I, ic, np.ones(m, dtype=complex))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(mag > MIN_I, vp[ph] / safe, np.nan + 0j)
+
+    def z_pp(p1: str, p2: str):
+        if not (p1 in vp and p2 in vp and p1 in ip and p2 in ip):
+            return None
+        id_ = ip[p1] - ip[p2]
+        mag = np.abs(id_)
+        safe = np.where(mag > MIN_I * 2, id_, np.ones(m, dtype=complex))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(mag > MIN_I * 2, (vp[p1] - vp[p2]) / safe, np.nan + 0j)
+
+    # Time axis relative to inception
+    t_ms = t_s * 1000.0
+    t0 = float(inception_ms) if inception_ms else float(t_ms[0])
+    t_out = (t_ms[out_idx] - t0).tolist()
+
+    CLIP = 500.0  # Ohms — clip extreme pre-fault load impedance outliers
+
+    def serialize(z_arr):
+        if z_arr is None:
+            return None
+        r, x = np.real(z_arr), np.imag(z_arr)
+        ok = (np.abs(r) < CLIP) & (np.abs(x) < CLIP) & np.isfinite(r) & np.isfinite(x)
+        r, x = np.where(ok, r, np.nan), np.where(ok, x, np.nan)
+        def _lst(a):
+            return [None if not np.isfinite(v) else round(float(v), 3) for v in a]
+        return {"r": _lst(r), "x": _lst(x)}
+
+    loops = {}
+    for name, z_arr in [
+        ("Z_L1E", z_gnd("A")),
+        ("Z_L2E", z_gnd("B")),
+        ("Z_L3E", z_gnd("C")),
+        ("Z_L12", z_pp("A", "B")),
+        ("Z_L23", z_pp("B", "C")),
+        ("Z_L31", z_pp("C", "A")),
+    ]:
+        s = serialize(z_arr)
+        if s:
+            loops[name] = s
+
+    if not loops:
+        return {}
+
+    return {
+        "t": [round(v, 2) for v in t_out],
+        "loops": loops,
+        "meta": {"freq": freq, "sample_rate": round(sample_rate)},
+    }
+
 
 @app.route("/")
 def index():
