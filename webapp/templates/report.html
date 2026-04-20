@@ -11,7 +11,7 @@
         color: #0f172a;
         background: #fff;
         padding: 28px 32px;
-        max-width: 1120px;
+        max-width: 1240px;
         margin: 0 auto;
     }
 
@@ -131,7 +131,7 @@
         border: 1px solid #e2e8f0;
         border-radius: 10px;
         background: #fff;
-        padding: 12px 14px 10px;
+        padding: 14px 18px 12px;
         margin-top: 10px;
         page-break-inside: avoid;
         break-inside: avoid;
@@ -147,7 +147,7 @@
 
     .locus-plot {
         width: 100%;
-        height: 430px;
+        height: 500px;
     }
 
     /* ── Footer ── */
@@ -173,7 +173,7 @@
     @media print {
         .print-btn { display: none; }
         body { padding: 0; max-width: none; }
-        .locus-plot { height: 400px; }
+        .locus-plot { height: 460px; }
     }
 </style>
 </head>
@@ -427,12 +427,25 @@
     var FOCUS = locusCfg.locusFocus || {};
     var FOCUSED_LOOPS = Array.isArray(FOCUS.focused_loops) ? FOCUS.focused_loops.slice() : [];
 
-    function visibleLoopNames(loopNames) {
-        var available = loopNames.filter(function (name) { return loops[name]; });
-        if (FOCUSED_LOOPS.length) {
-            return available.filter(function (name) { return FOCUSED_LOOPS.indexOf(name) >= 0; });
-        }
-        return available;
+    function availableLoopNames(loopNames) {
+        return loopNames.filter(function (name) { return loops[name]; });
+    }
+
+    function isFocusedLoop(name) {
+        return !FOCUSED_LOOPS.length || FOCUSED_LOOPS.indexOf(name) >= 0;
+    }
+
+    function traceStyle(name) {
+        var focused = isFocusedLoop(name);
+        return {
+            focused: focused,
+            lineWidth: focused ? 3.6 : 1.75,
+            opacity: focused ? 1 : 0.56,
+            startSize: focused ? 10 : 7,
+            startBorder: focused ? 1.8 : 1.2,
+            endSize: focused ? 11 : 8,
+            endBorder: focused ? 2.5 : 1.6
+        };
     }
 
     function deepCopy(obj) {
@@ -726,7 +739,7 @@
 
     function buildTraces(loopNames) {
         var traces = [];
-        visibleLoopNames(loopNames).forEach(function (name) {
+        availableLoopNames(loopNames).forEach(function (name) {
             var loop = loops[name];
             if (!loop || !Array.isArray(loop.r) || !Array.isArray(loop.x)) return;
 
@@ -747,6 +760,7 @@
 
             var color = COLORS[name] || '#64748b';
             var label = name.replace('Z_', 'Z ');
+            var style = traceStyle(name);
 
             if (faultR.length) {
                 traces.push({
@@ -755,7 +769,8 @@
                     type: 'scatter',
                     mode: 'lines',
                     name: label,
-                    line: { color: color, width: 2.2 },
+                    line: { color: color, width: style.lineWidth },
+                    opacity: style.opacity,
                     hovertemplate: '<b>' + label + '</b><br>R: %{x:.3f} \\u03A9<br>X: %{y:.3f} \\u03A9<extra></extra>'
                 });
                 traces.push({
@@ -764,7 +779,8 @@
                     type: 'scatter',
                     mode: 'markers',
                     name: label + ' inception',
-                    marker: { color: color, size: 9, symbol: 'circle', line: { color: '#ffffff', width: 1.6 } },
+                    marker: { color: color, size: style.startSize, symbol: 'circle', line: { color: '#ffffff', width: style.startBorder } },
+                    opacity: style.opacity,
                     showlegend: false,
                     hovertemplate: '<b>' + label + ' inception</b><br>R: %{x:.3f} \\u03A9<br>X: %{y:.3f} \\u03A9<extra></extra>'
                 });
@@ -775,7 +791,8 @@
                         type: 'scatter',
                         mode: 'markers',
                         name: label + ' clearing',
-                        marker: { color: color, size: 10, symbol: 'x-thin', line: { color: color, width: 2.3 } },
+                        marker: { color: color, size: style.endSize, symbol: 'x-thin', line: { color: color, width: style.endBorder } },
+                        opacity: style.opacity,
                         showlegend: false,
                         hovertemplate: '<b>' + label + ' clearing</b><br>R: %{x:.3f} \\u03A9<br>X: %{y:.3f} \\u03A9<extra></extra>'
                     });
@@ -787,7 +804,7 @@
 
     function traceBounds(loopNames) {
         var bounds = null;
-        visibleLoopNames(loopNames).forEach(function (name) {
+        availableLoopNames(loopNames).forEach(function (name) {
             var loop = loops[name];
             if (!loop || !Array.isArray(loop.r) || !Array.isArray(loop.x)) return;
             var points = [];
@@ -813,8 +830,8 @@
 
         var rSpan = Math.max(bounds.rMax - bounds.rMin, 8);
         var xSpan = Math.max(bounds.xMax - bounds.xMin, 8);
-        var rPad = rSpan * 0.08;
-        var xPad = xSpan * 0.08;
+        var rPad = Math.max(rSpan * 0.06, 1.2);
+        var xPad = Math.max(xSpan * 0.08, 1.2);
         return {
             x: [bounds.rMin - rPad, bounds.rMax + rPad],
             y: [bounds.xMin - xPad, bounds.xMax + xPad]
