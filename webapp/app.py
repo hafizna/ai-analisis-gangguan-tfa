@@ -2211,6 +2211,8 @@ def _build_locus_payload(
     ct_secondary: float = None,
     vt_primary: float = None,
     vt_secondary: float = None,
+    k0_mag: float = 0.85,
+    k0_ang: float = -5.0,
 ) -> dict:
     """
     Compute per-sample impedance locus (R-X plane) for all 6 measurement loops.
@@ -2258,6 +2260,31 @@ def _build_locus_payload(
     if not any(f"V{p}" in sigs for p in "ABC") or not any(f"I{p}" in sigs for p in "ABC"):
         return {}
 
+    # MIMIC filter: remove DC offset from current signals before phasor estimation.
+    # Replicates the relay's internal algorithm (IIR form):
+    #   y[n] = x[n] - x[n-1] + alpha * y[n-1]
+    # where alpha = exp(-2*pi*f*dt / XR).  DC → 0, AC fundamental passes with
+    # near-unity gain (~1.0) and a small fixed phase advance (~5-6°).
+    # Without this, lightning-induced DC offset severely distorts the DFT phasor
+    # estimate for the first several cycles, producing shapes that diverge from
+    # what relay analysis tools (e.g. SIGRA) display.
+    _XR = 10.0  # default X/R; affects DC decay rate only, not fundamental gain
+    _mimic_alpha = float(np.exp(-2.0 * np.pi * freq * dt / _XR))
+    def _mimic(s: "np.ndarray") -> "np.ndarray":
+        try:
+            from scipy.signal import lfilter
+            return lfilter([1.0, -1.0], [1.0, -_mimic_alpha], s)
+        except Exception:
+            out = np.empty_like(s)
+            out[0] = s[0]
+            for i in range(1, len(s)):
+                out[i] = s[i] - s[i - 1] + _mimic_alpha * out[i - 1]
+            return out
+
+    for _k in list(sigs):
+        if _k.startswith("I"):
+            sigs[_k] = _mimic(sigs[_k])
+
     # Output indices: spread evenly, capped at TARGET points
     TARGET = 1500
     stride = max(1, n // TARGET)
@@ -2298,8 +2325,8 @@ def _build_locus_payload(
     else:
         i_res = np.zeros(m, dtype=complex)
 
-    # k0 factor (typical overhead line: 0.85 ∠ -5°)
-    k0 = 0.85 * np.exp(-1j * 5.0 * np.pi / 180.0)
+    # k0 zero-sequence compensation factor (user-configurable, default 0.85 ∠ -5°)
+    k0 = float(k0_mag) * np.exp(1j * float(k0_ang) * np.pi / 180.0)
     MIN_I = 1.0  # A — avoid division noise
 
     def z_gnd(ph: str):
@@ -2875,6 +2902,19 @@ def recalculate_with_ratio():
     vt_s = _f(request.form.get("vt_secondary"), 1.0)
 
     updated = _recalculate_analysis_with_ratio(analysis, ct_p, ct_s, vt_p, vt_s)
+
+    # Rebuild locus with the new ratios so the plot is not stale.
+    cfg_path = analysis.get("cfg_path")
+    if cfg_path:
+        updated["locus_data"] = _build_locus_payload(
+            cfg_path,
+            updated.get("fault_inception_ms"),
+            ct_primary=ct_p,
+            ct_secondary=ct_s,
+            vt_primary=vt_p,
+            vt_secondary=vt_s,
+        )
+
     _clear_analysis_store()
     _save_analysis_to_store(updated)
     return redirect(url_for("results"))
@@ -2958,6 +2998,35 @@ def _build_analysis_json(result, original_filename: str, ts: str) -> dict:
         "evidence": result.evidence,
         "recommendation": result.recommendation,
     }
+
+
+@app.route("/api/rebuild-locus", methods=["POST"])
+def api_rebuild_locus():
+    """Recompute locus data with custom k0 and/or CT/VT ratios, return JSON."""
+    analysis = _load_analysis_from_store()
+    if not analysis:
+        return jsonify({"error": "no analysis in store"}), 404
+    cfg_path = analysis.get("cfg_path")
+    if not cfg_path:
+        return jsonify({"error": "cfg_path not found in analysis"}), 400
+
+    try:
+        k0_mag = float(request.form.get("k0_mag", 0.85))
+        k0_ang = float(request.form.get("k0_ang", -5.0))
+    except (TypeError, ValueError):
+        k0_mag, k0_ang = 0.85, -5.0
+
+    locus = _build_locus_payload(
+        cfg_path,
+        analysis.get("fault_inception_ms"),
+        ct_primary=analysis.get("ratio_base_ct_primary"),
+        ct_secondary=analysis.get("ratio_base_ct_secondary"),
+        vt_primary=analysis.get("ratio_base_vt_primary"),
+        vt_secondary=analysis.get("ratio_base_vt_secondary"),
+        k0_mag=k0_mag,
+        k0_ang=k0_ang,
+    )
+    return jsonify(locus)
 
 
 @app.route("/api/status")

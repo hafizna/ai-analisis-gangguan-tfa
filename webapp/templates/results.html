@@ -936,7 +936,21 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <button id="locusBtnMho"  onclick="LOCUS.setChar('mho')"  style="padding:5px 12px; border:none; cursor:pointer; font-size:11px; font-weight:700; background:transparent; color:var(--text-muted); transition:background .15s,color .15s;">MHO</button>
             </div>
             <div id="locusZonesContainer" style="display:flex; gap:10px; flex-wrap:wrap; flex:1;"></div>
-            <button onclick="LOCUS.redraw()" style="padding:5px 12px; border:1px solid rgba(77,212,166,.4); border-radius:7px; background:rgba(77,212,166,.12); color:var(--accent); font-size:11px; font-weight:700; cursor:pointer; flex-shrink:0;">&#8635; Terapkan</button>
+            <!-- k0 zero-sequence compensation factor -->
+            <div style="display:flex; align-items:center; gap:5px; padding:5px 9px; background:rgba(0,0,0,.15); border-radius:7px; border-left:3px solid rgba(251,191,36,.6); flex-shrink:0;">
+                <span style="font-size:10px; color:rgba(251,191,36,.9); font-weight:700; white-space:nowrap;">k&#8320;</span>
+                <div style="display:flex;flex-direction:column;gap:1px;">
+                    <label style="font-size:9px;color:var(--text-muted);">|k&#8320;|</label>
+                    <input type="number" id="locusK0Mag" value="0.85" step="0.01" min="0" max="2"
+                           style="width:50px;padding:2px 4px;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.12);border-radius:5px;color:var(--text);font-size:11px;">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:1px;">
+                    <label style="font-size:9px;color:var(--text-muted);">&#8736;&#176;</label>
+                    <input type="number" id="locusK0Ang" value="-5" step="1" min="-90" max="90"
+                           style="width:45px;padding:2px 4px;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.12);border-radius:5px;color:var(--text);font-size:11px;">
+                </div>
+            </div>
+            <button id="locusTerapkanBtn" onclick="LOCUS.terapkan(this)" style="padding:5px 12px; border:1px solid rgba(77,212,166,.4); border-radius:7px; background:rgba(77,212,166,.12); color:var(--accent); font-size:11px; font-weight:700; cursor:pointer; flex-shrink:0;">&#8635; Terapkan</button>
         </div>
         <!-- Row 2: RIO/XRIO relay file import -->
         <div style="padding:8px 16px 10px; border-top:1px solid rgba(255,255,255,.06); display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
@@ -1344,7 +1358,9 @@ _refreshCtptStatusOnly();
         char: 'quad',
         zones: defZones(voltKv),
         tab: FOCUS.preferred_tab || 'both',
-        focusMode: FOCUS.default_mode || (FOCUSED_LOOPS.length ? 'faulted' : 'all')
+        focusMode: FOCUS.default_mode || (FOCUSED_LOOPS.length ? 'faulted' : 'all'),
+        k0Mag: 0.85,   // currently applied values (match server default)
+        k0Ang: -5.0
     };
 
     /* ---- zone settings UI ---- */
@@ -1475,12 +1491,42 @@ _refreshCtptStatusOnly();
         if (document.getElementById('locusPlotPP')  && pT.length) { Plotly.newPlot('locusPlotPP',  pT, ly, CFG); ppOk  = true; }
     }
 
+    /* ---- internal redraw (zones only, no server call) ---- */
+    function _redrawPlots() {
+        var gT = buildTraces(GND), pT = buildTraces(PP), ly = buildLayout();
+        if (gndOk) Plotly.react('locusPlotGnd', gT, ly);
+        if (ppOk)  Plotly.react('locusPlotPP',  pT, ly);
+    }
+
     /* ---- public API exposed on window.LOCUS ---- */
     window.LOCUS = {
-        redraw: function () {
-            var gT = buildTraces(GND), pT = buildTraces(PP), ly = buildLayout();
-            if (gndOk) Plotly.react('locusPlotGnd', gT, ly);
-            if (ppOk)  Plotly.react('locusPlotPP',  pT, ly);
+        redraw: _redrawPlots,
+        /* Terapkan: rebuild locus from server if k0 changed, then redraw zones */
+        terapkan: function (btn) {
+            var newMag = parseFloat((document.getElementById('locusK0Mag') || {}).value) || 0.85;
+            var newAng = parseFloat((document.getElementById('locusK0Ang') || {}).value) || -5.0;
+            var k0Changed = Math.abs(newMag - ST.k0Mag) > 1e-4 || Math.abs(newAng - ST.k0Ang) > 1e-3;
+            if (!k0Changed) { _redrawPlots(); return; }
+
+            /* k0 changed — ask server to recompute locus data */
+            if (btn) { btn.disabled = true; btn.textContent = '...'; }
+            var fd = new FormData();
+            fd.append('k0_mag', newMag);
+            fd.append('k0_ang', newAng);
+            fetch('/api/rebuild-locus', { method: 'POST', body: fd })
+                .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+                .then(function (data) {
+                    if (data && data.loops) {
+                        loops = data.loops;
+                        ST.k0Mag = newMag;
+                        ST.k0Ang = newAng;
+                    }
+                    _redrawPlots();
+                })
+                .catch(function (err) { console.warn('rebuild-locus error', err); _redrawPlots(); })
+                .finally(function () {
+                    if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; Terapkan'; }
+                });
         },
         setChar: function (t) {
             ST.char = t;
