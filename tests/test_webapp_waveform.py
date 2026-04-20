@@ -50,6 +50,30 @@ def test_extract_cfg_ratios_marks_primary_native(monkeypatch):
     assert ratios["vt_primary_native"] is True
 
 
+def test_build_locus_focus_context_single_line_to_ground():
+    focus = webapp_app._build_locus_focus_context("SLG", "B")
+    assert focus["focused_loops"] == ["Z_L2E"]
+    assert focus["focused_gnd_loops"] == ["Z_L2E"]
+    assert focus["focused_pp_loops"] == []
+    assert focus["preferred_tab"] == "gnd"
+    assert focus["default_mode"] == "faulted"
+
+
+def test_build_locus_focus_context_double_line_to_ground():
+    focus = webapp_app._build_locus_focus_context("DLG", "BC")
+    assert focus["focused_gnd_loops"] == ["Z_L2E", "Z_L3E"]
+    assert focus["focused_pp_loops"] == ["Z_L23"]
+    assert focus["preferred_tab"] == "both"
+
+
+def test_build_locus_focus_context_line_to_line():
+    focus = webapp_app._build_locus_focus_context("LL", "AB")
+    assert focus["focused_loops"] == ["Z_L12"]
+    assert focus["focused_gnd_loops"] == []
+    assert focus["focused_pp_loops"] == ["Z_L12"]
+    assert focus["preferred_tab"] == "pp"
+
+
 def test_resolve_ratio_defaults_keeps_inputs_blank_when_metadata_missing():
     resolved = webapp_app._resolve_ratio_defaults(
         {

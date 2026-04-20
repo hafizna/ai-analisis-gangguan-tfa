@@ -890,6 +890,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             <button class="btn btn-outline locus-tab active" id="locusTabBoth" onclick="LOCUS.setTab('both')">Keduanya</button>
             <button class="btn btn-outline locus-tab" id="locusTabGnd" onclick="LOCUS.setTab('gnd')">Phase-Ground</button>
             <button class="btn btn-outline locus-tab" id="locusTabPP" onclick="LOCUS.setTab('pp')">Phase-Phase</button>
+            <button class="btn btn-outline" id="locusFocusBtn" onclick="LOCUS.toggleFocusMode()">Fokus Gangguan</button>
             <button class="btn btn-outline" onclick="LOCUS.autoScale()">Auto Scale</button>
             <span style="display:inline-flex; align-items:center; gap:6px; border-left:1px solid var(--border); padding-left:10px; margin-left:2px;">
                 <button class="btn btn-outline" id="locusPlayBtn" onclick="LOCUS.playToggle()" title="Play/Pause locus animation">&#9654; Play</button>
@@ -903,7 +904,6 @@ textarea.form-control { min-height: 80px; resize: vertical; }
                 <span id="locusTimeDisp" style="font-size:10px; color:var(--text-muted); min-width:60px; text-align:right;">t = — ms</span>
             </span>
             <button class="btn btn-outline" onclick="LOCUS.exportPng()">&#8595; PNG</button>
-            <button class="btn btn-outline" onclick="LOCUS.printReport()" title="Print focused zone report">&#128438; Print</button>
         </div>
     </div>
     <!-- Zone settings bar -->
@@ -1243,7 +1243,8 @@ _refreshCtptStatusOnly();
     "faultType":    analysis.fault_type | default(''),
     "faultedPhases":analysis.faulted_phases | default(''),
     "label":        analysis.label | default(''),
-    "inceptionMs":  analysis.fault_inception_ms | default(0) | float
+    "inceptionMs":  analysis.fault_inception_ms | default(0) | float,
+    "locusFocus":   analysis.locus_focus | default({})
 } | tojson }}</script>
 <script>
 (function () {
@@ -1263,6 +1264,30 @@ _refreshCtptStatusOnly();
                    'Z_L12': '#0891b2', 'Z_L23': '#b45309', 'Z_L31': '#be123c' };
     var ZC = ['#10b981', '#3b82f6', '#f97316'];  // zone colours
     var gndOk = false, ppOk = false;
+    var FOCUS = _cfg.locusFocus || {};
+    var FOCUSED_LOOPS = Array.isArray(FOCUS.focused_loops) ? FOCUS.focused_loops.slice() : [];
+
+    function visibleLoopNames(loopNames) {
+        var available = loopNames.filter(function (name) { return loops[name]; });
+        if (ST.focusMode === 'faulted' && FOCUSED_LOOPS.length) {
+            return available.filter(function (name) { return FOCUSED_LOOPS.indexOf(name) >= 0; });
+        }
+        return available;
+    }
+
+    function shouldDrawPrefault() {
+        return ST.focusMode !== 'faulted';
+    }
+
+    function updateFocusButton() {
+        var btn = document.getElementById('locusFocusBtn');
+        if (!btn) return;
+        var focused = ST.focusMode === 'faulted';
+        btn.textContent = focused ? 'Fokus Gangguan' : 'Semua Loop';
+        btn.title = focused ? 'Klik untuk melihat semua loop termasuk pra-gangguan' : 'Klik untuk kembali fokus ke loop gangguan';
+        btn.style.borderColor = focused ? 'rgba(77,212,166,.45)' : '';
+        btn.style.color = focused ? 'var(--accent)' : '';
+    }
 
     /* ---- default zone reach presets by voltage level ---- */
     function defZones(kv) {
@@ -1277,7 +1302,12 @@ _refreshCtptStatusOnly();
         return JSON.parse(JSON.stringify(p[best]));  // deep copy
     }
 
-    var ST = { char: 'quad', zones: defZones(voltKv), tab: 'both' };
+    var ST = {
+        char: 'quad',
+        zones: defZones(voltKv),
+        tab: FOCUS.preferred_tab || 'both',
+        focusMode: FOCUS.default_mode || (FOCUSED_LOOPS.length ? 'faulted' : 'all')
+    };
 
     /* ---- zone settings UI ---- */
     function renderZoneInputs() {
@@ -1337,7 +1367,7 @@ _refreshCtptStatusOnly();
     /* ---- trace building ---- */
     function buildTraces(loopNames) {
         var traces = [];
-        loopNames.forEach(function (name) {
+        visibleLoopNames(loopNames).forEach(function (name) {
             var d = loops[name];
             if (!d || !d.r) return;
             var rPre=[], xPre=[], rFlt=[], xFlt=[];
@@ -1349,7 +1379,7 @@ _refreshCtptStatusOnly();
             }
             var col = COLORS[name] || '#888';
             var lbl = name.replace('Z_', 'Z ');
-            if (rPre.length > 1)
+            if (shouldDrawPrefault() && rPre.length > 1)
                 traces.push({ x:rPre, y:xPre, type:'scatter', mode:'lines', name:lbl+' (pra)',
                                line:{ color:col, width:0.8, dash:'dot' }, showlegend:false, hoverinfo:'x+y+name' });
             if (rFlt.length > 0)
@@ -1441,11 +1471,21 @@ _refreshCtptStatusOnly();
                 if (ppOk)  Plotly.relayout('locusPlotPP',  { autosize: true });
             }, 50);
         },
+        toggleFocusMode: function () {
+            ST.focusMode = ST.focusMode === 'faulted' ? 'all' : 'faulted';
+            updateFocusButton();
+            LOCUS.redraw();
+            LOCUS.autoScale();
+        },
         autoScale: function () {
             var allR = [], allX = [];
-            GND.concat(PP).forEach(function (name) {
+            visibleLoopNames(GND.concat(PP)).forEach(function (name) {
                 var d = loops[name]; if (!d) return;
-                d.r.forEach(function (v, i) { if (v !== null && d.x[i] !== null) { allR.push(v); allX.push(d.x[i]); } });
+                d.r.forEach(function (v, i) {
+                    if (v === null || d.x[i] === null) return;
+                    if (!shouldDrawPrefault() && tArr[i] < 0) return;
+                    allR.push(v); allX.push(d.x[i]);
+                });
             });
             ST.zones.forEach(function (z) {
                 if (ST.char === 'quad') { allR.push(z.rF, -z.rR); allX.push(z.xF, -z.xR); }
@@ -1733,7 +1773,7 @@ _refreshCtptStatusOnly();
     var ANIM_FPS_BASE = 30;
 
     function _animActiveLoops(loopNames) {
-        return loopNames.filter(function (n) { return loops[n]; });
+        return visibleLoopNames(loopNames);
     }
 
     function _animCursorTraces(loopNames) {
@@ -1821,95 +1861,11 @@ _refreshCtptStatusOnly();
         if (disp) disp.textContent = 't = \u2014 ms';
     };
 
-    /* ---- print report ---- */
-    function _zoneBbox() {
-        var rMin = Infinity, rMax = -Infinity, xMin = Infinity, xMax = -Infinity;
-        function absorb(r, x) {
-            if (isFinite(r)) { rMin = Math.min(rMin, r); rMax = Math.max(rMax, r); }
-            if (isFinite(x)) { xMin = Math.min(xMin, x); xMax = Math.max(xMax, x); }
-        }
-        // relay overlay polygons
-        ['phGnd', 'phPh'].forEach(function (k) {
-            (relayOverlays[k] || []).forEach(function (sh) {
-                if (sh.path) {
-                    var nums = sh.path.match(/-?[\d.]+/g) || [];
-                    for (var i = 0; i + 1 < nums.length; i += 2) absorb(+nums[i], +nums[i+1]);
-                } else if (sh.x0 !== undefined) {
-                    absorb(sh.x0, sh.y0); absorb(sh.x1, sh.y1);
-                }
-            });
-        });
-        // manual zone inputs fallback
-        if (!isFinite(rMax)) {
-            ST.zones.forEach(function (z) {
-                if (ST.char === 'quad') { absorb(z.rF||0, z.xF||0); absorb(-(z.rR||0), -(z.xR||0)); }
-                else { var r = z.reach||0; absorb(r, r); absorb(-r, -r); }
-            });
-        }
-        return { rMin: rMin, rMax: rMax, xMin: xMin, xMax: xMax };
-    }
-
-    LOCUS.printReport = function () {
-        var bbox = _zoneBbox();
-        var hasZone = isFinite(bbox.rMax);
-        var rPad = hasZone ? (bbox.rMax - bbox.rMin) * 0.45 : 5;
-        var xPad = hasZone ? (bbox.xMax - bbox.xMin) * 0.45 : 5;
-        var rRange = hasZone ? [bbox.rMin - rPad, bbox.rMax + rPad] : null;
-        var xRange = hasZone ? [bbox.xMin - xPad, bbox.xMax + xPad] : null;
-
-        var plotDiv = gndOk ? document.getElementById('locusPlotGnd') : document.getElementById('locusPlotPP');
-        if (!plotDiv) return;
-
-        var origLayout = {};
-        if (rRange) {
-            origLayout = { 'xaxis.autorange': true, 'yaxis.autorange': true };
-            Plotly.relayout(plotDiv, { 'xaxis.range': rRange, 'yaxis.range': xRange });
-        }
-
-        var title = gndOk ? 'Phase-to-Ground — Z L1E, L2E, L3E' : 'Phase-to-Phase — Z L12, L23, L31';
-
-        setTimeout(function () {
-            Plotly.toImage(plotDiv, { format: 'png', width: 1000, height: 720 }).then(function (imgData) {
-                if (rRange) Plotly.relayout(plotDiv, origLayout);
-
-                var meta = _cfg || {};
-                var rows = [
-                    ['Stasiun / File', (meta.stationName || '') + (meta.filename ? ' — ' + meta.filename : '')],
-                    ['Jenis Gangguan', (meta.faultType || '') + (meta.faultedPhases ? ' (' + meta.faultedPhases + ')' : '')],
-                    ['Klasifikasi', meta.label || ''],
-                    ['Tegangan', (meta.voltKv || '?') + ' kV'],
-                    ['Durasi', (meta.durMs || 0).toFixed(0) + ' ms'],
-                    ['Domain Impedansi', (_ld.meta && _ld.meta.ohm_domain) ? _ld.meta.ohm_domain + ' ohm' : 'primary ohm'],
-                ];
-                var rowsHtml = rows.map(function (r) {
-                    return '<tr><td style="padding:3px 12px 3px 0;color:#6b7280;font-size:11px;white-space:nowrap">' + r[0] + '</td>' +
-                           '<td style="padding:3px 0;font-size:11px;font-weight:600">' + r[1] + '</td></tr>';
-                }).join('');
-
-                var pw = window.open('', '_blank');
-                if (!pw) { alert('Izinkan pop-up untuk mencetak laporan.'); return; }
-                pw.document.write('<!DOCTYPE html><html><head><title>R-X Locus Report</title>' +
-                    '<style>body{margin:24px 32px;font-family:sans-serif}' +
-                    'h2{margin:0 0 4px;font-size:15px}' +
-                    '.sub{color:#6b7280;font-size:11px;margin-bottom:12px}' +
-                    'img{display:block;max-width:100%;border:1px solid #e5e7eb;border-radius:8px}' +
-                    '@media print{body{margin:0}img{max-width:100%;page-break-inside:avoid}}' +
-                    '</style></head><body>' +
-                    '<h2>Diagram R-X — Impedansi Locus</h2>' +
-                    '<div class="sub">' + title + '</div>' +
-                    '<table style="margin-bottom:14px;border-collapse:collapse">' + rowsHtml + '</table>' +
-                    '<img src="' + imgData + '">' +
-                    '<p style="margin-top:10px;font-size:9px;color:#9ca3af">Dicetak dari DFR Fault Analyzer &mdash; ' + new Date().toLocaleString() + '</p>' +
-                    '</body></html>');
-                pw.document.close();
-                pw.focus();
-                pw.onload = function () { pw.print(); };
-            });
-        }, rRange ? 120 : 0);  // brief delay if we relayouted
-    };
-
     renderZoneInputs();
     initPlotsRelay();
+    updateFocusButton();
+    LOCUS.setTab(ST.tab);
+    if (ST.focusMode === 'faulted') LOCUS.autoScale();
 })();
 </script>
 {% endif %}

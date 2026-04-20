@@ -204,6 +204,73 @@ def _normalize_label(val: str) -> str:
     return re.sub(r"\s+", " ", (val or "").strip().upper())
 
 
+def _extract_fault_phases(faulted_phases: str) -> list[str]:
+    text = _normalize_label(faulted_phases)
+    return [phase for phase in "ABC" if phase in text]
+
+
+def _build_locus_focus_context(fault_type: str, faulted_phases: str) -> dict:
+    fault_type_norm = _normalize_label(fault_type)
+    phases = _extract_fault_phases(faulted_phases)
+
+    phase_to_gnd = {"A": "Z_L1E", "B": "Z_L2E", "C": "Z_L3E"}
+    phase_pair_to_pp = {
+        frozenset({"A", "B"}): "Z_L12",
+        frozenset({"B", "C"}): "Z_L23",
+        frozenset({"A", "C"}): "Z_L31",
+    }
+
+    has_ground = any(token in fault_type_norm for token in ("SLG", "DLG", "LLG", "GROUND", "TANAH"))
+    has_phase_pair = any(token in fault_type_norm for token in ("LL", "DLG", "LLG", "3PH", "3P", "LINE-LINE"))
+
+    focused_gnd_loops: list[str] = []
+    focused_pp_loops: list[str] = []
+
+    if len(phases) == 1:
+        focused_gnd_loops = [phase_to_gnd[phases[0]]]
+    elif len(phases) >= 2:
+        if has_ground:
+            focused_gnd_loops = [phase_to_gnd[phase] for phase in phases]
+        if len(phases) == 2:
+            pp_loop = phase_pair_to_pp.get(frozenset(phases[:2]))
+            if pp_loop:
+                focused_pp_loops = [pp_loop]
+        elif len(phases) >= 3:
+            focused_pp_loops = ["Z_L12", "Z_L23", "Z_L31"]
+
+    if not focused_pp_loops and len(phases) == 2 and not has_ground:
+        pp_loop = phase_pair_to_pp.get(frozenset(phases[:2]))
+        if pp_loop:
+            focused_pp_loops = [pp_loop]
+
+    if not focused_gnd_loops and not focused_pp_loops:
+        if has_ground:
+            preferred_tab = "gnd"
+        elif has_phase_pair:
+            preferred_tab = "pp"
+        else:
+            preferred_tab = "both"
+    elif focused_gnd_loops and focused_pp_loops:
+        preferred_tab = "both"
+    elif focused_gnd_loops:
+        preferred_tab = "gnd"
+    else:
+        preferred_tab = "pp"
+
+    focused_loops = focused_gnd_loops + focused_pp_loops
+    return {
+        "fault_type": fault_type_norm,
+        "faulted_phases": "".join(phases),
+        "focused_loops": focused_loops,
+        "focused_gnd_loops": focused_gnd_loops,
+        "focused_pp_loops": focused_pp_loops,
+        "preferred_tab": preferred_tab,
+        "default_mode": "faulted" if focused_loops else "all",
+        "show_prefault_default": False,
+        "summary_label": ", ".join(loop.replace("Z_", "Z ") for loop in focused_loops),
+    }
+
+
 def _top_cause_name(result) -> str:
     cause_pcts = getattr(result, "cause_pcts", None) or []
     if isinstance(cause_pcts, list) and cause_pcts:
@@ -1218,6 +1285,10 @@ def _render_not_supported(filename: str, error_msg: str, soe: list = None, cfg_p
 def _build_analysis_payload(result, original_filename: str, ts: str, cfg_path: str) -> dict:
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(str(cfg_path))
+    locus_focus = _build_locus_focus_context(
+        feats.get("fault_type"),
+        feats.get("faulted_phases"),
+    )
     ratio_defaults = _resolve_ratio_defaults(
         cfg_ratios,
         feats.get("voltage_kv"),
@@ -1302,6 +1373,7 @@ def _build_analysis_payload(result, original_filename: str, ts: str, cfg_path: s
         "vt_ratio_source": vt_ratio_src,
         "ct_ratio_known":  bool(cfg_ratios.get("cfg_ct_known")),
         "vt_ratio_known":  bool(cfg_ratios.get("cfg_vt_known")),
+        "locus_focus": locus_focus,
         "ratio_base_values": {
             "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
             "i0_magnitude_a": _f(feats.get("i0_magnitude_a")),
@@ -2467,6 +2539,10 @@ def analyze_from_browse():
 
     feats = result.features
     cfg_ratios = _extract_cfg_ratios(cfg_path)
+    locus_focus = _build_locus_focus_context(
+        feats.get("fault_type"),
+        feats.get("faulted_phases"),
+    )
     ratio_defaults = _resolve_ratio_defaults(
         cfg_ratios,
         feats.get("voltage_kv"),
@@ -2550,6 +2626,7 @@ def analyze_from_browse():
         "vt_ratio_source": vt_ratio_src,
         "ct_ratio_known":  bool(cfg_ratios.get("cfg_ct_known")),
         "vt_ratio_known":  bool(cfg_ratios.get("cfg_vt_known")),
+        "locus_focus": locus_focus,
         "ratio_base_values": {
             "peak_fault_current_a": _f(feats.get("peak_fault_current_a")),
             "i0_magnitude_a": _f(feats.get("i0_magnitude_a")),
@@ -2576,6 +2653,14 @@ def analyze_from_browse():
         str(cfg_path),
         analysis_payload["fault_inception_ms"],
         analysis_payload["fault_duration_ms"],
+    )
+    analysis_payload["locus_data"] = _build_locus_payload(
+        str(cfg_path),
+        analysis_payload["fault_inception_ms"],
+        ct_primary=analysis_payload.get("ratio_base_ct_primary"),
+        ct_secondary=analysis_payload.get("ratio_base_ct_secondary"),
+        vt_primary=analysis_payload.get("ratio_base_vt_primary"),
+        vt_secondary=analysis_payload.get("ratio_base_vt_secondary"),
     )
     _clear_analysis_store()
     _save_analysis_to_store(analysis_payload)
