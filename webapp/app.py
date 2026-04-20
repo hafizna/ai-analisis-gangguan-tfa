@@ -1364,6 +1364,10 @@ def _build_analysis_payload(result, original_filename: str, ts: str, cfg_path: s
     analysis_payload["locus_data"] = _build_locus_payload(
         str(cfg_path),
         analysis_payload["fault_inception_ms"],
+        ct_primary=analysis_payload.get("ratio_base_ct_primary"),
+        ct_secondary=analysis_payload.get("ratio_base_ct_secondary"),
+        vt_primary=analysis_payload.get("ratio_base_vt_primary"),
+        vt_secondary=analysis_payload.get("ratio_base_vt_secondary"),
     )
     return analysis_payload
 
@@ -2107,7 +2111,35 @@ def _build_waveform_payload(cfg_path: str, inception_ms: float, duration_ms: flo
         "digital": digital,
     }
 
-def _build_locus_payload(cfg_path: str, inception_ms: float = 0.0) -> dict:
+def _find_nearby_rio(cfg_path: str):
+    """Search for a .rio or .xrio relay settings file near the COMTRADE file."""
+    try:
+        from pathlib import Path
+        cfg_dir = Path(cfg_path).parent
+        for search_dir in [cfg_dir, cfg_dir.parent]:
+            for ext in ("*.rio", "*.xrio", "*.RIO", "*.XRIO"):
+                matches = list(search_dir.glob(ext))
+                if matches:
+                    return str(matches[0])
+            for subdir in sorted(search_dir.iterdir()):
+                if subdir.is_dir():
+                    for ext in ("*.rio", "*.xrio", "*.RIO", "*.XRIO"):
+                        sub = list(subdir.glob(ext))
+                        if sub:
+                            return str(sub[0])
+    except Exception:
+        pass
+    return None
+
+
+def _build_locus_payload(
+    cfg_path: str,
+    inception_ms: float = 0.0,
+    ct_primary: float = None,
+    ct_secondary: float = None,
+    vt_primary: float = None,
+    vt_secondary: float = None,
+) -> dict:
     """
     Compute per-sample impedance locus (R-X plane) for all 6 measurement loops.
 
@@ -2168,8 +2200,18 @@ def _build_locus_payload(cfg_path: str, inception_ms: float = 0.0) -> dict:
         kernel = np.exp(-1j * 2.0 * np.pi * np.arange(N, dtype=float) / N)
         return windows @ kernel                                         # (m,) complex
 
-    # Voltages stored as kV (primary) → multiply 1000 so Z comes out in Ohms
-    KSCALE = 1000.0
+    # KSCALE: convert voltage from kV to secondary-referred ohm scale.
+    # If CT/VT ratios are known, output secondary ohms (matching relay RIO zone files).
+    # Formula: Z_sec = Z_pri × (VT_s/VT_p) × (CT_p/CT_s)
+    # So KSCALE = 1000 × (VT_s/VT_p) × (CT_p/CT_s) applied to kV voltage signals.
+    try:
+        if (ct_primary and ct_secondary and vt_primary and vt_secondary
+                and ct_primary > 0 and ct_secondary > 0 and vt_primary > 0 and vt_secondary > 0):
+            KSCALE = 1000.0 * (vt_secondary / vt_primary) * (ct_primary / ct_secondary)
+        else:
+            KSCALE = 1000.0
+    except Exception:
+        KSCALE = 1000.0
     vp = {ph: slide_phasor(sigs[f"V{ph}"] * KSCALE) for ph in "ABC" if f"V{ph}" in sigs}
     ip = {ph: slide_phasor(sigs[f"I{ph}"])           for ph in "ABCN" if f"I{ph}" in sigs}
 
@@ -2239,10 +2281,28 @@ def _build_locus_payload(cfg_path: str, inception_ms: float = 0.0) -> dict:
     if not loops:
         return {}
 
+    # Try to find a nearby relay settings file for auto-import
+    relay_hint = None
+    try:
+        rio_path = _find_nearby_rio(cfg_path)
+        if rio_path:
+            from pathlib import Path
+            kind = "xrio" if rio_path.lower().endswith(".xrio") else "rio"
+            text = Path(rio_path).read_text(errors="replace")
+            relay_hint = {"kind": kind, "text": text, "filename": Path(rio_path).name}
+    except Exception:
+        pass
+
     return {
         "t": [round(v, 2) for v in t_out],
         "loops": loops,
-        "meta": {"freq": freq, "sample_rate": round(sample_rate)},
+        "meta": {
+            "freq": freq,
+            "sample_rate": round(sample_rate),
+            "kscale": round(KSCALE, 6),
+            "ohm_domain": "secondary" if KSCALE != 1000.0 else "primary",
+        },
+        "relay_hint": relay_hint,
     }
 
 
