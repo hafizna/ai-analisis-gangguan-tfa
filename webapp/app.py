@@ -2260,31 +2260,6 @@ def _build_locus_payload(
     if not any(f"V{p}" in sigs for p in "ABC") or not any(f"I{p}" in sigs for p in "ABC"):
         return {}
 
-    # MIMIC filter: remove DC offset from current signals before phasor estimation.
-    # Replicates the relay's internal algorithm (IIR form):
-    #   y[n] = x[n] - x[n-1] + alpha * y[n-1]
-    # where alpha = exp(-2*pi*f*dt / XR).  DC → 0, AC fundamental passes with
-    # near-unity gain (~1.0) and a small fixed phase advance (~5-6°).
-    # Without this, lightning-induced DC offset severely distorts the DFT phasor
-    # estimate for the first several cycles, producing shapes that diverge from
-    # what relay analysis tools (e.g. SIGRA) display.
-    _XR = 10.0  # default X/R; affects DC decay rate only, not fundamental gain
-    _mimic_alpha = float(np.exp(-2.0 * np.pi * freq * dt / _XR))
-    def _mimic(s: "np.ndarray") -> "np.ndarray":
-        try:
-            from scipy.signal import lfilter
-            return lfilter([1.0, -1.0], [1.0, -_mimic_alpha], s)
-        except Exception:
-            out = np.empty_like(s)
-            out[0] = s[0]
-            for i in range(1, len(s)):
-                out[i] = s[i] - s[i - 1] + _mimic_alpha * out[i - 1]
-            return out
-
-    for _k in list(sigs):
-        if _k.startswith("I"):
-            sigs[_k] = _mimic(sigs[_k])
-
     # Output indices: spread evenly, capped at TARGET points
     TARGET = 1500
     stride = max(1, n // TARGET)
@@ -2317,11 +2292,14 @@ def _build_locus_payload(
     if not vp or not ip:
         return {}
 
-    # Residual / neutral current for zero-sequence compensation
-    if "N" in ip:
-        i_res = ip["N"]
-    elif all(p in ip for p in "ABC"):
+    # Residual current (3I0) for zero-sequence compensation.
+    # Always compute from phase sum — the measured IN channel can have reversed
+    # CT polarity depending on relay wiring, which would flip Z_Lx E into the
+    # wrong quadrant. IA+IB+IC is always the correct 3I0 sign.
+    if all(p in ip for p in "ABC"):
         i_res = ip["A"] + ip["B"] + ip["C"]
+    elif "N" in ip:
+        i_res = ip["N"]
     else:
         i_res = np.zeros(m, dtype=complex)
 
