@@ -1357,9 +1357,10 @@ _refreshCtptStatusOnly();
     var ST = {
         char: 'quad',
         zones: defZones(voltKv),
+        zonesApplied: false,   // zones only drawn after user clicks Terapkan or imports RIO
         tab: FOCUS.preferred_tab || 'both',
         focusMode: FOCUS.default_mode || (FOCUSED_LOOPS.length ? 'faulted' : 'all'),
-        k0Mag: 0.85,   // currently applied values (match server default)
+        k0Mag: 0.85,
         k0Ang: -5.0
     };
 
@@ -1399,6 +1400,7 @@ _refreshCtptStatusOnly();
 
     /* ---- zone shape geometry ---- */
     function zoneShapes() {
+        if (!ST.zonesApplied) return [];
         return ST.zones.map(function (z, i) {
             if (ST.char === 'quad') {
                 var a = z.ang * Math.PI / 180, tilt = z.ang !== 90 ? 1 / Math.tan(a) : 0;
@@ -1506,6 +1508,7 @@ _refreshCtptStatusOnly();
             var newMag = parseFloat((document.getElementById('locusK0Mag') || {}).value) || 0.85;
             var newAng = parseFloat((document.getElementById('locusK0Ang') || {}).value) || -5.0;
             var k0Changed = Math.abs(newMag - ST.k0Mag) > 1e-4 || Math.abs(newAng - ST.k0Ang) > 1e-3;
+            ST.zonesApplied = true;
             if (!k0Changed) { _redrawPlots(); return; }
 
             /* k0 changed — ask server to recompute locus data */
@@ -1704,6 +1707,7 @@ _refreshCtptStatusOnly();
         if (!importedRelay) return;
         var list = importedRelay[loopKey] || [];
         if (!list.length) return;
+        ST.zonesApplied = true;
 
         relayOverlays[loopKey] = [];
 
