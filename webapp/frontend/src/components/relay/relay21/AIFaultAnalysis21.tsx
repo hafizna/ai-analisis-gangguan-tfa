@@ -52,7 +52,7 @@ export default function AIFaultAnalysis21({ analysisId }: Props) {
   async function run() {
     setRunning(true);
     try {
-      const res = await aiFaultAnalysis21({
+      const res = await aiFaultAnalysis21(analysisId, {
         ...features,
         ar_result: features.ar_result || null,
       });

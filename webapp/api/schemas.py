@@ -144,6 +144,7 @@ class LocusResponse(BaseModel):
 
 
 class AIFaultFeatures(BaseModel):
+    analysis_id: Optional[str] = None
     fault_inception_angle_deg: float
     fault_duration_ms: float
     prefault_load_a: float

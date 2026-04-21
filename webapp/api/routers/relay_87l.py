@@ -17,6 +17,7 @@ from ..schemas import (
     DiffRestraintSample,
 )
 from ..storage import load_analysis
+from ..ml_predict import run_ml_prediction
 
 router = APIRouter(prefix="/api/analyze/87l", tags=["relay-87l"])
 
@@ -131,63 +132,8 @@ async def diff_restraint(body: DiffRestraintAnalysisRequest):
 
 @router.post("/ai-analysis", response_model=AIFaultResult)
 async def ai_fault_analysis_87l(body: DiffRestraintAnalysisRequest):
-    """AI fault analysis for 87L - internal vs external fault discrimination."""
+    """Run LightGBM fault cause analysis for relay 87L (differential line)."""
     payload = _load_analysis_or_404(body.analysis_id)
-    result = _compute_diff_restraint(payload, body.params.model_dump())
-    status = result["operated_status"]
-    samples = result["samples"]
-
-    evidence = []
-    scores = {
-        "INTERNAL_FAULT": 0.0,
-        "EXTERNAL_FAULT": 0.0,
-        "INRUSH": 0.0,
-        "INSULATION_BREAKDOWN": 0.0,
-        "CONDUCTOR_CONTACT": 0.0,
-    }
-
-    if status in ("IDIFF_OPERATED", "IDIFF_FAST_OPERATED"):
-        scores["INTERNAL_FAULT"] += 0.5
-        scores["INSULATION_BREAKDOWN"] += 0.3
-        evidence.append(f"Differential relay operated ({status}) - internal fault signature")
-        if status == "IDIFF_FAST_OPERATED":
-            scores["INTERNAL_FAULT"] += 0.3
-            evidence.append("I-DIFF Fast threshold exceeded - high-magnitude internal fault")
-    else:
-        scores["EXTERNAL_FAULT"] += 0.5
-        evidence.append("Differential element did not operate - consistent with external or through-fault")
-
-    max_diff = max((sample["i_diff"] for sample in samples), default=0.0)
-    if max_diff > body.params.idiff_fast * 0.7:
-        scores["CONDUCTOR_CONTACT"] += 0.2
-        evidence.append(f"High differential current peak ({max_diff:.2f}) - possible direct conductor contact")
-
-    total = sum(scores.values()) or 1.0
-    labels = {
-        "INTERNAL_FAULT": "Internal Fault",
-        "EXTERNAL_FAULT": "External / Through-Fault",
-        "INRUSH": "Inrush / Overexcitation",
-        "INSULATION_BREAKDOWN": "Insulation Breakdown",
-        "CONDUCTOR_CONTACT": "Conductor Contact / Short",
-    }
-    ranking = sorted(
-        [
-            {
-                "cause": key,
-                "label_id": key,
-                "label": labels[key],
-                "confidence": round(value / total, 3),
-            }
-            for key, value in scores.items()
-        ],
-        key=lambda item: item["confidence"],
-        reverse=True,
-    )
-    fault_type = "permanent" if status != "NOT_OPERATED" else "transient"
-
-    return AIFaultResult(
-        cause_ranking=ranking,
-        fault_type=fault_type,
-        overall_confidence=ranking[0]["confidence"] if ranking else 0.0,
-        evidence=evidence,
-    )
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, run_ml_prediction, payload, "87L")
+    return AIFaultResult(**result)

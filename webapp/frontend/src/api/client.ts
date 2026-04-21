@@ -93,8 +93,8 @@ export async function extractFeatures21(analysisId: string) {
   };
 }
 
-export async function aiFaultAnalysis21(features: unknown) {
-  const { data } = await api.post("/api/analyze/21/ai-analysis", features);
+export async function aiFaultAnalysis21(analysisId: string, features: unknown) {
+  const { data } = await api.post("/api/analyze/21/ai-analysis", { analysis_id: analysisId, ...(features as object) });
   return data;
 }
 

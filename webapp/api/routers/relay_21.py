@@ -16,6 +16,7 @@ from ..schemas import (
     AIFaultFeatures, AIFaultResult,
 )
 from ..storage import load_analysis
+from ..ml_predict import run_ml_prediction
 
 router = APIRouter(prefix="/api/analyze/21", tags=["relay-21"])
 
@@ -228,88 +229,12 @@ async def compute_locus(body: LocusAnalysisRequest):
 
 @router.post("/ai-analysis", response_model=AIFaultResult)
 async def ai_fault_analysis(features: AIFaultFeatures):
-    """Run AI fault cause analysis for relay 21 (distance protection)."""
-    # Feature-based heuristic rules (ML model integration point)
-    scores: dict[str, float] = {
-        "PETIR": 0.0,
-        "LAYANG": 0.0,
-        "POHON": 0.0,
-        "HEWAN": 0.0,
-        "BENDA_ASING": 0.0,
-        "KONDUKTOR": 0.0,
-    }
-    evidence: list[str] = []
-
-    fia = features.fault_inception_angle_deg
-    dur = features.fault_duration_ms
-    asym = features.waveform_asymmetry
-    dc = features.dc_offset
-
-    # High DC offset + fault near voltage zero-crossing → lightning signature
-    if abs(dc) > 0.3 and (abs(fia) < 30 or abs(fia) > 150):
-        scores["PETIR"] += 0.4
-        evidence.append(f"High DC offset ({dc:.2f}) with fault near voltage zero-crossing (FIA={fia:.1f}°) — lightning signature")
-
-    # Very short fault duration → likely transient (lightning, kite)
-    if dur < 100:
-        scores["PETIR"] += 0.2
-        scores["LAYANG"] += 0.15
-        evidence.append(f"Short fault duration ({dur:.0f} ms) — consistent with transient cause")
-
-    # High waveform asymmetry → conductor damage or tree
-    if asym > 0.5:
-        scores["POHON"] += 0.25
-        scores["KONDUKTOR"] += 0.2
-        evidence.append(f"High waveform asymmetry ({asym:.2f}) — possible conductor/vegetation contact")
-
-    # Long fault → permanent (tree, conductor)
-    if dur > 500:
-        scores["POHON"] += 0.3
-        scores["KONDUKTOR"] += 0.25
-        fault_type = "permanent"
-        evidence.append(f"Long fault duration ({dur:.0f} ms) — permanent fault indicator")
-    else:
-        fault_type = "transient"
-
-    # AR result
-    if features.ar_result == "successful":
-        scores["PETIR"] += 0.15
-        scores["LAYANG"] += 0.15
-        evidence.append("Successful auto-reclose — supports transient fault classification")
-    elif features.ar_result == "failed":
-        scores["POHON"] += 0.2
-        scores["KONDUKTOR"] += 0.2
-        fault_type = "permanent"
-        evidence.append("Failed auto-reclose — supports permanent fault classification")
-
-    # Normalise
-    total = sum(scores.values()) or 1.0
-    ranking = sorted(
-        [
-            {
-                "cause": k,
-                "label_id": k,
-                "label": {
-                    "PETIR": "Petir / Lightning",
-                    "LAYANG": "Layang-Layang / Kite",
-                    "POHON": "Pohon / Vegetasi",
-                    "HEWAN": "Hewan / Binatang",
-                    "BENDA_ASING": "Benda Asing",
-                    "KONDUKTOR": "Konduktor / Tower",
-                }.get(k, k),
-                "confidence": round(v / total, 3),
-            }
-            for k, v in scores.items()
-        ],
-        key=lambda x: x["confidence"],
-        reverse=True,
-    )
-
-    overall_confidence = ranking[0]["confidence"] if ranking else 0.0
-
-    return AIFaultResult(
-        cause_ranking=ranking,
-        fault_type=fault_type,
-        overall_confidence=overall_confidence,
-        evidence=evidence,
-    )
+    """Run LightGBM fault cause analysis for relay 21 (distance protection)."""
+    if not features.analysis_id:
+        raise HTTPException(status_code=422, detail="analysis_id is required for AI analysis.")
+    payload = load_analysis(features.analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, run_ml_prediction, payload, "21")
+    return AIFaultResult(**result)

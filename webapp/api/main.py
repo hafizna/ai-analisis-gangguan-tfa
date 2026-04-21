@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -53,7 +54,19 @@ async def health():
     }
 
 
-# Serve React production build at root (when built)
+# Serve React production build — static assets + SPA catch-all
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
+    # Mount /assets so hashed JS/CSS bundles are served directly
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        # Serve specific files (favicon, manifest, etc.) if they exist
+        candidate = frontend_dist / full_path
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        # All other paths → index.html (React Router handles routing)
+        return FileResponse(str(frontend_dist / "index.html"))
