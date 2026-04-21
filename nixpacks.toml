@@ -1,9 +1,12 @@
 providers = ["...", "node"]
 
+[variables]
+NIXPACKS_NODE_VERSION = "22"
+
 [phases.install]
 cmds = [
   "...",
-  "cd webapp/frontend && npm ci"
+  "cd webapp/frontend && npm ci --include=dev"
 ]
 
 [phases.build]
