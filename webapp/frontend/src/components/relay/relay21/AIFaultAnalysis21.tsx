@@ -1,9 +1,18 @@
-import { useState } from "react";
-import type { ComtradeData } from "../../../context/AnalysisContext";
-import { aiFaultAnalysis21 } from "../../../api/client";
+import { useEffect, useState } from "react";
+import { extractFeatures21, aiFaultAnalysis21 } from "../../../api/client";
 import styles from "../../panels/Panel.module.css";
 
-interface Props { comtrade: ComtradeData; }
+interface Props { analysisId: string; }
+
+interface Features {
+  fault_inception_angle_deg: number;
+  fault_duration_ms: number;
+  prefault_load_a: number;
+  impedance_at_trip_ohm: number;
+  waveform_asymmetry: number;
+  dc_offset: number;
+  ar_result: "successful" | "failed" | null | "";
+}
 
 interface AIResult {
   cause_ranking: { cause: string; label: string; confidence: number }[];
@@ -12,35 +21,44 @@ interface AIResult {
   evidence: string[];
 }
 
-export default function AIFaultAnalysis21({ comtrade }: Props) {
-  const [fia, setFia] = useState(0);
-  const [dur, setDur] = useState(100);
-  const [prefault, setPrefault] = useState(0);
-  const [impedance, setImpedance] = useState(0);
-  const [asym, setAsym] = useState(0);
-  const [dc, setDc] = useState(0);
-  const [arResult, setArResult] = useState<"" | "successful" | "failed">("");
-  const [result, setResult] = useState<AIResult | null>(null);
-  const [loading, setLoading] = useState(false);
+const EMPTY_FEATURES: Features = {
+  fault_inception_angle_deg: 0,
+  fault_duration_ms: 0,
+  prefault_load_a: 0,
+  impedance_at_trip_ohm: 0,
+  waveform_asymmetry: 0,
+  dc_offset: 0,
+  ar_result: null,
+};
 
-  // Suppress unused comtrade warning — available for future auto-extraction
-  void comtrade;
+export default function AIFaultAnalysis21({ analysisId }: Props) {
+  const [features, setFeatures] = useState<Features>(EMPTY_FEATURES);
+  const [extracting, setExtracting] = useState(true);
+  const [result, setResult] = useState<AIResult | null>(null);
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    setExtracting(true);
+    extractFeatures21(analysisId)
+      .then((f) => setFeatures({ ...f, ar_result: f.ar_result ?? "" }))
+      .catch(() => {/* leave defaults */})
+      .finally(() => setExtracting(false));
+  }, [analysisId]);
+
+  function updateField(field: keyof Features, val: string | number) {
+    setFeatures((prev) => ({ ...prev, [field]: val }));
+  }
 
   async function run() {
-    setLoading(true);
+    setRunning(true);
     try {
       const res = await aiFaultAnalysis21({
-        fault_inception_angle_deg: fia,
-        fault_duration_ms: dur,
-        prefault_load_a: prefault,
-        impedance_at_trip_ohm: impedance,
-        waveform_asymmetry: asym,
-        dc_offset: dc,
-        ar_result: arResult || null,
+        ...features,
+        ar_result: features.ar_result || null,
       });
       setResult(res);
     } finally {
-      setLoading(false);
+      setRunning(false);
     }
   }
 
@@ -48,36 +66,36 @@ export default function AIFaultAnalysis21({ comtrade }: Props) {
     <div className={styles.panel}>
       <div className={styles.panelHeader}>
         <h2 className={styles.panelTitle}>AI Fault Analysis — Distance (21)</h2>
+        {extracting && <span className={styles.badge}>Extracting features…</span>}
+        {!extracting && <span className={styles.badge} style={{ background: "#f0fdf4", color: "#16a34a" }}>Auto-extracted from COMTRADE</span>}
       </div>
 
-      <div className={styles.row} style={{ flexWrap: "wrap", gap: 14 }}>
-        <label className={styles.zoneLabel}>
-          FIA (°)
-          <input className={styles.inputField} type="number" value={fia} onChange={(e) => setFia(parseFloat(e.target.value))} />
-        </label>
-        <label className={styles.zoneLabel}>
-          Fault Duration (ms)
-          <input className={styles.inputField} type="number" value={dur} onChange={(e) => setDur(parseFloat(e.target.value))} />
-        </label>
-        <label className={styles.zoneLabel}>
-          Pre-fault Load (A)
-          <input className={styles.inputField} type="number" value={prefault} onChange={(e) => setPrefault(parseFloat(e.target.value))} />
-        </label>
-        <label className={styles.zoneLabel}>
-          |Z| at Trip (Ω)
-          <input className={styles.inputField} type="number" value={impedance} onChange={(e) => setImpedance(parseFloat(e.target.value))} />
-        </label>
-        <label className={styles.zoneLabel}>
-          Waveform Asymmetry
-          <input className={styles.inputField} type="number" step={0.01} value={asym} onChange={(e) => setAsym(parseFloat(e.target.value))} />
-        </label>
-        <label className={styles.zoneLabel}>
-          DC Offset
-          <input className={styles.inputField} type="number" step={0.01} value={dc} onChange={(e) => setDc(parseFloat(e.target.value))} />
-        </label>
+      <p style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 14 }}>
+        Features below were extracted automatically. Review and adjust if needed before running analysis.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <FeatureField label="Fault Inception Angle (°)" value={features.fault_inception_angle_deg} step={1}
+          onChange={(v) => updateField("fault_inception_angle_deg", v)} loading={extracting} />
+        <FeatureField label="Fault Duration (ms)" value={features.fault_duration_ms} step={1}
+          onChange={(v) => updateField("fault_duration_ms", v)} loading={extracting} />
+        <FeatureField label="Pre-fault Load (A)" value={features.prefault_load_a} step={0.1}
+          onChange={(v) => updateField("prefault_load_a", v)} loading={extracting} />
+        <FeatureField label="|Z| at Trip (Ω)" value={features.impedance_at_trip_ohm} step={0.01}
+          onChange={(v) => updateField("impedance_at_trip_ohm", v)} loading={extracting} />
+        <FeatureField label="Waveform Asymmetry" value={features.waveform_asymmetry} step={0.01}
+          onChange={(v) => updateField("waveform_asymmetry", v)} loading={extracting} />
+        <FeatureField label="DC Offset" value={features.dc_offset} step={0.01}
+          onChange={(v) => updateField("dc_offset", v)} loading={extracting} />
+
         <label className={styles.zoneLabel}>
           Auto-Reclose Result
-          <select className={styles.selectField} value={arResult} onChange={(e) => setArResult(e.target.value as typeof arResult)}>
+          <select
+            className={styles.selectField}
+            value={features.ar_result ?? ""}
+            onChange={(e) => updateField("ar_result", e.target.value)}
+            disabled={extracting}
+          >
             <option value="">Unknown / Not present</option>
             <option value="successful">Successful (transient)</option>
             <option value="failed">Failed (permanent)</option>
@@ -85,8 +103,8 @@ export default function AIFaultAnalysis21({ comtrade }: Props) {
         </label>
       </div>
 
-      <button className={styles.applyBtn} onClick={run} disabled={loading} style={{ marginBottom: 20 }}>
-        {loading ? "Analysing…" : "Run AI Analysis"}
+      <button className={styles.applyBtn} onClick={run} disabled={running || extracting} style={{ marginBottom: 20 }}>
+        {running ? "Analysing…" : "Run AI Analysis"}
       </button>
 
       {result && (
@@ -95,12 +113,10 @@ export default function AIFaultAnalysis21({ comtrade }: Props) {
             <span className={`${styles.statusBadge} ${result.fault_type === "permanent" ? styles.statusOperated : styles.statusNot}`}>
               {result.fault_type === "permanent" ? "Permanent Fault" : "Transient Fault"}
             </span>
-            <span className={styles.badge}>
-              Confidence: {(result.overall_confidence * 100).toFixed(0)}%
-            </span>
+            <span className={styles.badge}>Confidence: {(result.overall_confidence * 100).toFixed(0)}%</span>
           </div>
 
-          <h3 style={{ fontSize: "0.85rem", color: "#475569", margin: "12px 0 8px" }}>Cause Ranking</h3>
+          <h3 style={{ fontSize: "0.85rem", color: "#475569", margin: "14px 0 8px" }}>Cause Ranking</h3>
           {result.cause_ranking.map((r) => (
             <div key={r.cause} className={styles.rankingBar}>
               <span className={styles.rankLabel}>{r.label}</span>
@@ -120,5 +136,26 @@ export default function AIFaultAnalysis21({ comtrade }: Props) {
         </>
       )}
     </div>
+  );
+}
+
+function FeatureField({
+  label, value, step, onChange, loading,
+}: {
+  label: string; value: number; step: number; onChange: (v: number) => void; loading: boolean;
+}) {
+  return (
+    <label className={styles.zoneLabel}>
+      {label}
+      <input
+        className={styles.inputField}
+        style={{ width: "100%" }}
+        type="number"
+        step={step}
+        value={value}
+        disabled={loading}
+        onChange={(e) => { const n = parseFloat(e.target.value); if (!isNaN(n)) onChange(n); }}
+      />
+    </label>
   );
 }

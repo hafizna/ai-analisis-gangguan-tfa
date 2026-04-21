@@ -80,6 +80,19 @@ export async function computeLocus(analysisId: string, zones: unknown[], loop: s
   return data;
 }
 
+export async function extractFeatures21(analysisId: string) {
+  const { data } = await api.get(`/api/analyze/21/extract-features?analysis_id=${analysisId}`);
+  return data as {
+    fault_inception_angle_deg: number;
+    fault_duration_ms: number;
+    prefault_load_a: number;
+    impedance_at_trip_ohm: number;
+    waveform_asymmetry: number;
+    dc_offset: number;
+    ar_result: "successful" | "failed" | null;
+  };
+}
+
 export async function aiFaultAnalysis21(features: unknown) {
   const { data } = await api.post("/api/analyze/21/ai-analysis", features);
   return data;

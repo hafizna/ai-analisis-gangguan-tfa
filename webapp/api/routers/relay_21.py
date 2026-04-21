@@ -103,6 +103,110 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
     return points
 
 
+def _extract_features_from_payload(payload: dict) -> dict:
+    """Auto-extract fault analysis features from a stored COMTRADE payload."""
+    channels = payload.get("analog_channels", [])
+    time = np.array(payload.get("time", []))
+    freq = float(payload.get("frequency", 50.0))
+
+    empty = {
+        "fault_inception_angle_deg": 0.0,
+        "fault_duration_ms": 0.0,
+        "prefault_load_a": 0.0,
+        "impedance_at_trip_ohm": 0.0,
+        "waveform_asymmetry": 0.0,
+        "dc_offset": 0.0,
+        "ar_result": None,
+    }
+
+    if len(time) < 4:
+        return empty
+
+    sr = 1.0 / (time[1] - time[0])
+    cycle_n = max(4, int(sr / freq))
+
+    # Pick first available phase current and voltage
+    i = _find_channel(channels, ["IA", "IL1", "I1", "IB", "IL2", "IC", "IL3"])
+    v = _find_channel(channels, ["VA", "VAN", "UA", "VB", "VBN", "VC", "VCN"])
+    if i is None:
+        return empty
+
+    # Pre-fault RMS (first 2 cycles or first quarter of record)
+    pre_end = min(2 * cycle_n, len(i) // 4)
+    pre_rms = float(np.sqrt(np.mean(i[:pre_end] ** 2))) if pre_end > 1 else 0.0
+
+    # Fault inception: first sample exceeding 2× pre-fault RMS
+    threshold = max(pre_rms * 2.0, np.max(np.abs(i)) * 0.3, 0.05)
+    inception_idx = next(
+        (k for k in range(pre_end, len(i)) if abs(i[k]) > threshold),
+        int(np.argmax(np.abs(i))),
+    )
+
+    # Fault extinction: RMS drops back below threshold
+    extinction_idx = len(i) - 1
+    for k in range(inception_idx + cycle_n, len(i)):
+        s = max(0, k - cycle_n // 2)
+        if float(np.sqrt(np.mean(i[s : k + 1] ** 2))) < threshold * 0.6:
+            extinction_idx = k
+            break
+    fault_duration_ms = float((time[extinction_idx] - time[inception_idx]) * 1000)
+
+    # FIA: sine of normalised voltage at inception → degrees
+    fia_deg = 0.0
+    if v is not None and inception_idx < len(v):
+        v_peak = float(np.max(np.abs(v[:inception_idx]))) if inception_idx > 0 else float(np.max(np.abs(v)))
+        if v_peak > 0:
+            ratio = float(np.clip(v[inception_idx] / v_peak, -1.0, 1.0))
+            fia_deg = float(np.degrees(np.arcsin(ratio)))
+
+    # DC offset and asymmetry from first fault cycle
+    fw = i[inception_idx : inception_idx + cycle_n]
+    dc_offset, asymmetry = 0.0, 0.0
+    if len(fw) > 4:
+        dc_component = float(np.mean(fw))
+        ac_amp = float(np.sqrt(2) * np.sqrt(np.mean(fw ** 2)))
+        dc_offset = float(np.clip(dc_component / ac_amp, -1.0, 1.0)) if ac_amp > 0 else 0.0
+        pos, neg = float(np.max(fw)), float(np.min(fw))
+        denom = pos + abs(neg)
+        asymmetry = abs(pos - abs(neg)) / denom if denom > 0 else 0.0
+
+    # |Z| at inception
+    impedance_ohm = 0.0
+    if v is not None and inception_idx < len(v) and abs(i[inception_idx]) > 0.01:
+        impedance_ohm = float(abs(v[inception_idx] / i[inception_idx]))
+
+    # AR result from binary channels
+    ar_result = None
+    for sch in payload.get("status_channels", []):
+        name = sch.get("name", "").upper()
+        if any(k in name for k in ("AR", "RECLOSE", "RECLUSE", "RECLOS")):
+            samp = sch.get("samples", [])
+            if 1 in samp:
+                ar_result = "successful"
+            break
+
+    return {
+        "fault_inception_angle_deg": round(fia_deg, 1),
+        "fault_duration_ms": round(max(fault_duration_ms, 0.0), 1),
+        "prefault_load_a": round(pre_rms, 2),
+        "impedance_at_trip_ohm": round(impedance_ohm, 3),
+        "waveform_asymmetry": round(asymmetry, 3),
+        "dc_offset": round(dc_offset, 3),
+        "ar_result": ar_result,
+    }
+
+
+@router.get("/extract-features")
+async def extract_features(analysis_id: str):
+    """Auto-extract fault features from stored COMTRADE data."""
+    payload = load_analysis(analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    loop = asyncio.get_event_loop()
+    features = await loop.run_in_executor(None, _extract_features_from_payload, payload)
+    return features
+
+
 @router.post("/locus", response_model=LocusResponse)
 async def compute_locus(body: LocusAnalysisRequest):
     """Compute impedance locus (R-X trajectory) for the selected loop."""
