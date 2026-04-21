@@ -2330,7 +2330,7 @@ def _build_locus_payload(
     t0 = float(inception_ms) if inception_ms else float(t_ms[0])
     t_out = (t_ms[out_idx] - t0).tolist()
 
-    CLIP = 500.0  # Ohms — clip extreme pre-fault load impedance outliers
+    CLIP = 1500.0  # Ohms — clip extreme pre-fault load impedance outliers
 
     def serialize(z_arr):
         if z_arr is None:

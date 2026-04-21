@@ -364,10 +364,24 @@ def _parse_analog_channels(com: Comtrade, manufacturer: str, warnings: List[str]
                 samples_primary = np.array([], dtype=float)
                 warnings.append(f"Channel {ch_name}: no sample data")
 
-            # If recorded in secondary units, convert to primary now
+            # If recorded in secondary units, convert to primary now.
+            # Guard: some relays (e.g. NARI/NR PCS-9xx) embed the full CT/VT
+            # ratio inside the `a` multiplier but still write PS='S' in the CFG.
+            # If the samples already exceed 10× the rated secondary value they
+            # are clearly in primary units — applying the ratio again would
+            # inflate them by another 1000–4000×.
             if pors == 'S' and ct_primary > 0 and ct_secondary > 0 and ct_primary != ct_secondary:
-                samples_primary = samples_primary * (ct_primary / ct_secondary)
-                warnings.append(f"Channel {ch_name}: pors=S, applied ratio {ct_primary}/{ct_secondary} to convert to primary")
+                max_abs = float(np.max(np.abs(samples_primary))) if len(samples_primary) > 0 else 0.0
+                already_primary = max_abs > ct_secondary * 10
+                if already_primary:
+                    warnings.append(
+                        f"Channel {ch_name}: pors=S but max value ({max_abs:.1f}) >> "
+                        f"secondary range ({ct_secondary:.1f}×10) — skipping ratio "
+                        f"conversion (a-factor already encodes primary units)"
+                    )
+                else:
+                    samples_primary = samples_primary * (ct_primary / ct_secondary)
+                    warnings.append(f"Channel {ch_name}: pors=S, applied ratio {ct_primary}/{ct_secondary} to convert to primary")
 
             # Normalize channel name
             norm = normalize_channel_name(ch_name, ch_unit, manufacturer)
