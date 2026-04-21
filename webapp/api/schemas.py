@@ -50,6 +50,41 @@ class AnalysisRequestBase(BaseModel):
     analysis_id: str
 
 
+class AnalogChannelSummaryOut(BaseModel):
+    id: str
+    name: str
+    canonical_name: str
+    unit: str
+    phase: Optional[str]
+    measurement: str
+    ct_primary: float
+    ct_secondary: float
+    pors: str
+
+
+class StatusChannelSummaryOut(BaseModel):
+    id: str
+    name: str
+    sample_count: int
+    on_count: int
+    transition_count: int
+
+
+class AnalysisSummaryOut(BaseModel):
+    analysis_id: str
+    station_name: str
+    rec_dev_id: str
+    rev_year: str
+    sampling_rates: List[Tuple[float, int]]
+    trigger_time: float
+    total_samples: int
+    frequency: float
+    duration_ms: float
+    analog_channels: List[AnalogChannelSummaryOut]
+    status_channels: List[StatusChannelSummaryOut]
+    warnings: List[str]
+
+
 class RatioChannel(BaseModel):
     channel_id: str
     primary: float

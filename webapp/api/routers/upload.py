@@ -11,8 +11,8 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from core.comtrade_parser import ComtradeRecord, parse_comtrade
-from ..schemas import AnalysisCreatedResponse, ComtradeOut, RecalcByIdRequest
-from ..storage import load_analysis, save_analysis
+from ..schemas import AnalysisCreatedResponse, AnalysisSummaryOut, ComtradeOut, RecalcByIdRequest
+from ..storage import load_analysis, save_analysis, update_analysis
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -52,6 +52,62 @@ def _record_to_out(record: ComtradeRecord) -> dict:
         ],
         "warnings": record.warnings,
     }
+
+
+def _status_transition_count(samples: list[int]) -> int:
+    transitions = 0
+    for idx in range(1, len(samples)):
+        if samples[idx] != samples[idx - 1]:
+            transitions += 1
+    return transitions
+
+
+def _analysis_to_summary(analysis_id: str, payload: dict) -> AnalysisSummaryOut:
+    time_values = payload.get("time") or []
+    duration_ms = 0.0
+    if len(time_values) > 1:
+        duration_ms = float((time_values[-1] - time_values[0]) * 1000.0)
+
+    analog_channels = [
+        {
+            "id": ch["id"],
+            "name": ch["name"],
+            "canonical_name": ch["canonical_name"],
+            "unit": ch["unit"],
+            "phase": ch["phase"],
+            "measurement": ch["measurement"],
+            "ct_primary": ch["ct_primary"],
+            "ct_secondary": ch["ct_secondary"],
+            "pors": ch["pors"],
+        }
+        for ch in payload.get("analog_channels", [])
+    ]
+
+    status_channels = [
+        {
+            "id": ch["id"],
+            "name": ch["name"],
+            "sample_count": len(ch.get("samples", [])),
+            "on_count": int(sum(ch.get("samples", []))),
+            "transition_count": _status_transition_count(ch.get("samples", [])),
+        }
+        for ch in payload.get("status_channels", [])
+    ]
+
+    return AnalysisSummaryOut(
+        analysis_id=analysis_id,
+        station_name=payload.get("station_name", ""),
+        rec_dev_id=payload.get("rec_dev_id", ""),
+        rev_year=payload.get("rev_year", ""),
+        sampling_rates=payload.get("sampling_rates", []),
+        trigger_time=payload.get("trigger_time", 0.0),
+        total_samples=payload.get("total_samples", 0),
+        frequency=payload.get("frequency", 0.0),
+        duration_ms=duration_ms,
+        analog_channels=analog_channels,
+        status_channels=status_channels,
+        warnings=payload.get("warnings", []),
+    )
 
 
 @router.post("/upload", response_model=AnalysisCreatedResponse)
@@ -107,6 +163,14 @@ async def get_analysis(analysis_id: str):
     return payload
 
 
+@router.get("/analysis/{analysis_id}/summary", response_model=AnalysisSummaryOut)
+async def get_analysis_summary(analysis_id: str):
+    payload = load_analysis(analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    return _analysis_to_summary(analysis_id, payload)
+
+
 @router.post("/recalculate-ratio")
 async def recalculate_ratio(body: RecalcByIdRequest):
     """Apply per-channel CT/VT ratio overrides and return recalculated samples."""
@@ -136,4 +200,6 @@ async def recalculate_ratio(body: RecalcByIdRequest):
         else:
             updated_channels.append(channel)
 
-    return {**payload, "analog_channels": updated_channels}
+    updated_payload = {**payload, "analog_channels": updated_channels}
+    update_analysis(body.analysis_id, updated_payload)
+    return updated_payload

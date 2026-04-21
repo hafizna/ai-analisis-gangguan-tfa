@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { useAnalysis } from "../context/AnalysisContext";
 import type { ComtradeData } from "../context/AnalysisContext";
-import { fetchAnalysis } from "../api/client";
+import { fetchAnalysis, fetchAnalysisSummary } from "../api/client";
+import type { AnalysisSummary } from "../api/client";
 
 import AnalogSignalRecap from "../components/panels/AnalogSignalRecap";
 import COMTRADEExplorer from "../components/panels/COMTRADEExplorer";
@@ -26,38 +27,41 @@ const RELAY_LABELS: Record<string, string> = {
 };
 
 type Tab = "waveforms" | "explorer" | "soe" | "ratio" | "locus" | "diff" | "ocr" | "ai";
+const DETAIL_TABS: Set<Tab> = new Set(["waveforms", "explorer", "soe", "ratio"]);
 
 function initialTabForRelay(relayType: string): Tab {
-  if (relayType === "21" || relayType === "87L" || relayType === "87T" || relayType === "REF") {
-    return "explorer";
-  }
+  if (relayType === "21") return "ai";
+  if (relayType === "87L" || relayType === "87T" || relayType === "REF") return "diff";
+  if (relayType === "OCR" || relayType === "SBEF") return "ocr";
   return "explorer";
 }
 
 function tabsForRelay(relayType: string): { id: Tab; label: string }[] {
-  const base: { id: Tab; label: string }[] = [
+  const detailTabs: { id: Tab; label: string }[] = [
     { id: "waveforms", label: "Analog Signals" },
     { id: "explorer", label: "COMTRADE Explorer" },
     { id: "soe", label: "SOE" },
     { id: "ratio", label: "CT/VT Ratio" },
   ];
 
+  const primaryTabs: { id: Tab; label: string }[] = [];
+
   if (relayType === "21") {
-    base.push({ id: "locus", label: "Impedance Locus" });
-    base.push({ id: "ai", label: "AI Fault Analysis" });
+    primaryTabs.push({ id: "ai", label: "AI Fault Analysis" });
+    primaryTabs.push({ id: "locus", label: "Impedance Locus" });
   }
   if (relayType === "87L") {
-    base.push({ id: "diff", label: "Diff / Restraint" });
-    base.push({ id: "ai", label: "AI Fault Analysis" });
+    primaryTabs.push({ id: "diff", label: "Diff / Restraint" });
+    primaryTabs.push({ id: "ai", label: "AI Fault Analysis" });
   }
   if (relayType === "87T" || relayType === "REF") {
-    base.push({ id: "diff", label: "Diff / Restraint" });
+    primaryTabs.push({ id: "diff", label: "Diff / Restraint" });
   }
-  if ((relayType === "OCR" || relayType === "SBEF") && !base.find((t) => t.id === "ocr")) {
-    base.push({ id: "ocr", label: "Overcurrent Curve" });
+  if ((relayType === "OCR" || relayType === "SBEF") && !primaryTabs.find((t) => t.id === "ocr")) {
+    primaryTabs.push({ id: "ocr", label: "Overcurrent Curve" });
   }
 
-  return base;
+  return [...primaryTabs, ...detailTabs];
 }
 
 export default function Workspace() {
@@ -66,29 +70,33 @@ export default function Workspace() {
   const navigate = useNavigate();
 
   const relayType = urlType ?? ctxRelayType ?? "21";
+  const [summary, setSummary] = useState<AnalysisSummary | null>(null);
   const [comtrade, setComtrade] = useState<ComtradeData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const tabs = tabsForRelay(relayType);
+  const [activeTab, setActiveTab] = useState<Tab>(initialTabForRelay(relayType));
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadAnalysis() {
+    async function loadSummary() {
       if (!analysisId) {
         if (!cancelled) {
-          setLoading(false);
+          setSummaryLoading(false);
           setError("Missing analysis session id.");
         }
         return;
       }
 
-      setLoading(true);
+      setSummaryLoading(true);
       setError(null);
 
       try {
-        const data = await fetchAnalysis(analysisId);
+        const data = await fetchAnalysisSummary(analysisId);
         if (!cancelled) {
-          setComtrade(data);
+          setSummary(data);
         }
       } catch (err: unknown) {
         const response = (err as { response?: { data?: { detail?: string } } }).response;
@@ -97,29 +105,58 @@ export default function Workspace() {
         }
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          setSummaryLoading(false);
         }
       }
     }
 
-    void loadAnalysis();
+    void loadSummary();
     return () => {
       cancelled = true;
     };
   }, [analysisId]);
 
-  const tabs = tabsForRelay(relayType);
-  const [activeTab, setActiveTab] = useState<Tab>(initialTabForRelay(relayType));
-
   useEffect(() => {
     setActiveTab(initialTabForRelay(relayType));
   }, [relayType]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDetail() {
+      if (!analysisId || comtrade || !DETAIL_TABS.has(activeTab)) {
+        return;
+      }
+
+      setDetailLoading(true);
+      try {
+        const data = await fetchAnalysis(analysisId);
+        if (!cancelled) {
+          setComtrade(data);
+        }
+      } catch (err: unknown) {
+        const response = (err as { response?: { data?: { detail?: string } } }).response;
+        if (!cancelled) {
+          setError(response?.data?.detail ?? "Failed to load waveform detail for this analysis.");
+        }
+      } finally {
+        if (!cancelled) {
+          setDetailLoading(false);
+        }
+      }
+    }
+
+    void loadDetail();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, analysisId, comtrade]);
 
   if (!analysisId) {
     return <Navigate to={ctxRelayType ? "/upload" : "/"} replace />;
   }
 
-  if (loading) {
+  if (summaryLoading) {
     return (
       <div className={styles.page}>
         <main className={styles.content}>
@@ -143,7 +180,7 @@ export default function Workspace() {
     );
   }
 
-  if (!comtrade) {
+  if (!summary) {
     return <Navigate to={ctxRelayType ? "/upload" : "/"} replace />;
   }
 
@@ -159,14 +196,14 @@ export default function Workspace() {
           <button className={styles.homeBtn} onClick={handleReset} type="button">New Analysis</button>
           <div>
             <span className={styles.relayBadge}>{RELAY_LABELS[relayType] ?? relayType}</span>
-            <span className={styles.stationName}>{comtrade.station_name}</span>
-            <span className={styles.deviceId}>{comtrade.rec_dev_id}</span>
+            <span className={styles.stationName}>{summary.station_name}</span>
+            <span className={styles.deviceId}>{summary.rec_dev_id}</span>
           </div>
         </div>
         <div className={styles.headerRight}>
-          <span className={styles.meta}>{comtrade.total_samples} samples</span>
-          <span className={styles.meta}>{comtrade.sampling_rates[0]?.[0]} Hz</span>
-          <span className={styles.meta}>{comtrade.frequency} Hz nominal</span>
+          <span className={styles.meta}>{summary.total_samples} samples</span>
+          <span className={styles.meta}>{summary.sampling_rates[0]?.[0]} Hz</span>
+          <span className={styles.meta}>{summary.frequency} Hz nominal</span>
         </div>
       </header>
 
@@ -184,23 +221,23 @@ export default function Workspace() {
       </nav>
 
       <main className={styles.content}>
-        {activeTab === "waveforms" && (
+        {activeTab === "ai" && relayType === "21" && (
+          <AIFaultAnalysis21 comtrade={comtrade ?? emptyComtradeFromSummary(summary)} />
+        )}
+        {activeTab === "waveforms" && comtrade && (
           <AnalogSignalRecap comtrade={comtrade} relayType={relayType} />
         )}
-        {activeTab === "explorer" && (
+        {activeTab === "explorer" && comtrade && (
           <COMTRADEExplorer comtrade={comtrade} />
         )}
-        {activeTab === "soe" && (
+        {activeTab === "soe" && comtrade && (
           <SOETimeline comtrade={comtrade} />
         )}
-        {activeTab === "ratio" && (
+        {activeTab === "ratio" && comtrade && (
           <CTVTRatioCorrection analysisId={analysisId} comtrade={comtrade} onUpdate={setComtrade} />
         )}
         {activeTab === "locus" && relayType === "21" && (
           <ImpedanceLocus analysisId={analysisId} />
-        )}
-        {activeTab === "ai" && relayType === "21" && (
-          <AIFaultAnalysis21 comtrade={comtrade} />
         )}
         {activeTab === "diff" && (relayType === "87L" || relayType === "87T" || relayType === "REF") && (
           <DiffRestraintPlot analysisId={analysisId} relayType={relayType === "87L" ? "87L" : "87T"} />
@@ -216,7 +253,57 @@ export default function Workspace() {
             AI fault cause analysis for transformer differential is pending - relay coordination evidence required.
           </div>
         )}
+        {DETAIL_TABS.has(activeTab) && detailLoading && (
+          <div className={styles.placeholderCard}>
+            <div className={styles.placeholderTitle}>Loading waveform detail...</div>
+            <p className={styles.placeholderText}>
+              The workspace shell is already ready. This tab is now fetching only the raw samples it needs.
+            </p>
+          </div>
+        )}
+        {!detailLoading && !comtrade && DETAIL_TABS.has(activeTab) && (
+          <div className={styles.placeholderCard}>
+            <div className={styles.placeholderTitle}>Analysis Overview</div>
+            <div className={styles.summaryGrid}>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Duration</span>
+                <strong>{summary.duration_ms.toFixed(1)} ms</strong>
+              </div>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Analog Channels</span>
+                <strong>{summary.analog_channels.length}</strong>
+              </div>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Status Channels</span>
+                <strong>{summary.status_channels.length}</strong>
+              </div>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Revision</span>
+                <strong>{summary.rev_year || "-"}</strong>
+              </div>
+            </div>
+            <p className={styles.placeholderText}>
+              Waveform-heavy tabs are loaded lazily now, so the workspace can open before the full COMTRADE arrays arrive.
+            </p>
+          </div>
+        )}
       </main>
     </div>
   );
+}
+
+function emptyComtradeFromSummary(summary: AnalysisSummary): ComtradeData {
+  return {
+    station_name: summary.station_name,
+    rec_dev_id: summary.rec_dev_id,
+    rev_year: summary.rev_year,
+    sampling_rates: summary.sampling_rates,
+    trigger_time: summary.trigger_time,
+    total_samples: summary.total_samples,
+    frequency: summary.frequency,
+    time: [],
+    analog_channels: [],
+    status_channels: [],
+    warnings: summary.warnings,
+  };
 }
