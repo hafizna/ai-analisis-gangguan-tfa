@@ -2214,7 +2214,6 @@ def _build_locus_payload(
     vt_secondary: float = None,
     k0_mag: float = 0.85,
     k0_ang: float = -5.0,
-    locus_mode: str = "modern",
 ) -> dict:
     """
     Compute per-sample impedance locus (R-X plane) for all 6 measurement loops.
@@ -2294,18 +2293,11 @@ def _build_locus_payload(
     if not vp or not ip:
         return {}
 
-    locus_mode = (locus_mode or "modern").strip().lower()
-    if locus_mode not in {"modern", "legacy"}:
-        locus_mode = "modern"
-
     # Residual current (3I0) for zero-sequence compensation.
     # Always compute from phase sum — the measured IN channel can have reversed
     # CT polarity depending on relay wiring, which would flip Z_Lx E into the
     # wrong quadrant. IA+IB+IC is always the correct 3I0 sign.
-    if locus_mode == "legacy" and "N" in ip:
-        i_res = ip["N"]
-        residual_source = "neutral_channel"
-    elif all(p in ip for p in "ABC"):
+    if all(p in ip for p in "ABC"):
         i_res = ip["A"] + ip["B"] + ip["C"]
         residual_source = "phase_sum"
     elif "N" in ip:
@@ -2317,8 +2309,8 @@ def _build_locus_payload(
 
     # k0 zero-sequence compensation factor (user-configurable, default 0.85 ∠ -5°)
     k0 = float(k0_mag) * np.exp(1j * float(k0_ang) * np.pi / 180.0)
-    MIN_I = 1e-6 if locus_mode == "legacy" else 1.0
-    MIN_I_PP = MIN_I if locus_mode == "legacy" else MIN_I * 2.0
+    MIN_I = 1.0
+    MIN_I_PP = MIN_I * 2.0
 
     def z_gnd(ph: str):
         if ph not in vp or ph not in ip:
@@ -2397,7 +2389,6 @@ def _build_locus_payload(
             "sample_rate": round(sample_rate),
             "kscale": round(KSCALE, 6),
             "ohm_domain": "secondary" if KSCALE != 1000.0 else "primary",
-            "locus_mode": locus_mode,
             "residual_source": residual_source,
         },
         "relay_hint": relay_hint,
@@ -3014,9 +3005,6 @@ def api_rebuild_locus():
         k0_ang = float(request.form.get("k0_ang", -5.0))
     except (TypeError, ValueError):
         k0_mag, k0_ang = 0.85, -5.0
-    locus_mode = (request.form.get("locus_mode") or "modern").strip().lower()
-    if locus_mode not in {"modern", "legacy"}:
-        locus_mode = "modern"
 
     locus = _build_locus_payload(
         cfg_path,
@@ -3027,7 +3015,6 @@ def api_rebuild_locus():
         vt_secondary=analysis.get("ratio_base_vt_secondary"),
         k0_mag=k0_mag,
         k0_ang=k0_ang,
-        locus_mode=locus_mode,
     )
     return jsonify(locus)
 

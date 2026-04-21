@@ -911,10 +911,6 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             <button class="btn btn-outline locus-tab active" id="locusTabBoth" onclick="LOCUS.setTab('both')">Keduanya</button>
             <button class="btn btn-outline locus-tab" id="locusTabGnd" onclick="LOCUS.setTab('gnd')">Phase-Ground</button>
             <button class="btn btn-outline locus-tab" id="locusTabPP" onclick="LOCUS.setTab('pp')">Phase-Phase</button>
-            <span style="display:inline-flex; border:1px solid var(--border); border-radius:7px; overflow:hidden;">
-                <button class="btn btn-outline" id="locusModeModern" onclick="LOCUS.setMode('modern')" style="border:none; border-right:1px solid var(--border); border-radius:0;">Modern</button>
-                <button class="btn btn-outline" id="locusModeLegacy" onclick="LOCUS.setMode('legacy')" style="border:none; border-radius:0;">Benchmark Lama</button>
-            </span>
             <button class="btn btn-outline" id="locusFocusBtn" onclick="LOCUS.toggleFocusMode()">Sorot Gangguan</button>
             <button class="btn btn-outline" onclick="LOCUS.autoScale()">Auto Scale</button>
             <span style="display:inline-flex; align-items:center; gap:6px; border-left:1px solid var(--border); padding-left:10px; margin-left:2px;">
@@ -1346,23 +1342,6 @@ _refreshCtptStatusOnly();
         btn.style.color = focused ? 'var(--accent)' : '';
     }
 
-    function updateModeButtons() {
-        var map = {
-            modern: document.getElementById('locusModeModern'),
-            legacy: document.getElementById('locusModeLegacy')
-        };
-        Object.keys(map).forEach(function (mode) {
-            var btn = map[mode];
-            if (!btn) return;
-            var active = ST.mode === mode;
-            btn.style.background = active ? 'var(--accent)' : 'transparent';
-            btn.style.color = active ? '#0b0e13' : 'var(--text-muted)';
-            btn.title = mode === 'modern'
-                ? 'Mode modern: residual phase-sum dan floor arus proteksi'
-                : 'Benchmark lama: prefer kanal netral/residual dan floor arus sangat kecil';
-        });
-    }
-
     /* ---- default zone reach presets by voltage level ---- */
     function defZones(kv) {
         var p = {
@@ -1382,8 +1361,6 @@ _refreshCtptStatusOnly();
         zonesApplied: false,   // zones only drawn after user clicks Terapkan or imports RIO
         tab: FOCUS.preferred_tab || 'both',
         focusMode: FOCUS.default_mode || (FOCUSED_LOOPS.length ? 'faulted' : 'all'),
-        mode: locusMeta.locus_mode || 'modern',
-        appliedMode: locusMeta.locus_mode || 'modern',
         k0Mag: 0.85,
         k0Ang: -5.0
     };
@@ -1442,6 +1419,45 @@ _refreshCtptStatusOnly();
                          fillcolor:ZC[i]+'2a', line:{ color:ZC[i], width:1.5, dash:'dot' }, layer:'below' };
             }
         });
+    }
+
+    function relayZoneAnnotations(loopKey) {
+        if (!importedRelay || importedRelay.kind !== 'rio') return [];
+        var list = importedRelay[loopKey] || [];
+        return list.slice(0, 3).map(function (z, idx) {
+            var label = '<b>' + (z.label || ('Z' + (idx + 1))) + '</b>';
+            var color = ZC[idx] || '#64748b';
+            if (z.shapeType === 'circle' && isFinite(z.radius)) {
+                return {
+                    x: (z.centerR || 0) + z.radius * 0.65,
+                    y: (z.centerX || 0) + z.radius * 0.65,
+                    xref: 'x',
+                    yref: 'y',
+                    text: label,
+                    font: { size: 9, color: color },
+                    showarrow: false,
+                    bgcolor: 'rgba(255,255,255,.75)'
+                };
+            }
+            if (z.shapeType === 'poly' && Array.isArray(z.poly) && z.poly.length) {
+                var sumR = 0, sumX = 0;
+                z.poly.forEach(function (pt) {
+                    sumR += pt.r;
+                    sumX += pt.x;
+                });
+                return {
+                    x: sumR / z.poly.length,
+                    y: sumX / z.poly.length,
+                    xref: 'x',
+                    yref: 'y',
+                    text: label,
+                    font: { size: 9, color: color },
+                    showarrow: false,
+                    bgcolor: 'rgba(255,255,255,.75)'
+                };
+            }
+            return null;
+        }).filter(Boolean);
     }
 
     /* ---- trace building ---- */
@@ -1532,16 +1548,14 @@ _refreshCtptStatusOnly();
             var newMag = parseFloat((document.getElementById('locusK0Mag') || {}).value) || 0.85;
             var newAng = parseFloat((document.getElementById('locusK0Ang') || {}).value) || -5.0;
             var k0Changed = Math.abs(newMag - ST.k0Mag) > 1e-4 || Math.abs(newAng - ST.k0Ang) > 1e-3;
-            var modeChanged = ST.mode !== ST.appliedMode;
             ST.zonesApplied = true;
-            if (!k0Changed && !modeChanged) { _redrawPlots(); return; }
+            if (!k0Changed) { _redrawPlots(); return; }
 
             /* k0 changed — ask server to recompute locus data */
             if (btn) { btn.disabled = true; btn.textContent = '...'; }
             var fd = new FormData();
             fd.append('k0_mag', newMag);
             fd.append('k0_ang', newAng);
-            fd.append('locus_mode', ST.mode);
             fetch('/api/rebuild-locus', { method: 'POST', body: fd })
                 .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
                 .then(function (data) {
@@ -1550,28 +1564,16 @@ _refreshCtptStatusOnly();
                         loops = data.loops;
                         ST.k0Mag = newMag;
                         ST.k0Ang = newAng;
-                        ST.mode = locusMeta.locus_mode || ST.mode;
-                        ST.appliedMode = ST.mode;
                     }
-                    updateModeButtons();
                     _redrawPlots();
                 })
                 .catch(function (err) {
                     console.warn('rebuild-locus error', err);
-                    ST.mode = ST.appliedMode;
-                    updateModeButtons();
                     _redrawPlots();
                 })
                 .finally(function () {
                     if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; Terapkan'; }
                 });
-        },
-        setMode: function (mode) {
-            if (mode !== 'modern' && mode !== 'legacy') return;
-            if (ST.mode === mode) return;
-            ST.mode = mode;
-            updateModeButtons();
-            LOCUS.terapkan();
         },
         setChar: function (t) {
             ST.char = t;
@@ -2002,7 +2004,13 @@ _refreshCtptStatusOnly();
     var _activeRelayLoop = 'phGnd';  // tracks which loop is being drawn
     function buildLayoutWithOverlay(loopKey) {
         var ly = _origBuildLayout();
-        ly.shapes = (ly.shapes || []).concat(relayOverlays[loopKey] || []);
+        var overlays = relayOverlays[loopKey] || [];
+        if (importedRelay && importedRelay.kind === 'rio' && overlays.length) {
+            ly.shapes = overlays.slice();
+            ly.annotations = relayZoneAnnotations(loopKey);
+        } else {
+            ly.shapes = (ly.shapes || []).concat(overlays);
+        }
         return ly;
     }
 
@@ -2151,7 +2159,6 @@ _refreshCtptStatusOnly();
     renderZoneInputs();
     initPlotsRelay();
     updateFocusButton();
-    updateModeButtons();
     LOCUS.setTab(ST.tab);
     if (ST.focusMode === 'faulted') LOCUS.autoScale();
 })();
