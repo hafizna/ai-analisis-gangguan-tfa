@@ -911,6 +911,10 @@ textarea.form-control { min-height: 80px; resize: vertical; }
             <button class="btn btn-outline locus-tab active" id="locusTabBoth" onclick="LOCUS.setTab('both')">Keduanya</button>
             <button class="btn btn-outline locus-tab" id="locusTabGnd" onclick="LOCUS.setTab('gnd')">Phase-Ground</button>
             <button class="btn btn-outline locus-tab" id="locusTabPP" onclick="LOCUS.setTab('pp')">Phase-Phase</button>
+            <span style="display:inline-flex; border:1px solid var(--border); border-radius:7px; overflow:hidden;">
+                <button class="btn btn-outline" id="locusModeModern" onclick="LOCUS.setMode('modern')" style="border:none; border-right:1px solid var(--border); border-radius:0;">Modern</button>
+                <button class="btn btn-outline" id="locusModeLegacy" onclick="LOCUS.setMode('legacy')" style="border:none; border-radius:0;">Benchmark Lama</button>
+            </span>
             <button class="btn btn-outline" id="locusFocusBtn" onclick="LOCUS.toggleFocusMode()">Sorot Gangguan</button>
             <button class="btn btn-outline" onclick="LOCUS.autoScale()">Auto Scale</button>
             <span style="display:inline-flex; align-items:center; gap:6px; border-left:1px solid var(--border); padding-left:10px; margin-left:2px;">
@@ -1290,6 +1294,7 @@ _refreshCtptStatusOnly();
 
     var tArr   = _ld.t    || [];
     var loops  = _ld.loops || {};
+    var locusMeta = _ld.meta || {};
     var durMs  = _cfg.durMs  || 0;
     var voltKv = _cfg.voltKv || 150;
 
@@ -1341,6 +1346,23 @@ _refreshCtptStatusOnly();
         btn.style.color = focused ? 'var(--accent)' : '';
     }
 
+    function updateModeButtons() {
+        var map = {
+            modern: document.getElementById('locusModeModern'),
+            legacy: document.getElementById('locusModeLegacy')
+        };
+        Object.keys(map).forEach(function (mode) {
+            var btn = map[mode];
+            if (!btn) return;
+            var active = ST.mode === mode;
+            btn.style.background = active ? 'var(--accent)' : 'transparent';
+            btn.style.color = active ? '#0b0e13' : 'var(--text-muted)';
+            btn.title = mode === 'modern'
+                ? 'Mode modern: residual phase-sum dan floor arus proteksi'
+                : 'Benchmark lama: prefer kanal netral/residual dan floor arus sangat kecil';
+        });
+    }
+
     /* ---- default zone reach presets by voltage level ---- */
     function defZones(kv) {
         var p = {
@@ -1360,6 +1382,8 @@ _refreshCtptStatusOnly();
         zonesApplied: false,   // zones only drawn after user clicks Terapkan or imports RIO
         tab: FOCUS.preferred_tab || 'both',
         focusMode: FOCUS.default_mode || (FOCUSED_LOOPS.length ? 'faulted' : 'all'),
+        mode: locusMeta.locus_mode || 'modern',
+        appliedMode: locusMeta.locus_mode || 'modern',
         k0Mag: 0.85,
         k0Ang: -5.0
     };
@@ -1508,28 +1532,46 @@ _refreshCtptStatusOnly();
             var newMag = parseFloat((document.getElementById('locusK0Mag') || {}).value) || 0.85;
             var newAng = parseFloat((document.getElementById('locusK0Ang') || {}).value) || -5.0;
             var k0Changed = Math.abs(newMag - ST.k0Mag) > 1e-4 || Math.abs(newAng - ST.k0Ang) > 1e-3;
+            var modeChanged = ST.mode !== ST.appliedMode;
             ST.zonesApplied = true;
-            if (!k0Changed) { _redrawPlots(); return; }
+            if (!k0Changed && !modeChanged) { _redrawPlots(); return; }
 
             /* k0 changed — ask server to recompute locus data */
             if (btn) { btn.disabled = true; btn.textContent = '...'; }
             var fd = new FormData();
             fd.append('k0_mag', newMag);
             fd.append('k0_ang', newAng);
+            fd.append('locus_mode', ST.mode);
             fetch('/api/rebuild-locus', { method: 'POST', body: fd })
                 .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
                 .then(function (data) {
                     if (data && data.loops) {
+                        locusMeta = data.meta || locusMeta;
                         loops = data.loops;
                         ST.k0Mag = newMag;
                         ST.k0Ang = newAng;
+                        ST.mode = locusMeta.locus_mode || ST.mode;
+                        ST.appliedMode = ST.mode;
                     }
+                    updateModeButtons();
                     _redrawPlots();
                 })
-                .catch(function (err) { console.warn('rebuild-locus error', err); _redrawPlots(); })
+                .catch(function (err) {
+                    console.warn('rebuild-locus error', err);
+                    ST.mode = ST.appliedMode;
+                    updateModeButtons();
+                    _redrawPlots();
+                })
                 .finally(function () {
                     if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; Terapkan'; }
                 });
+        },
+        setMode: function (mode) {
+            if (mode !== 'modern' && mode !== 'legacy') return;
+            if (ST.mode === mode) return;
+            ST.mode = mode;
+            updateModeButtons();
+            LOCUS.terapkan();
         },
         setChar: function (t) {
             ST.char = t;
@@ -1632,55 +1674,163 @@ _refreshCtptStatusOnly();
         return out.length >= 3 ? out : null;
     }
 
-    function parseRIO(text) {
-        var zones = [];
-        var blocks = text.match(/BEGIN\s+ZONE[\s\S]*?END\s+ZONE/gmi) || [];
-        blocks.forEach(function (block) {
-            var index     = parseInt(((block.match(/\bINDEX\s+([0-9]+)/i) || [])[1] || 'NaN'), 10);
-            var faultLoop = ((block.match(/\bFAULTLOOP\s+([A-Z]+)/i) || [])[1] || '').toUpperCase();
-            var label     = ((block.match(/\bLABEL\s+(.+)/i) || [])[1] || '').trim();
-            var active    = ((block.match(/\bACTIVE\s+(YES|NO)/i) || [])[1] || 'YES').toUpperCase() === 'YES';
-            if (!active) return;
+    function parseTripCharPolygon(block) {
+        var points = [];
+        var start = block.match(/\bSTART\s+([-0-9.]+)\s*,\s*([-0-9.]+)/i);
+        if (start) {
+            points.push({ r: parseFloat(start[1]), x: parseFloat(start[2]) });
+        }
+        var lineRe = /\bLINE\s+([-0-9.]+)\s*,\s*([-0-9.]+)/gmi;
+        var match;
+        while ((match = lineRe.exec(block)) !== null) {
+            points.push({ r: parseFloat(match[1]), x: parseFloat(match[2]) });
+        }
+        return points.length >= 3 ? points : null;
+    }
 
+    function parseTripCharCircle(block) {
+        var arc = block.match(/\bARC\s+([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*(CW|CCW)/i);
+        if (!arc) return null;
+        var radius = parseFloat(arc[1]);
+        var centerX = parseFloat(arc[2]);
+        var sweep = parseFloat(arc[3]);
+
+        if (!isFinite(radius) || radius <= 0 || !isFinite(sweep)) return null;
+        if (Math.abs(sweep) >= 359 && Math.abs(centerX) < 1e-6) {
+            return { centerR: 0, centerX: 0, radius: radius };
+        }
+        return null;
+    }
+
+    function parseZoneBlocks(text) {
+        var zones = [];
+        var blockRe = /BEGIN\s+(ZONE(?:-OVERREACH)?)\b([\s\S]*?)END\s+\1/gmi;
+        var match, order = 0;
+        while ((match = blockRe.exec(text)) !== null) {
+            var block = match[0];
+            var label = ((block.match(/\bNAME\s+(.+?)(?=\s+(?:TIME1|TIMEM|BEGIN|ACTIVE|INDEX|FAULTLOOP)\b|$)/i) || [])[1] || '').trim();
+            var index = parseInt(((block.match(/\bINDEX\s+([0-9]+)/i) || [])[1] || 'NaN'), 10);
+            var faultLoop = ((block.match(/\bFAULTLOOP\s+([A-Z]+)/i) || [])[1] || '').toUpperCase();
+            var active = ((block.match(/\bACTIVE\s+(YES|NO|TRUE|FALSE)/i) || [])[1] || 'YES').toUpperCase();
+            if (active === 'NO' || active === 'FALSE') continue;
+            zones.push({
+                block: block,
+                label: label || ('ZONE ' + (order + 1)),
+                index: isFinite(index) ? index : (order + 1),
+                order: order++,
+                faultLoop: faultLoop
+            });
+        }
+        return zones;
+    }
+
+    function parseLegacyRioZones(text) {
+        var zones = [];
+        parseZoneBlocks(text).forEach(function (zone) {
+            var block = zone.block;
             var mhoBlock = block.match(/BEGIN\s+MHOSHAPE[\s\S]*?END\s+MHOSHAPE/mi);
             if (mhoBlock) {
-                var ang   = parseFloat(((mhoBlock[0].match(/\bANGLE\s+([-0-9.]+)/i) || [])[1] || 'NaN'));
+                var ang = parseFloat(((mhoBlock[0].match(/\bANGLE\s+([-0-9.]+)/i) || [])[1] || 'NaN'));
                 var reach = parseFloat(((mhoBlock[0].match(/\bREACH\s+([-0-9.]+)/i) || [])[1] || 'NaN'));
-                zones.push({ index: index, faultLoop: faultLoop, label: label, shapeType: 'mho', angle: ang, reach: reach });
+                zones.push({
+                    index: zone.index,
+                    order: zone.order,
+                    faultLoop: zone.faultLoop,
+                    label: zone.label,
+                    shapeType: 'mho',
+                    angle: ang,
+                    reach: reach
+                });
                 return;
             }
             var shpBlock = block.match(/BEGIN\s+SHAPE[\s\S]*?END\s+SHAPE/mi);
-            if (shpBlock) {
-                // Parse both LINE and LINEP commands.
-                // LINE  r, x, ang, side  — line through (r,x) with normal at angle ang.
-                // LINEP d, ang, psi, side — parallel to previous LINE; reference point
-                //   shifted by d in direction psi from the previous LINE's reference.
-                var lineRe = /(LINE(?:P)?)\s+([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*(LEFT|RIGHT)/gmi;
-                var lm, lineArr = [], prevRef = null;
-                while ((lm = lineRe.exec(shpBlock[0])) !== null) {
-                    var isLinep = lm[1].toUpperCase() === 'LINEP';
-                    var p1 = parseFloat(lm[2]), p2 = parseFloat(lm[3]);
-                    var ang = parseFloat(lm[4]), side = lm[5].toUpperCase();
-                    if (!isLinep) {
-                        prevRef = { r: p1, x: p2 };
-                        lineArr.push({ r: p1, x: p2, ang: ang, side: side });
-                    } else {
-                        // p1=d (offset distance), p2=normal-angle (same as prev LINE),
-                        // ang=psi (direction of offset from prevRef)
-                        var ref = prevRef || { r: 0, x: 0 };
-                        var newR = ref.r + p1 * Math.cos(ang * Math.PI / 180);
-                        var newX = ref.x + p1 * Math.sin(ang * Math.PI / 180);
-                        prevRef = { r: newR, x: newX };
-                        lineArr.push({ r: newR, x: newX, ang: p2, side: side });
-                    }
+            if (!shpBlock) return;
+
+            var lineRe = /(LINE(?:P)?)\s+([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*(LEFT|RIGHT)/gmi;
+            var lm, lineArr = [], prevRef = null;
+            while ((lm = lineRe.exec(shpBlock[0])) !== null) {
+                var isLinep = lm[1].toUpperCase() === 'LINEP';
+                var p1 = parseFloat(lm[2]), p2 = parseFloat(lm[3]);
+                var ang = parseFloat(lm[4]), side = lm[5].toUpperCase();
+                if (!isLinep) {
+                    prevRef = { r: p1, x: p2 };
+                    lineArr.push({ r: p1, x: p2, ang: ang, side: side });
+                } else {
+                    var ref = prevRef || { r: 0, x: 0 };
+                    var newR = ref.r + p1 * Math.cos(ang * Math.PI / 180);
+                    var newX = ref.x + p1 * Math.sin(ang * Math.PI / 180);
+                    prevRef = { r: newR, x: newX };
+                    lineArr.push({ r: newR, x: newX, ang: p2, side: side });
                 }
-                var poly = polygonFromLineChain(lineArr);
-                if (poly && poly.length >= 3) zones.push({ index: index, faultLoop: faultLoop, label: label, shapeType: 'poly', poly: poly });
+            }
+            var poly = polygonFromLineChain(lineArr);
+            if (poly && poly.length >= 3) {
+                zones.push({
+                    index: zone.index,
+                    order: zone.order,
+                    faultLoop: zone.faultLoop,
+                    label: zone.label,
+                    shapeType: 'poly',
+                    poly: poly
+                });
             }
         });
-        var phGnd = zones.filter(function (z) { return z.faultLoop === 'LN'; }).sort(function (a, b) { return a.index - b.index; });
-        var phPh  = zones.filter(function (z) { return z.faultLoop === 'LL'; }).sort(function (a, b) { return a.index - b.index; });
-        return { kind: 'rio', phGnd: phGnd, phPh: phPh };
+        return zones;
+    }
+
+    function parseProtectionDeviceRio(text) {
+        if (!/BEGIN\s+PROTECTIONDEVICE/i.test(text)) return null;
+        var zones = [];
+        parseZoneBlocks(text).forEach(function (zone) {
+            var block = zone.block;
+            var tripPhase = block.match(/BEGIN\s+TRIPCHAR([\s\S]*?)END\s+TRIPCHAR/mi);
+            var tripEarth = block.match(/BEGIN\s+TRIPCHAR-EARTH([\s\S]*?)END\s+TRIPCHAR-EARTH/mi);
+            if (tripPhase) {
+                var circle = parseTripCharCircle(tripPhase[1]);
+                if (circle) {
+                    zones.push({
+                        index: zone.index,
+                        order: zone.order,
+                        faultLoop: 'LL',
+                        label: zone.label,
+                        shapeType: 'circle',
+                        centerR: circle.centerR,
+                        centerX: circle.centerX,
+                        radius: circle.radius
+                    });
+                }
+            }
+            if (tripEarth) {
+                var poly = parseTripCharPolygon(tripEarth[1]);
+                if (poly) {
+                    zones.push({
+                        index: zone.index,
+                        order: zone.order,
+                        faultLoop: 'LN',
+                        label: zone.label,
+                        shapeType: 'poly',
+                        poly: poly
+                    });
+                }
+            }
+        });
+        return {
+            kind: 'rio',
+            phGnd: zones.filter(function (z) { return z.faultLoop === 'LN'; }).sort(function (a, b) { return a.order - b.order; }),
+            phPh: zones.filter(function (z) { return z.faultLoop === 'LL'; }).sort(function (a, b) { return a.order - b.order; })
+        };
+    }
+
+    function parseRIO(text) {
+        var modern = parseProtectionDeviceRio(text);
+        if (modern && (modern.phGnd.length || modern.phPh.length)) return modern;
+
+        var legacyZones = parseLegacyRioZones(text);
+        return {
+            kind: 'rio',
+            phGnd: legacyZones.filter(function (z) { return z.faultLoop === 'LN'; }).sort(function (a, b) { return a.order - b.order; }),
+            phPh: legacyZones.filter(function (z) { return z.faultLoop === 'LL'; }).sort(function (a, b) { return a.order - b.order; })
+        };
     }
 
     function parseXRIO(text) {
@@ -1726,6 +1876,19 @@ _refreshCtptStatusOnly();
                  fillcolor: color + '22', line: { color: color, width: 2, dash: 'solid' }, layer: 'above' };
     }
 
+    function _circleToPlotlyShape(centerR, centerX, radius, color) {
+        return {
+            type: 'circle',
+            x0: centerR - radius,
+            y0: centerX - radius,
+            x1: centerR + radius,
+            y1: centerX + radius,
+            fillcolor: color + '22',
+            line: { color: color, width: 2, dash: 'solid' },
+            layer: 'above'
+        };
+    }
+
     function applyRelayToZones(loopKey) {
         if (!importedRelay) return;
         var list = importedRelay[loopKey] || [];
@@ -1745,6 +1908,8 @@ _refreshCtptStatusOnly();
                         ST.zones[idx].ang   = z.angle || 85;
                     }
                     relayOverlays[loopKey].push(_mhoToPlotlyShape(z.reach, z.angle || 85, color));
+                } else if (z.shapeType === 'circle') {
+                    relayOverlays[loopKey].push(_circleToPlotlyShape(z.centerR || 0, z.centerX || 0, z.radius, color));
                 } else if (z.shapeType === 'poly') {
                     // Keep manual inputs, overlay exact polygon as additional shape
                     var sh = _polyToPlotlyShape(z.poly, color);
@@ -1979,6 +2144,7 @@ _refreshCtptStatusOnly();
     renderZoneInputs();
     initPlotsRelay();
     updateFocusButton();
+    updateModeButtons();
     LOCUS.setTab(ST.tab);
     if (ST.focusMode === 'faulted') LOCUS.autoScale();
 })();

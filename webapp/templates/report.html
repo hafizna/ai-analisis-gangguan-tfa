@@ -564,6 +564,33 @@
         };
     }
 
+    function circleEntry(centerR, centerX, radius, color, label) {
+        if (!isFinite(centerR) || !isFinite(centerX) || !isFinite(radius) || radius <= 0) return null;
+        return {
+            shape: {
+                type: 'circle',
+                x0: centerR - radius,
+                y0: centerX - radius,
+                x1: centerR + radius,
+                y1: centerX + radius,
+                fillcolor: color + '24',
+                line: { color: color, width: 1.8, dash: 'dot' },
+                layer: 'below'
+            },
+            annotation: {
+                x: centerR + radius * 0.65,
+                y: centerX + radius * 0.65,
+                xref: 'x',
+                yref: 'y',
+                text: '<b>' + label + '</b>',
+                font: { size: 10, color: color },
+                showarrow: false,
+                bgcolor: 'rgba(255,255,255,0.82)'
+            },
+            bounds: { rMin: centerR - radius, rMax: centerR + radius, xMin: centerX - radius, xMax: centerX + radius }
+        };
+    }
+
     function polyEntry(points, color, label) {
         if (!points || !points.length) return null;
         var path = 'M ' + points[0].r + ',' + points[0].x;
@@ -624,20 +651,73 @@
         return out.length >= 3 ? out : null;
     }
 
-    function parseRIO(text) {
+    function parseTripCharPolygon(block) {
+        var points = [];
+        var start = block.match(/\bSTART\s+([-0-9.]+)\s*,\s*([-0-9.]+)/i);
+        if (start) {
+            points.push({ r: parseFloat(start[1]), x: parseFloat(start[2]) });
+        }
+        var lineRe = /\bLINE\s+([-0-9.]+)\s*,\s*([-0-9.]+)/gmi;
+        var match;
+        while ((match = lineRe.exec(block)) !== null) {
+            points.push({ r: parseFloat(match[1]), x: parseFloat(match[2]) });
+        }
+        return points.length >= 3 ? points : null;
+    }
+
+    function parseTripCharCircle(block) {
+        var arc = block.match(/\bARC\s+([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*(CW|CCW)/i);
+        if (!arc) return null;
+        var radius = parseFloat(arc[1]);
+        var centerX = parseFloat(arc[2]);
+        var sweep = parseFloat(arc[3]);
+
+        if (!isFinite(radius) || radius <= 0 || !isFinite(sweep)) return null;
+        if (Math.abs(sweep) >= 359 && Math.abs(centerX) < 1e-6) {
+            return { centerR: 0, centerX: 0, radius: radius };
+        }
+        return null;
+    }
+
+    function parseZoneBlocks(text) {
         var zones = [];
-        var blocks = text.match(/BEGIN\s+ZONE[\s\S]*?END\s+ZONE/gmi) || [];
-        blocks.forEach(function (block) {
+        var blockRe = /BEGIN\s+(ZONE(?:-OVERREACH)?)\b([\s\S]*?)END\s+\1/gmi;
+        var match, order = 0;
+        while ((match = blockRe.exec(text)) !== null) {
+            var block = match[0];
+            var label = ((block.match(/\bNAME\s+(.+?)(?=\s+(?:TIME1|TIMEM|BEGIN|ACTIVE|INDEX|FAULTLOOP)\b|$)/i) || [])[1] || '').trim();
             var index = parseInt(((block.match(/\bINDEX\s+([0-9]+)/i) || [])[1] || 'NaN'), 10);
             var faultLoop = ((block.match(/\bFAULTLOOP\s+([A-Z]+)/i) || [])[1] || '').toUpperCase();
-            var active = ((block.match(/\bACTIVE\s+(YES|NO)/i) || [])[1] || 'YES').toUpperCase() === 'YES';
-            if (!active) return;
+            var active = ((block.match(/\bACTIVE\s+(YES|NO|TRUE|FALSE)/i) || [])[1] || 'YES').toUpperCase();
+            if (active === 'NO' || active === 'FALSE') continue;
+            zones.push({
+                block: block,
+                label: label || ('ZONE ' + (order + 1)),
+                index: isFinite(index) ? index : (order + 1),
+                order: order++,
+                faultLoop: faultLoop
+            });
+        }
+        return zones;
+    }
 
+    function parseLegacyRioZones(text) {
+        var zones = [];
+        parseZoneBlocks(text).forEach(function (zone) {
+            var block = zone.block;
             var mhoBlock = block.match(/BEGIN\s+MHOSHAPE[\s\S]*?END\s+MHOSHAPE/mi);
             if (mhoBlock) {
                 var angle = parseFloat(((mhoBlock[0].match(/\bANGLE\s+([-0-9.]+)/i) || [])[1] || 'NaN'));
                 var reach = parseFloat(((mhoBlock[0].match(/\bREACH\s+([-0-9.]+)/i) || [])[1] || 'NaN'));
-                zones.push({ index: index, faultLoop: faultLoop, shapeType: 'mho', angle: angle, reach: reach });
+                zones.push({
+                    index: zone.index,
+                    order: zone.order,
+                    faultLoop: zone.faultLoop,
+                    label: zone.label,
+                    shapeType: 'mho',
+                    angle: angle,
+                    reach: reach
+                });
                 return;
             }
 
@@ -665,12 +745,72 @@
                 }
             }
             var poly = polygonFromLineChain(lineArr);
-            if (poly) zones.push({ index: index, faultLoop: faultLoop, shapeType: 'poly', poly: poly });
+            if (poly) {
+                zones.push({
+                    index: zone.index,
+                    order: zone.order,
+                    faultLoop: zone.faultLoop,
+                    label: zone.label,
+                    shapeType: 'poly',
+                    poly: poly
+                });
+            }
+        });
+        return zones;
+    }
+
+    function parseProtectionDeviceRio(text) {
+        if (!/BEGIN\s+PROTECTIONDEVICE/i.test(text)) return null;
+        var zones = [];
+        parseZoneBlocks(text).forEach(function (zone) {
+            var block = zone.block;
+            var tripPhase = block.match(/BEGIN\s+TRIPCHAR([\s\S]*?)END\s+TRIPCHAR/mi);
+            var tripEarth = block.match(/BEGIN\s+TRIPCHAR-EARTH([\s\S]*?)END\s+TRIPCHAR-EARTH/mi);
+            if (tripPhase) {
+                var circle = parseTripCharCircle(tripPhase[1]);
+                if (circle) {
+                    zones.push({
+                        index: zone.index,
+                        order: zone.order,
+                        faultLoop: 'LL',
+                        label: zone.label,
+                        shapeType: 'circle',
+                        centerR: circle.centerR,
+                        centerX: circle.centerX,
+                        radius: circle.radius
+                    });
+                }
+            }
+            if (tripEarth) {
+                var poly = parseTripCharPolygon(tripEarth[1]);
+                if (poly) {
+                    zones.push({
+                        index: zone.index,
+                        order: zone.order,
+                        faultLoop: 'LN',
+                        label: zone.label,
+                        shapeType: 'poly',
+                        poly: poly
+                    });
+                }
+            }
         });
         return {
             kind: 'rio',
-            phGnd: zones.filter(function (zone) { return zone.faultLoop === 'LN'; }).sort(function (left, right) { return left.index - right.index; }),
-            phPh: zones.filter(function (zone) { return zone.faultLoop === 'LL'; }).sort(function (left, right) { return left.index - right.index; })
+            phGnd: zones.filter(function (zone) { return zone.faultLoop === 'LN'; }).sort(function (left, right) { return left.order - right.order; }),
+            phPh: zones.filter(function (zone) { return zone.faultLoop === 'LL'; }).sort(function (left, right) { return left.order - right.order; })
+        };
+    }
+
+    function parseRIO(text) {
+        var modern = parseProtectionDeviceRio(text);
+        if (modern && (modern.phGnd.length || modern.phPh.length)) return modern;
+
+        var legacyZones = parseLegacyRioZones(text);
+        return {
+            kind: 'rio',
+            phGnd: legacyZones.filter(function (zone) { return zone.faultLoop === 'LN'; }).sort(function (left, right) { return left.order - right.order; }),
+            phPh: legacyZones.filter(function (zone) { return zone.faultLoop === 'LL'; }).sort(function (left, right) { return left.order - right.order; })
         };
     }
 
@@ -733,6 +873,7 @@
                 var label = 'Z' + (idx + 1);
                 if (importedRelay.kind === 'rio') {
                     if (zone.shapeType === 'mho') return mhoEntry(zone.reach, zone.angle || 85, color, label);
+                    if (zone.shapeType === 'circle') return circleEntry(zone.centerR || 0, zone.centerX || 0, zone.radius, color, label);
                     if (zone.shapeType === 'poly') return polyEntry(zone.poly, color, label);
                 }
                 return quadEntry(xrioZoneToQuad(zone), color, label);
