@@ -1606,17 +1606,21 @@ _refreshCtptStatusOnly();
     var relayOverlays = { phGnd: [], phPh: [] };  // extra Plotly shapes from relay
 
     function polygonFromLineChain(lines) {
+        // OMICRON .rio LINE convention: the angle is the OUTWARD NORMAL direction,
+        // not the travel direction.  So (a,b) = (cos θ, sin θ) for the half-plane
+        // equation  a·R + b·X = c  where c = a·r0 + b·x0.
         if (!lines || lines.length < 3) return null;
         var coeffs = lines.map(function (L) {
-            var th = L.ang * Math.PI / 180, dx = Math.cos(th), dy = Math.sin(th);
-            var a = -dy, b = dx, c = a * L.r + b * L.x;
+            var th = L.ang * Math.PI / 180;
+            var a = Math.cos(th), b = Math.sin(th);
+            var c = a * L.r + b * L.x;
             return { a: a, b: b, c: c };
         });
         var verts = [];
         for (var i = 0; i < coeffs.length; i++) {
             var L1 = coeffs[i], L2 = coeffs[(i + 1) % coeffs.length];
             var det = L1.a * L2.b - L2.a * L1.b;
-            if (Math.abs(det) < 1e-12) continue;
+            if (Math.abs(det) < 1e-9) continue;  // parallel — skip
             var r = (L1.c * L2.b - L2.c * L1.b) / det;
             var x = (L1.a * L2.c - L2.a * L1.c) / det;
             if (isFinite(r) && isFinite(x)) verts.push({ r: r, x: x });
@@ -1647,10 +1651,29 @@ _refreshCtptStatusOnly();
             }
             var shpBlock = block.match(/BEGIN\s+SHAPE[\s\S]*?END\s+SHAPE/mi);
             if (shpBlock) {
-                var lineRe = /LINE\s+([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*(LEFT|RIGHT)/gmi;
-                var lm, lineArr = [];
-                while ((lm = lineRe.exec(shpBlock[0])) !== null)
-                    lineArr.push({ r: parseFloat(lm[1]), x: parseFloat(lm[2]), ang: parseFloat(lm[3]), side: lm[4].toUpperCase() });
+                // Parse both LINE and LINEP commands.
+                // LINE  r, x, ang, side  — line through (r,x) with normal at angle ang.
+                // LINEP d, ang, psi, side — parallel to previous LINE; reference point
+                //   shifted by d in direction psi from the previous LINE's reference.
+                var lineRe = /(LINE(?:P)?)\s+([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*(LEFT|RIGHT)/gmi;
+                var lm, lineArr = [], prevRef = null;
+                while ((lm = lineRe.exec(shpBlock[0])) !== null) {
+                    var isLinep = lm[1].toUpperCase() === 'LINEP';
+                    var p1 = parseFloat(lm[2]), p2 = parseFloat(lm[3]);
+                    var ang = parseFloat(lm[4]), side = lm[5].toUpperCase();
+                    if (!isLinep) {
+                        prevRef = { r: p1, x: p2 };
+                        lineArr.push({ r: p1, x: p2, ang: ang, side: side });
+                    } else {
+                        // p1=d (offset distance), p2=normal-angle (same as prev LINE),
+                        // ang=psi (direction of offset from prevRef)
+                        var ref = prevRef || { r: 0, x: 0 };
+                        var newR = ref.r + p1 * Math.cos(ang * Math.PI / 180);
+                        var newX = ref.x + p1 * Math.sin(ang * Math.PI / 180);
+                        prevRef = { r: newR, x: newX };
+                        lineArr.push({ r: newR, x: newX, ang: p2, side: side });
+                    }
+                }
                 var poly = polygonFromLineChain(lineArr);
                 if (poly && poly.length >= 3) zones.push({ index: index, faultLoop: faultLoop, label: label, shapeType: 'poly', poly: poly });
             }
