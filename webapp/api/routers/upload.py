@@ -3,6 +3,8 @@
 import sys
 import tempfile
 import asyncio
+import json
+import uuid
 from pathlib import Path
 from functools import partial
 
@@ -11,9 +13,17 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from core.comtrade_parser import parse_comtrade, ComtradeRecord
-from ..schemas import ComtradeOut, AnalogChannelOut, StatusChannelOut, RecalcRequest
+from ..schemas import (
+    AnalysisCreatedResponse,
+    ComtradeOut,
+    AnalogChannelOut,
+    StatusChannelOut,
+    RecalcRequest,
+)
 
 router = APIRouter(prefix="/api", tags=["upload"])
+ANALYSIS_DIR = Path(tempfile.gettempdir()) / "dfr_fastapi_analysis"
+ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _record_to_out(record: ComtradeRecord) -> dict:
@@ -53,7 +63,30 @@ def _record_to_out(record: ComtradeRecord) -> dict:
     }
 
 
-@router.post("/upload")
+def _analysis_path(analysis_id: str) -> Path:
+    return ANALYSIS_DIR / f"{analysis_id}.json"
+
+
+def _save_analysis(payload: dict) -> str:
+    analysis_id = uuid.uuid4().hex
+    _analysis_path(analysis_id).write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return analysis_id
+
+
+def _load_analysis(analysis_id: str) -> dict | None:
+    path = _analysis_path(analysis_id)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+@router.post("/upload", response_model=AnalysisCreatedResponse)
 async def upload_comtrade(
     cfg_file: UploadFile = File(...),
     dat_file: UploadFile = File(...),
@@ -82,7 +115,24 @@ async def upload_comtrade(
     if record is None:
         raise HTTPException(status_code=422, detail="Could not parse COMTRADE files. Check that the .cfg and .dat pair is valid.")
 
-    return _record_to_out(record)
+    payload = _record_to_out(record)
+    analysis_id = _save_analysis(payload)
+    return AnalysisCreatedResponse(
+        analysis_id=analysis_id,
+        station_name=payload["station_name"],
+        rec_dev_id=payload["rec_dev_id"],
+        total_samples=payload["total_samples"],
+        analog_channel_count=len(payload["analog_channels"]),
+        status_channel_count=len(payload["status_channels"]),
+    )
+
+
+@router.get("/analysis/{analysis_id}", response_model=ComtradeOut)
+async def get_analysis(analysis_id: str):
+    payload = _load_analysis(analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    return payload
 
 
 @router.post("/recalculate-ratio")

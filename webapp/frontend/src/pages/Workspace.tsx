@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { useAnalysis } from "../context/AnalysisContext";
 import type { ComtradeData } from "../context/AnalysisContext";
+import { fetchAnalysis } from "../api/client";
 
 import AnalogSignalRecap from "../components/panels/AnalogSignalRecap";
 import COMTRADEExplorer from "../components/panels/COMTRADEExplorer";
@@ -18,12 +19,20 @@ import styles from "./Workspace.module.css";
 const RELAY_LABELS: Record<string, string> = {
   "21": "21 - Distance",
   "87L": "87L - Differential Line",
-  "87T": "87T - Differential Transformer",
-  OCR: "50/51 - Overcurrent",
-  REF: "REF / GFR / SBEF",
+  "87T": "87T / REF",
+  OCR: "50/51 / GFR",
+  REF: "REF",
+  SBEF: "SBEF",
 };
 
 type Tab = "waveforms" | "explorer" | "soe" | "ratio" | "locus" | "diff" | "ocr" | "ai";
+
+function initialTabForRelay(relayType: string): Tab {
+  if (relayType === "21" || relayType === "87L" || relayType === "87T" || relayType === "REF") {
+    return "explorer";
+  }
+  return "explorer";
+}
 
 function tabsForRelay(relayType: string): { id: Tab; label: string }[] {
   const base: { id: Tab; label: string }[] = [
@@ -41,10 +50,10 @@ function tabsForRelay(relayType: string): { id: Tab; label: string }[] {
     base.push({ id: "diff", label: "Diff / Restraint" });
     base.push({ id: "ai", label: "AI Fault Analysis" });
   }
-  if (relayType === "87T") {
+  if (relayType === "87T" || relayType === "REF") {
     base.push({ id: "diff", label: "Diff / Restraint" });
   }
-  if (relayType === "OCR" && !base.find((t) => t.id === "ocr")) {
+  if ((relayType === "OCR" || relayType === "SBEF") && !base.find((t) => t.id === "ocr")) {
     base.push({ id: "ocr", label: "Overcurrent Curve" });
   }
 
@@ -52,25 +61,87 @@ function tabsForRelay(relayType: string): { id: Tab; label: string }[] {
 }
 
 export default function Workspace() {
-  const { relayType: urlType } = useParams<{ relayType: string }>();
-  const { comtrade: ctxComtrade, relayType: ctxRelayType, reset } = useAnalysis();
+  const { relayType: urlType, analysisId } = useParams<{ relayType: string; analysisId: string }>();
+  const { relayType: ctxRelayType, reset } = useAnalysis();
   const navigate = useNavigate();
 
   const relayType = urlType ?? ctxRelayType ?? "21";
-  const [comtrade, setComtrade] = useState<ComtradeData | null>(ctxComtrade);
+  const [comtrade, setComtrade] = useState<ComtradeData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (ctxComtrade) {
-      setComtrade(ctxComtrade);
+    let cancelled = false;
+
+    async function loadAnalysis() {
+      if (!analysisId) {
+        if (!cancelled) {
+          setLoading(false);
+          setError("Missing analysis session id.");
+        }
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const data = await fetchAnalysis(analysisId);
+        if (!cancelled) {
+          setComtrade(data);
+        }
+      } catch (err: unknown) {
+        const response = (err as { response?: { data?: { detail?: string } } }).response;
+        if (!cancelled) {
+          setError(response?.data?.detail ?? "Failed to load the analysis session.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
-  }, [ctxComtrade]);
+
+    void loadAnalysis();
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisId]);
 
   const tabs = tabsForRelay(relayType);
-  const [activeTab, setActiveTab] = useState<Tab>(tabs[0].id);
+  const [activeTab, setActiveTab] = useState<Tab>(initialTabForRelay(relayType));
 
   useEffect(() => {
-    setActiveTab(tabs[0].id);
+    setActiveTab(initialTabForRelay(relayType));
   }, [relayType]);
+
+  if (!analysisId) {
+    return <Navigate to={ctxRelayType ? "/upload" : "/"} replace />;
+  }
+
+  if (loading) {
+    return (
+      <div className={styles.page}>
+        <main className={styles.content}>
+          <div style={{ padding: "48px 0", color: "#475569", fontSize: "0.95rem" }}>
+            Loading analysis session...
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className={styles.page}>
+        <main className={styles.content}>
+          <div style={{ padding: "24px", background: "#fff7ed", border: "1px solid #fdba74", borderRadius: 12, color: "#9a3412" }}>
+            {error}
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   if (!comtrade) {
     return <Navigate to={ctxRelayType ? "/upload" : "/"} replace />;
@@ -131,16 +202,16 @@ export default function Workspace() {
         {activeTab === "ai" && relayType === "21" && (
           <AIFaultAnalysis21 comtrade={comtrade} />
         )}
-        {activeTab === "diff" && (relayType === "87L" || relayType === "87T") && (
-          <DiffRestraintPlot comtrade={comtrade} relayType={relayType as "87L" | "87T"} />
+        {activeTab === "diff" && (relayType === "87L" || relayType === "87T" || relayType === "REF") && (
+          <DiffRestraintPlot comtrade={comtrade} relayType={relayType === "87L" ? "87L" : "87T"} />
         )}
         {activeTab === "ai" && relayType === "87L" && (
           <AIFaultAnalysis87L comtrade={comtrade} />
         )}
-        {activeTab === "ocr" && relayType === "OCR" && (
-          <OvercurrentOverlay comtrade={comtrade} />
+        {activeTab === "ocr" && (relayType === "OCR" || relayType === "SBEF") && (
+          <OvercurrentOverlay comtrade={comtrade} relayType={relayType} />
         )}
-        {relayType === "87T" && activeTab === "diff" && (
+        {(relayType === "87T" || relayType === "REF") && activeTab === "diff" && (
           <div style={{ fontSize: "0.85rem", color: "#64748b", marginTop: 12, padding: "10px 16px", background: "#f8fafc", borderRadius: 8 }}>
             AI fault cause analysis for transformer differential is pending - relay coordination evidence required.
           </div>

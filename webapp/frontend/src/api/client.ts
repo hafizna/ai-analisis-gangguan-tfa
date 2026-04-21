@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { ComtradeData } from "../context/AnalysisContext";
 
 const BASE = import.meta.env.VITE_API_URL?.trim() || "";
 
@@ -7,11 +8,25 @@ export const api = axios.create({
   timeout: 30000,
 });
 
+export interface UploadedAnalysis {
+  analysis_id: string;
+  station_name: string;
+  rec_dev_id: string;
+  total_samples: number;
+  analog_channel_count: number;
+  status_channel_count: number;
+}
+
 export async function uploadComtrade(cfg: File, dat: File) {
   const form = new FormData();
   form.append("cfg_file", cfg);
   form.append("dat_file", dat);
-  const { data } = await api.post("/api/upload", form);
+  const { data } = await api.post<UploadedAnalysis>("/api/upload", form);
+  return data;
+}
+
+export async function fetchAnalysis(analysisId: string) {
+  const { data } = await api.get<ComtradeData>(`/api/analysis/${analysisId}`);
   return data;
 }
 

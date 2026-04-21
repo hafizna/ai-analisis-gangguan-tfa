@@ -4,7 +4,10 @@ import type { ComtradeData } from "../../../context/AnalysisContext";
 import { overCurrentCharacteristic } from "../../../api/client";
 import styles from "../../panels/Panel.module.css";
 
-interface Props { comtrade: ComtradeData; }
+interface Props {
+  comtrade: ComtradeData;
+  relayType?: "OCR" | "SBEF";
+}
 interface CurvePoint { current_ratio: number; trip_time_s: number; }
 interface OCRResult {
   curve_points: CurvePoint[];
@@ -20,7 +23,7 @@ const CURVE_LABELS: Record<string, string> = {
   LTI: "Long Time Inverse",
 };
 
-export default function OvercurrentOverlay({ comtrade }: Props) {
+export default function OvercurrentOverlay({ comtrade, relayType = "OCR" }: Props) {
   const [curveType, setCurveType] = useState("NI");
   const [pickup, setPickup] = useState(1.0);
   const [tms, setTms] = useState(0.1);
@@ -65,15 +68,27 @@ export default function OvercurrentOverlay({ comtrade }: Props) {
     legend: { orientation: "h", y: -0.15 },
   };
 
+  const panelTitle = relayType === "SBEF"
+    ? "SBEF Timing Characteristic"
+    : "Overcurrent / GFR Characteristic";
+
+  const panelNote = relayType === "SBEF"
+    ? "SBEF is separated here so its timing review is not mixed with standard OCR/GFR assumptions."
+    : "Use this view for OCR and GFR relays that operate through pickup and time-delay behavior.";
+
   return (
     <div className={styles.panel}>
       <div className={styles.panelHeader}>
-        <h2 className={styles.panelTitle}>Overcurrent Characteristic</h2>
+        <h2 className={styles.panelTitle}>{panelTitle}</h2>
         <div className={styles.controls}>
           <select className={styles.selectField} value={curveType} onChange={(e) => setCurveType(e.target.value)}>
             {Object.entries(CURVE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         </div>
+      </div>
+
+      <div className={styles.row} style={{ marginBottom: 12 }}>
+        <span className={styles.badge}>{panelNote}</span>
       </div>
 
       <div className={styles.row}>

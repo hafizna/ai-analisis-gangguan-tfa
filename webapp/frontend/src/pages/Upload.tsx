@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { flushSync } from "react-dom";
 import { useAnalysis } from "../context/AnalysisContext";
 import { uploadComtrade } from "../api/client";
 import styles from "./Upload.module.css";
@@ -8,13 +7,14 @@ import styles from "./Upload.module.css";
 const RELAY_LABELS: Record<string, string> = {
   "21": "21 - Distance",
   "87L": "87L - Differential Line",
-  "87T": "87T - Differential Transformer",
-  OCR: "50/51 - Overcurrent",
-  REF: "REF / GFR / SBEF",
+  "87T": "87T / REF",
+  OCR: "50/51 / GFR",
+  REF: "REF",
+  SBEF: "SBEF",
 };
 
 export default function Upload() {
-  const { relayType, setComtrade } = useAnalysis();
+  const { relayType } = useAnalysis();
   const navigate = useNavigate();
 
   const cfgRef = useRef<HTMLInputElement>(null);
@@ -42,10 +42,7 @@ export default function Upload() {
 
     try {
       const data = await uploadComtrade(cfgFile, datFile);
-      flushSync(() => {
-        setComtrade(data);
-      });
-      navigate(`/workspace/${relayType}`);
+      navigate(`/workspace/${relayType}/${data.analysis_id}`);
     } catch (err: unknown) {
       const response = (err as { response?: { data?: { detail?: string } } }).response;
       const msg = response?.data?.detail

@@ -37,6 +37,15 @@ class ComtradeOut(BaseModel):
     warnings: List[str]
 
 
+class AnalysisCreatedResponse(BaseModel):
+    analysis_id: str
+    station_name: str
+    rec_dev_id: str
+    total_samples: int
+    analog_channel_count: int
+    status_channel_count: int
+
+
 class RatioChannel(BaseModel):
     channel_id: str
     primary: float

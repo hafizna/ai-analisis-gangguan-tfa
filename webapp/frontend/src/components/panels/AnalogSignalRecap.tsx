@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Plot from "react-plotly.js";
 import type { ComtradeData } from "../../context/AnalysisContext";
 import styles from "./Panel.module.css";
@@ -10,13 +10,56 @@ interface Props {
 
 type ViewMode = "primary" | "secondary";
 
+const MAX_PLOT_POINTS = 4000;
+
+function preferredChannels(comtrade: ComtradeData, relayType: string) {
+  const preferredNames =
+    relayType === "87T" || relayType === "REF"
+      ? ["IA_HV", "IB_HV", "IC_HV", "IA_LV", "IB_LV", "IC_LV", "3I0", "IN", "IE"]
+      : relayType === "OCR" || relayType === "SBEF"
+      ? ["IA", "IB", "IC", "IN", "I0", "IE"]
+      : ["VA", "VB", "VC", "IA", "IB", "IC", "IN", "I0"];
+
+  const matching = comtrade.analog_channels
+    .filter((ch) => preferredNames.includes(ch.canonical_name))
+    .map((ch) => ch.id);
+
+  if (matching.length > 0) {
+    return new Set(matching);
+  }
+
+  return new Set(comtrade.analog_channels.slice(0, Math.min(6, comtrade.analog_channels.length)).map((c) => c.id));
+}
+
+function downsample<T>(values: T[], maxPoints: number) {
+  if (values.length <= maxPoints) {
+    return values;
+  }
+
+  const step = Math.ceil(values.length / maxPoints);
+  const sampled: T[] = [];
+
+  for (let i = 0; i < values.length; i += step) {
+    sampled.push(values[i]);
+  }
+
+  if (sampled[sampled.length - 1] !== values[values.length - 1]) {
+    sampled.push(values[values.length - 1]);
+  }
+
+  return sampled;
+}
+
 export default function AnalogSignalRecap({ comtrade, relayType }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("primary");
   const [selectedPhases, setSelectedPhases] = useState<Set<string>>(
-    new Set(comtrade.analog_channels.map((c) => c.id))
+    () => preferredChannels(comtrade, relayType)
   );
 
-  const time = comtrade.time;
+  const time = useMemo(
+    () => downsample(comtrade.time, MAX_PLOT_POINTS),
+    [comtrade.time]
+  );
 
   function toggleChannel(id: string) {
     setSelectedPhases((prev) => {
@@ -30,22 +73,25 @@ export default function AnalogSignalRecap({ comtrade, relayType }: Props) {
   const currentChannels = comtrade.analog_channels.filter((c) => c.measurement === "current");
 
   function scaleSamples(ch: ComtradeData["analog_channels"][number]) {
+    const raw = downsample(ch.samples, MAX_PLOT_POINTS);
     if (viewMode === "secondary" && ch.ct_primary > 0 && ch.ct_secondary > 0) {
       const factor = ch.ct_secondary / ch.ct_primary;
-      return ch.samples.map((s) => s * factor);
+      return raw.map((s) => s * factor);
     }
-    return ch.samples;
+    return raw;
   }
 
   function makeTraces(channels: ComtradeData["analog_channels"]) {
-    return channels.filter((c) => selectedPhases.has(c.id)).map((ch) => ({
-      x: time,
-      y: scaleSamples(ch),
-      type: "scatter" as const,
-      mode: "lines" as const,
-      name: ch.canonical_name || ch.name,
-      line: { width: 1.5 },
-    }));
+    return channels
+      .filter((c) => selectedPhases.has(c.id))
+      .map((ch) => ({
+        x: time,
+        y: scaleSamples(ch),
+        type: "scatter" as const,
+        mode: "lines" as const,
+        name: ch.canonical_name || ch.name,
+        line: { width: 1.5 },
+      }));
   }
 
   const vTraces = makeTraces(voltageChannels);
@@ -64,12 +110,13 @@ export default function AnalogSignalRecap({ comtrade, relayType }: Props) {
 
   const config = { displayModeBar: false, responsive: true };
 
-  // Channel label for display based on relay type hint
   const channelHint =
-    relayType === "87T"
-      ? "6 CTs (HV + LV)"
-      : relayType === "OCR" || relayType === "REF"
-      ? "Phase Currents"
+    relayType === "87T" || relayType === "REF"
+      ? "Transformer / REF currents"
+      : relayType === "OCR"
+      ? "OCR / GFR currents"
+      : relayType === "SBEF"
+      ? "Sensitive earth-fault currents"
       : "3I + 3V";
 
   return (
@@ -78,6 +125,7 @@ export default function AnalogSignalRecap({ comtrade, relayType }: Props) {
         <h2 className={styles.panelTitle}>Analog Signal Recap</h2>
         <div className={styles.controls}>
           <span className={styles.badge}>{channelHint}</span>
+          <span className={styles.badge}>Showing up to {MAX_PLOT_POINTS.toLocaleString()} points per trace</span>
           <label className={styles.toggle}>
             <input
               type="radio"
@@ -107,6 +155,7 @@ export default function AnalogSignalRecap({ comtrade, relayType }: Props) {
             key={ch.id}
             className={`${styles.chBtn} ${selectedPhases.has(ch.id) ? styles.chBtnOn : ""}`}
             onClick={() => toggleChannel(ch.id)}
+            type="button"
           >
             {ch.canonical_name || ch.name}
           </button>
@@ -125,7 +174,7 @@ export default function AnalogSignalRecap({ comtrade, relayType }: Props) {
       {iTraces.length > 0 && (
         <Plot
           data={iTraces}
-          layout={plotLayout("Current Channels", `I (A)`)}
+          layout={plotLayout("Current Channels", "I (A)")}
           config={config}
           style={{ width: "100%" }}
         />
@@ -134,7 +183,7 @@ export default function AnalogSignalRecap({ comtrade, relayType }: Props) {
       {comtrade.warnings.length > 0 && (
         <div className={styles.warnings}>
           {comtrade.warnings.map((w, i) => (
-            <div key={i} className={styles.warning}>⚠ {w}</div>
+            <div key={i} className={styles.warning}>Warning: {w}</div>
           ))}
         </div>
       )}
