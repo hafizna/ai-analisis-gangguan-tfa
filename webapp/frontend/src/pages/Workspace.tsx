@@ -194,22 +194,22 @@ export default function Workspace() {
           <SOETimeline comtrade={comtrade} />
         )}
         {activeTab === "ratio" && (
-          <CTVTRatioCorrection comtrade={comtrade} onUpdate={setComtrade} />
+          <CTVTRatioCorrection analysisId={analysisId} comtrade={comtrade} onUpdate={setComtrade} />
         )}
         {activeTab === "locus" && relayType === "21" && (
-          <ImpedanceLocus comtrade={comtrade} />
+          <ImpedanceLocus analysisId={analysisId} />
         )}
         {activeTab === "ai" && relayType === "21" && (
           <AIFaultAnalysis21 comtrade={comtrade} />
         )}
         {activeTab === "diff" && (relayType === "87L" || relayType === "87T" || relayType === "REF") && (
-          <DiffRestraintPlot comtrade={comtrade} relayType={relayType === "87L" ? "87L" : "87T"} />
+          <DiffRestraintPlot analysisId={analysisId} relayType={relayType === "87L" ? "87L" : "87T"} />
         )}
         {activeTab === "ai" && relayType === "87L" && (
-          <AIFaultAnalysis87L comtrade={comtrade} />
+          <AIFaultAnalysis87L analysisId={analysisId} />
         )}
         {activeTab === "ocr" && (relayType === "OCR" || relayType === "SBEF") && (
-          <OvercurrentOverlay comtrade={comtrade} relayType={relayType} />
+          <OvercurrentOverlay analysisId={analysisId} relayType={relayType} />
         )}
         {(relayType === "87T" || relayType === "REF") && activeTab === "diff" && (
           <div style={{ fontSize: "0.85rem", color: "#64748b", marginTop: 12, padding: "10px 16px", background: "#f8fafc", borderRadius: 8 }}>

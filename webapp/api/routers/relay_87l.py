@@ -1,9 +1,9 @@
-"""Relay 87L (Differential Line) — diff/restraint plot + AI analysis."""
+"""Relay 87L (Differential Line) - diff/restraint plot + AI analysis."""
 
-import sys
 import asyncio
-from pathlib import Path
+import sys
 from functools import partial
+from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, HTTPException
@@ -11,9 +11,12 @@ from fastapi import APIRouter, HTTPException
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from ..schemas import (
-    DiffRestraintRequest, DiffRestraintResponse, DiffRestraintSample,
-    CharacteristicParams, AIFaultResult,
+    AIFaultResult,
+    DiffRestraintAnalysisRequest,
+    DiffRestraintResponse,
+    DiffRestraintSample,
 )
+from ..storage import load_analysis
 
 router = APIRouter(prefix="/api/analyze/87l", tags=["relay-87l"])
 
@@ -45,52 +48,46 @@ def _compute_diff_restraint(comtrade_data: dict, params: dict) -> dict:
     intersection2 = params["intersection2"]
 
     for phase, candidates in PHASE_CURRENT_MAP.items():
-        # For 87L, diff = local I - remote I. Since we only have one set of CTs,
-        # compute a proxy: i_diff = |i_local| - |i_remote| using half the channels.
-        # Real implementation would use both ends; here we split the total measured current.
         i = _find_ch(channels, candidates)
         if i is None:
             continue
 
-        # Proxy differential calculation for single-ended COMTRADE:
-        # I_diff ≈ |I| (single-ended — requires both-end data for true 87L)
-        # I_rest ≈ |I| (restraint)
-        i_rms_window = []
         sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
         freq = comtrade_data.get("frequency", 50.0)
         win = max(1, int(sr / freq))
 
         for k in range(0, len(time), max(1, win // 4)):
             s = max(0, k - win + 1)
-            i_w = i[s:k+1]
+            i_w = i[s : k + 1]
             i_rms = float(np.sqrt(np.mean(i_w**2))) if len(i_w) > 0 else 0.0
-            i_diff = abs(i_rms)       # proxy: use RMS as differential magnitude
-            i_rest = abs(i_rms)       # proxy: use RMS as restraint
-            samples.append({
-                "t": float(time[k]),
-                "i_diff": i_diff,
-                "i_rest": i_rest,
-                "phase": phase,
-            })
+            samples.append(
+                {
+                    "t": float(time[k]),
+                    "i_diff": abs(i_rms),
+                    "i_rest": abs(i_rms),
+                    "phase": phase,
+                }
+            )
 
-        # Check if any sample crossed the operate region
         phase_operated = False
-        for s in samples:
-            if s["phase"] != phase:
+        for sample in samples:
+            if sample["phase"] != phase:
                 continue
-            id_, ir = s["i_diff"], s["i_rest"]
-            char = _characteristic_threshold(ir, idiff_pickup, slope1, intersection1, slope2, intersection2)
-            if id_ >= char:
+            threshold = _characteristic_threshold(
+                sample["i_rest"],
+                idiff_pickup,
+                slope1,
+                intersection1,
+                slope2,
+                intersection2,
+            )
+            if sample["i_diff"] >= threshold:
                 phase_operated = True
                 break
         if phase_operated:
             operated_phases.append(phase)
 
-    # Determine operated status
-    if any(
-        s["i_diff"] >= idiff_fast
-        for s in samples
-    ):
+    if any(sample["i_diff"] >= idiff_fast for sample in samples):
         status = "IDIFF_FAST_OPERATED"
     elif operated_phases:
         status = "IDIFF_OPERATED"
@@ -104,21 +101,28 @@ def _characteristic_threshold(i_rest, pickup, slope1, int1, slope2, int2):
     """Return the I-DIFF operate threshold for a given I_rest value."""
     if i_rest <= int1:
         return pickup
-    elif i_rest <= int2:
+    if i_rest <= int2:
         return pickup + slope1 * (i_rest - int1)
-    else:
-        return pickup + slope1 * (int2 - int1) + slope2 * (i_rest - int2)
+    return pickup + slope1 * (int2 - int1) + slope2 * (i_rest - int2)
+
+
+def _load_analysis_or_404(analysis_id: str) -> dict:
+    payload = load_analysis(analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    return payload
 
 
 @router.post("/diff-restraint", response_model=DiffRestraintResponse)
-async def diff_restraint(body: DiffRestraintRequest):
+async def diff_restraint(body: DiffRestraintAnalysisRequest):
+    payload = _load_analysis_or_404(body.analysis_id)
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
-        partial(_compute_diff_restraint, body.comtrade.model_dump(), body.params.model_dump()),
+        partial(_compute_diff_restraint, payload, body.params.model_dump()),
     )
     return DiffRestraintResponse(
-        samples=[DiffRestraintSample(**s) for s in result["samples"]],
+        samples=[DiffRestraintSample(**sample) for sample in result["samples"]],
         params=body.params,
         operated_status=result["operated_status"],
         operated_phases=result["operated_phases"],
@@ -126,9 +130,10 @@ async def diff_restraint(body: DiffRestraintRequest):
 
 
 @router.post("/ai-analysis", response_model=AIFaultResult)
-async def ai_fault_analysis_87l(body: DiffRestraintRequest):
-    """AI fault analysis for 87L — internal vs external fault discrimination."""
-    result = _compute_diff_restraint(body.comtrade.model_dump(), body.params.model_dump())
+async def ai_fault_analysis_87l(body: DiffRestraintAnalysisRequest):
+    """AI fault analysis for 87L - internal vs external fault discrimination."""
+    payload = _load_analysis_or_404(body.analysis_id)
+    result = _compute_diff_restraint(payload, body.params.model_dump())
     status = result["operated_status"]
     samples = result["samples"]
 
@@ -144,18 +149,18 @@ async def ai_fault_analysis_87l(body: DiffRestraintRequest):
     if status in ("IDIFF_OPERATED", "IDIFF_FAST_OPERATED"):
         scores["INTERNAL_FAULT"] += 0.5
         scores["INSULATION_BREAKDOWN"] += 0.3
-        evidence.append(f"Differential relay operated ({status}) — internal fault signature")
+        evidence.append(f"Differential relay operated ({status}) - internal fault signature")
         if status == "IDIFF_FAST_OPERATED":
             scores["INTERNAL_FAULT"] += 0.3
-            evidence.append("I-DIFF Fast threshold exceeded — high-magnitude internal fault")
+            evidence.append("I-DIFF Fast threshold exceeded - high-magnitude internal fault")
     else:
         scores["EXTERNAL_FAULT"] += 0.5
-        evidence.append("Differential element did not operate — consistent with external/through-fault")
+        evidence.append("Differential element did not operate - consistent with external or through-fault")
 
-    max_diff = max((s["i_diff"] for s in samples), default=0.0)
+    max_diff = max((sample["i_diff"] for sample in samples), default=0.0)
     if max_diff > body.params.idiff_fast * 0.7:
         scores["CONDUCTOR_CONTACT"] += 0.2
-        evidence.append(f"High differential current peak ({max_diff:.2f}) — possible direct conductor contact")
+        evidence.append(f"High differential current peak ({max_diff:.2f}) - possible direct conductor contact")
 
     total = sum(scores.values()) or 1.0
     labels = {
@@ -166,8 +171,16 @@ async def ai_fault_analysis_87l(body: DiffRestraintRequest):
         "CONDUCTOR_CONTACT": "Conductor Contact / Short",
     }
     ranking = sorted(
-        [{"cause": k, "label_id": k, "label": labels[k], "confidence": round(v / total, 3)} for k, v in scores.items()],
-        key=lambda x: x["confidence"],
+        [
+            {
+                "cause": key,
+                "label_id": key,
+                "label": labels[key],
+                "confidence": round(value / total, 3),
+            }
+            for key, value in scores.items()
+        ],
+        key=lambda item: item["confidence"],
         reverse=True,
     )
     fault_type = "permanent" if status != "NOT_OPERATED" else "transient"

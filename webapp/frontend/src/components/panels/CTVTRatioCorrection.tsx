@@ -4,6 +4,7 @@ import { recalculateRatio } from "../../api/client";
 import styles from "./Panel.module.css";
 
 interface Props {
+  analysisId: string;
   comtrade: ComtradeData;
   onUpdate: (updated: ComtradeData) => void;
 }
@@ -15,7 +16,7 @@ interface RatioEntry {
   secondary: number;
 }
 
-export default function CTVTRatioCorrection({ comtrade, onUpdate }: Props) {
+export default function CTVTRatioCorrection({ analysisId, comtrade, onUpdate }: Props) {
   const [ratios, setRatios] = useState<RatioEntry[]>(
     comtrade.analog_channels.map((ch) => ({
       channel_id: ch.id,
@@ -35,7 +36,7 @@ export default function CTVTRatioCorrection({ comtrade, onUpdate }: Props) {
   async function apply() {
     setLoading(true);
     try {
-      const updated = await recalculateRatio(comtrade, ratios);
+      const updated = await recalculateRatio(analysisId, ratios);
       onUpdate(updated);
     } finally {
       setLoading(false);

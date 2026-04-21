@@ -1,11 +1,10 @@
 import { useState } from "react";
 import Plot from "react-plotly.js";
-import type { ComtradeData } from "../../../context/AnalysisContext";
 import { overCurrentCharacteristic } from "../../../api/client";
 import styles from "../../panels/Panel.module.css";
 
 interface Props {
-  comtrade: ComtradeData;
+  analysisId: string;
   relayType?: "OCR" | "SBEF";
 }
 interface CurvePoint { current_ratio: number; trip_time_s: number; }
@@ -23,7 +22,7 @@ const CURVE_LABELS: Record<string, string> = {
   LTI: "Long Time Inverse",
 };
 
-export default function OvercurrentOverlay({ comtrade, relayType = "OCR" }: Props) {
+export default function OvercurrentOverlay({ analysisId, relayType = "OCR" }: Props) {
   const [curveType, setCurveType] = useState("NI");
   const [pickup, setPickup] = useState(1.0);
   const [tms, setTms] = useState(0.1);
@@ -33,7 +32,7 @@ export default function OvercurrentOverlay({ comtrade, relayType = "OCR" }: Prop
   async function fetchCurve() {
     setLoading(true);
     try {
-      const res = await overCurrentCharacteristic(comtrade, curveType, pickup, tms);
+      const res = await overCurrentCharacteristic(analysisId, curveType, pickup, tms);
       setResult(res);
     } finally {
       setLoading(false);

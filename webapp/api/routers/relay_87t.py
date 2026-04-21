@@ -6,12 +6,13 @@ from pathlib import Path
 from functools import partial
 
 import numpy as np
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from ..schemas import DiffRestraintRequest, DiffRestraintResponse, DiffRestraintSample
-from .relay_87l import _compute_diff_restraint, _characteristic_threshold
+from ..schemas import DiffRestraintAnalysisRequest, DiffRestraintResponse, DiffRestraintSample
+from ..storage import load_analysis
+from .relay_87l import _characteristic_threshold
 
 router = APIRouter(prefix="/api/analyze/87t", tags=["relay-87t"])
 
@@ -106,11 +107,15 @@ def _compute_87t(comtrade_data: dict, params: dict) -> dict:
 
 
 @router.post("/diff-restraint", response_model=DiffRestraintResponse)
-async def diff_restraint_87t(body: DiffRestraintRequest):
+async def diff_restraint_87t(body: DiffRestraintAnalysisRequest):
+    payload = load_analysis(body.analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
-        partial(_compute_87t, body.comtrade.model_dump(), body.params.model_dump()),
+        partial(_compute_87t, payload, body.params.model_dump()),
     )
     return DiffRestraintResponse(
         samples=[DiffRestraintSample(**s) for s in result["samples"]],

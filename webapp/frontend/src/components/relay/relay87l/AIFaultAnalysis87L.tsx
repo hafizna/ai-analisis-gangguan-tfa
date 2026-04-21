@@ -1,9 +1,8 @@
 import { useState } from "react";
-import type { ComtradeData } from "../../../context/AnalysisContext";
 import { aiFaultAnalysis87L } from "../../../api/client";
 import styles from "../../panels/Panel.module.css";
 
-interface Props { comtrade: ComtradeData; }
+interface Props { analysisId: string; }
 
 interface AIResult {
   cause_ranking: { cause: string; label: string; confidence: number }[];
@@ -22,14 +21,14 @@ const DEFAULT_PARAMS = {
   idiff_fast: 7.50,
 };
 
-export default function AIFaultAnalysis87L({ comtrade }: Props) {
+export default function AIFaultAnalysis87L({ analysisId }: Props) {
   const [result, setResult] = useState<AIResult | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function run() {
     setLoading(true);
     try {
-      const res = await aiFaultAnalysis87L(comtrade, DEFAULT_PARAMS);
+      const res = await aiFaultAnalysis87L(analysisId, DEFAULT_PARAMS);
       setResult(res);
     } finally {
       setLoading(false);

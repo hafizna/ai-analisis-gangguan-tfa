@@ -30,13 +30,13 @@ export async function fetchAnalysis(analysisId: string) {
   return data;
 }
 
-export async function recalculateRatio(comtrade: unknown, ratios: unknown[]) {
-  const { data } = await api.post("/api/recalculate-ratio", { comtrade, ratios });
+export async function recalculateRatio(analysisId: string, ratios: unknown[]) {
+  const { data } = await api.post("/api/recalculate-ratio", { analysis_id: analysisId, ratios });
   return data;
 }
 
-export async function computeLocus(comtrade: unknown, zones: unknown[], loop: string) {
-  const { data } = await api.post("/api/analyze/21/locus", { comtrade, zones, loop });
+export async function computeLocus(analysisId: string, zones: unknown[], loop: string) {
+  const { data } = await api.post("/api/analyze/21/locus", { analysis_id: analysisId, zones, loop });
   return data;
 }
 
@@ -45,22 +45,22 @@ export async function aiFaultAnalysis21(features: unknown) {
   return data;
 }
 
-export async function diffRestraint87L(comtrade: unknown, params: unknown) {
-  const { data } = await api.post("/api/analyze/87l/diff-restraint", { comtrade, params, relay_type: "87L" });
+export async function diffRestraint87L(analysisId: string, params: unknown) {
+  const { data } = await api.post("/api/analyze/87l/diff-restraint", { analysis_id: analysisId, params, relay_type: "87L" });
   return data;
 }
 
-export async function aiFaultAnalysis87L(comtrade: unknown, params: unknown) {
-  const { data } = await api.post("/api/analyze/87l/ai-analysis", { comtrade, params, relay_type: "87L" });
+export async function aiFaultAnalysis87L(analysisId: string, params: unknown) {
+  const { data } = await api.post("/api/analyze/87l/ai-analysis", { analysis_id: analysisId, params, relay_type: "87L" });
   return data;
 }
 
-export async function diffRestraint87T(comtrade: unknown, params: unknown) {
-  const { data } = await api.post("/api/analyze/87t/diff-restraint", { comtrade, params, relay_type: "87T" });
+export async function diffRestraint87T(analysisId: string, params: unknown) {
+  const { data } = await api.post("/api/analyze/87t/diff-restraint", { analysis_id: analysisId, params, relay_type: "87T" });
   return data;
 }
 
-export async function overCurrentCharacteristic(comtrade: unknown, curve_type: string, is_pickup_a: number, tms: number) {
-  const { data } = await api.post("/api/analyze/ocr/characteristic", { comtrade, curve_type, is_pickup_a, tms });
+export async function overCurrentCharacteristic(analysisId: string, curve_type: string, is_pickup_a: number, tms: number) {
+  const { data } = await api.post("/api/analyze/ocr/characteristic", { analysis_id: analysisId, curve_type, is_pickup_a, tms });
   return data;
 }

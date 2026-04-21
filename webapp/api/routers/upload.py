@@ -11,7 +11,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from core.comtrade_parser import ComtradeRecord, parse_comtrade
-from ..schemas import AnalysisCreatedResponse, ComtradeOut, RecalcRequest
+from ..schemas import AnalysisCreatedResponse, ComtradeOut, RecalcByIdRequest
 from ..storage import load_analysis, save_analysis
 
 router = APIRouter(prefix="/api", tags=["upload"])
@@ -108,25 +108,32 @@ async def get_analysis(analysis_id: str):
 
 
 @router.post("/recalculate-ratio")
-async def recalculate_ratio(body: RecalcRequest):
+async def recalculate_ratio(body: RecalcByIdRequest):
     """Apply per-channel CT/VT ratio overrides and return recalculated samples."""
+    payload = load_analysis(body.analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+
     ratio_map = {r.channel_id: (r.primary, r.secondary) for r in body.ratios}
     updated_channels = []
-    for ch in body.comtrade.analog_channels:
-        if ch.id in ratio_map:
-            pri, sec = ratio_map[ch.id]
+    for channel in payload["analog_channels"]:
+        channel_id = channel["id"]
+        if channel_id in ratio_map:
+            pri, sec = ratio_map[channel_id]
             factor = pri / sec if sec != 0 else 1.0
-            orig_factor = ch.ct_primary / ch.ct_secondary if ch.ct_secondary != 0 else 1.0
-            new_samples = [sample / orig_factor * factor for sample in ch.samples]
+            orig_secondary = channel["ct_secondary"]
+            orig_primary = channel["ct_primary"]
+            orig_factor = orig_primary / orig_secondary if orig_secondary != 0 else 1.0
+            new_samples = [sample / orig_factor * factor for sample in channel["samples"]]
             updated_channels.append(
                 {
-                    **ch.model_dump(),
+                    **channel,
                     "samples": new_samples,
                     "ct_primary": pri,
                     "ct_secondary": sec,
                 }
             )
         else:
-            updated_channels.append(ch.model_dump())
+            updated_channels.append(channel)
 
-    return {**body.comtrade.model_dump(), "analog_channels": updated_channels}
+    return {**payload, "analog_channels": updated_channels}

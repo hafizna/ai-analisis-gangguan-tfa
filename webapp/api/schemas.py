@@ -46,6 +46,10 @@ class AnalysisCreatedResponse(BaseModel):
     status_channel_count: int
 
 
+class AnalysisRequestBase(BaseModel):
+    analysis_id: str
+
+
 class RatioChannel(BaseModel):
     channel_id: str
     primary: float
@@ -54,6 +58,10 @@ class RatioChannel(BaseModel):
 
 class RecalcRequest(BaseModel):
     comtrade: ComtradeOut
+    ratios: List[RatioChannel]
+
+
+class RecalcByIdRequest(AnalysisRequestBase):
     ratios: List[RatioChannel]
 
 
@@ -80,6 +88,11 @@ class LocusRequest(BaseModel):
     comtrade: ComtradeOut
     zones: List[ZoneConfig] = []
     loop: str = "ZA"     # ZA | ZB | ZC | ZAB | ZBC | ZCA
+
+
+class LocusAnalysisRequest(AnalysisRequestBase):
+    zones: List[ZoneConfig] = []
+    loop: str = "ZA"
 
 
 class LocusPoint(BaseModel):
@@ -137,6 +150,11 @@ class DiffRestraintRequest(BaseModel):
     relay_type: str = "87L"     # "87L" | "87T"
 
 
+class DiffRestraintAnalysisRequest(AnalysisRequestBase):
+    params: CharacteristicParams = CharacteristicParams()
+    relay_type: str = "87L"
+
+
 class DiffRestraintResponse(BaseModel):
     samples: List[DiffRestraintSample]
     params: CharacteristicParams
@@ -149,6 +167,12 @@ class DiffRestraintResponse(BaseModel):
 class OvercurrentRequest(BaseModel):
     comtrade: ComtradeOut
     curve_type: str = "NI"       # NI | VI | EI
+    is_pickup_a: float = 1.0
+    tms: float = 0.1
+
+
+class OvercurrentAnalysisRequest(AnalysisRequestBase):
+    curve_type: str = "NI"
     is_pickup_a: float = 1.0
     tms: float = 0.1
 
