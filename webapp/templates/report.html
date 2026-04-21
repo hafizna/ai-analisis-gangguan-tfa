@@ -858,9 +858,12 @@
     }
 
     var importedRelay = null;
-    if (locusData.relay_hint && locusData.relay_hint.text) {
+    if (locusData.relay_hint) {
         try {
-            importedRelay = locusData.relay_hint.kind === 'xrio' ? parseXRIO(locusData.relay_hint.text) : parseRIO(locusData.relay_hint.text);
+            importedRelay = locusData.relay_hint.parsed
+                || (locusData.relay_hint.text
+                    ? (locusData.relay_hint.kind === 'xrio' ? parseXRIO(locusData.relay_hint.text) : parseRIO(locusData.relay_hint.text))
+                    : null);
         } catch (err) {
             importedRelay = null;
         }

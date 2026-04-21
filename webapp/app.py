@@ -82,6 +82,7 @@ from models.predict import (
 )
 from models.rules import apply_rules
 from core.comtrade_parser import parse_comtrade
+from core.rio_parser import parse_rio_text_to_relay_data
 from core.path_heuristics import (
     infer_path_kind,
     infer_path_tag,
@@ -2378,7 +2379,13 @@ def _build_locus_payload(
             from pathlib import Path
             kind = "xrio" if rio_path.lower().endswith(".xrio") else "rio"
             text = Path(rio_path).read_text(errors="replace")
-            relay_hint = {"kind": kind, "text": text, "filename": Path(rio_path).name}
+            parsed = parse_rio_text_to_relay_data(text) if kind == "rio" else None
+            relay_hint = {
+                "kind": kind,
+                "text": text,
+                "filename": Path(rio_path).name,
+                "parsed": parsed,
+            }
     except Exception:
         pass
 

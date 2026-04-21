@@ -1934,6 +1934,9 @@ _refreshCtptStatusOnly();
     function buildZoneShapesWithOverlay(loopKey) {
         var base = zoneShapes();
         var overlays = relayOverlays[loopKey] || [];
+        if (importedRelay && importedRelay.kind === 'rio' && overlays.length) {
+            return overlays.slice();
+        }
         return base.concat(overlays);
     }
 
@@ -1976,9 +1979,11 @@ _refreshCtptStatusOnly();
                     else { setRelayStatus('Format tidak didukung (butuh .rio atau .xrio).', false); return; }
 
                     var gn = importedRelay.phGnd.length, pn = importedRelay.phPh.length;
+                    applyRelayToZones('phGnd');
+                    applyRelayToZones('phPh');
                     setRelayStatus(
                         file.name + ' \u2014 ' + importedRelay.kind.toUpperCase() +
-                        ' | Ph-Gnd: ' + gn + ' zona, Ph-Ph: ' + pn + ' zona. Tekan tombol \u2192 untuk terapkan.',
+                        ' | Ph-Gnd: ' + gn + ' zona, Ph-Ph: ' + pn + ' zona. Auto diterapkan.',
                         true
                     );
                     updateRelayButtons();
@@ -2032,16 +2037,18 @@ _refreshCtptStatusOnly();
     /* Auto-apply relay settings if backend found a nearby RIO/XRIO file */
     (function () {
         var hint = _ld.relay_hint;
-        if (!hint || !hint.text) return;
+        if (!hint) return;
         try {
-            var parsed = hint.kind === 'xrio' ? parseXRIO(hint.text) : parseRIO(hint.text);
+            var parsed = hint.parsed || (hint.text ? (hint.kind === 'xrio' ? parseXRIO(hint.text) : parseRIO(hint.text)) : null);
             if (!parsed) return;
             importedRelay = parsed;  // fix: was relayImport, correct var is importedRelay
             applyRelayToZones('phGnd');
             applyRelayToZones('phPh');
             var el = document.getElementById('locusRelayStatus');
             if (el) {
-                el.textContent = '\u2705 Auto: ' + hint.filename;
+                var gn = importedRelay.phGnd ? importedRelay.phGnd.length : 0;
+                var pn = importedRelay.phPh ? importedRelay.phPh.length : 0;
+                el.textContent = '\u2705 Auto: ' + hint.filename + ' | Ph-Gnd: ' + gn + ' zona, Ph-Ph: ' + pn + ' zona';
                 el.style.color = '#16a34a';
             }
             updateRelayButtons();
