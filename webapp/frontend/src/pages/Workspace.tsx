@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { useAnalysis } from "../context/AnalysisContext";
 import type { ComtradeData } from "../context/AnalysisContext";
 
@@ -16,11 +16,11 @@ import OvercurrentOverlay from "../components/relay/relay_ocr/OvercurrentOverlay
 import styles from "./Workspace.module.css";
 
 const RELAY_LABELS: Record<string, string> = {
-  "21": "21 — Distance",
-  "87L": "87L — Differential Line",
-  "87T": "87T — Differential Transformer",
-  "OCR": "50/51 — Overcurrent",
-  "REF": "REF / GFR / SBEF",
+  "21": "21 - Distance",
+  "87L": "87L - Differential Line",
+  "87T": "87T - Differential Transformer",
+  OCR: "50/51 - Overcurrent",
+  REF: "REF / GFR / SBEF",
 };
 
 type Tab = "waveforms" | "explorer" | "soe" | "ratio" | "locus" | "diff" | "ocr" | "ai";
@@ -32,6 +32,7 @@ function tabsForRelay(relayType: string): { id: Tab; label: string }[] {
     { id: "soe", label: "SOE" },
     { id: "ratio", label: "CT/VT Ratio" },
   ];
+
   if (relayType === "21") {
     base.push({ id: "locus", label: "Impedance Locus" });
     base.push({ id: "ai", label: "AI Fault Analysis" });
@@ -43,9 +44,10 @@ function tabsForRelay(relayType: string): { id: Tab; label: string }[] {
   if (relayType === "87T") {
     base.push({ id: "diff", label: "Diff / Restraint" });
   }
-  if (relayType === "OCR" || relayType === "REF") {
-    if (relayType === "OCR") base.push({ id: "ocr", label: "Overcurrent Curve" });
+  if (relayType === "OCR" && !base.find((t) => t.id === "ocr")) {
+    base.push({ id: "ocr", label: "Overcurrent Curve" });
   }
+
   return base;
 }
 
@@ -57,12 +59,21 @@ export default function Workspace() {
   const relayType = urlType ?? ctxRelayType ?? "21";
   const [comtrade, setComtrade] = useState<ComtradeData | null>(ctxComtrade);
 
+  useEffect(() => {
+    if (ctxComtrade) {
+      setComtrade(ctxComtrade);
+    }
+  }, [ctxComtrade]);
+
   const tabs = tabsForRelay(relayType);
   const [activeTab, setActiveTab] = useState<Tab>(tabs[0].id);
 
+  useEffect(() => {
+    setActiveTab(tabs[0].id);
+  }, [relayType]);
+
   if (!comtrade) {
-    navigate("/");
-    return null;
+    return <Navigate to={ctxRelayType ? "/upload" : "/"} replace />;
   }
 
   function handleReset() {
@@ -74,7 +85,7 @@ export default function Workspace() {
     <div className={styles.page}>
       <header className={styles.header}>
         <div className={styles.headerLeft}>
-          <button className={styles.homeBtn} onClick={handleReset}>← New Analysis</button>
+          <button className={styles.homeBtn} onClick={handleReset} type="button">New Analysis</button>
           <div>
             <span className={styles.relayBadge}>{RELAY_LABELS[relayType] ?? relayType}</span>
             <span className={styles.stationName}>{comtrade.station_name}</span>
@@ -94,6 +105,7 @@ export default function Workspace() {
             key={t.id}
             className={`${styles.tab} ${activeTab === t.id ? styles.tabActive : ""}`}
             onClick={() => setActiveTab(t.id)}
+            type="button"
           >
             {t.label}
           </button>
@@ -130,7 +142,7 @@ export default function Workspace() {
         )}
         {relayType === "87T" && activeTab === "diff" && (
           <div style={{ fontSize: "0.85rem", color: "#64748b", marginTop: 12, padding: "10px 16px", background: "#f8fafc", borderRadius: 8 }}>
-            AI fault cause analysis for transformer differential is pending — relay coordination evidence required.
+            AI fault cause analysis for transformer differential is pending - relay coordination evidence required.
           </div>
         )}
       </main>

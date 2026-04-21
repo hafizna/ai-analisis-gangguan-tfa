@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { flushSync } from "react-dom";
 import { useAnalysis } from "../context/AnalysisContext";
 import { uploadComtrade } from "../api/client";
 import styles from "./Upload.module.css";
@@ -41,7 +42,9 @@ export default function Upload() {
 
     try {
       const data = await uploadComtrade(cfgFile, datFile);
-      setComtrade(data);
+      flushSync(() => {
+        setComtrade(data);
+      });
       navigate(`/workspace/${relayType}`);
     } catch (err: unknown) {
       const response = (err as { response?: { data?: { detail?: string } } }).response;
