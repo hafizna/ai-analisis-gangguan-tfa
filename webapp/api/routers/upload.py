@@ -1,17 +1,18 @@
-"""Upload router — parses .cfg + .dat pair and returns structured JSON."""
+"""Upload router - parses .cfg + .dat pair and returns structured JSON."""
 
+import asyncio
 import sys
 import tempfile
-import asyncio
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from core.comtrade_parser import parse_comtrade, ComtradeRecord
-from ..schemas import ComtradeOut, AnalogChannelOut, StatusChannelOut, RecalcRequest
+from core.comtrade_parser import ComtradeRecord, parse_comtrade
+from ..schemas import AnalysisCreatedResponse, ComtradeOut, RecalcByIdRequest
+from ..storage import load_analysis, save_analysis
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -53,12 +54,12 @@ def _record_to_out(record: ComtradeRecord) -> dict:
     }
 
 
-@router.post("/upload")
+@router.post("/upload", response_model=AnalysisCreatedResponse)
 async def upload_comtrade(
     cfg_file: UploadFile = File(...),
     dat_file: UploadFile = File(...),
 ):
-    """Parse a .cfg + .dat COMTRADE pair and return all channel data."""
+    """Parse a .cfg + .dat COMTRADE pair and create a backend analysis session."""
     cfg_bytes = await cfg_file.read()
     dat_bytes = await dat_file.read()
 
@@ -76,29 +77,63 @@ async def upload_comtrade(
 
         loop = asyncio.get_event_loop()
         record = await loop.run_in_executor(
-            None, partial(parse_comtrade, str(cfg_path), str(dat_path))
+            None,
+            partial(parse_comtrade, str(cfg_path), str(dat_path)),
         )
 
     if record is None:
-        raise HTTPException(status_code=422, detail="Could not parse COMTRADE files. Check that the .cfg and .dat pair is valid.")
+        raise HTTPException(
+            status_code=422,
+            detail="Could not parse COMTRADE files. Check that the .cfg and .dat pair is valid.",
+        )
 
-    return _record_to_out(record)
+    payload = _record_to_out(record)
+    analysis_id = save_analysis(payload)
+    return AnalysisCreatedResponse(
+        analysis_id=analysis_id,
+        station_name=payload["station_name"],
+        rec_dev_id=payload["rec_dev_id"],
+        total_samples=payload["total_samples"],
+        analog_channel_count=len(payload["analog_channels"]),
+        status_channel_count=len(payload["status_channels"]),
+    )
+
+
+@router.get("/analysis/{analysis_id}", response_model=ComtradeOut)
+async def get_analysis(analysis_id: str):
+    payload = load_analysis(analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    return payload
 
 
 @router.post("/recalculate-ratio")
-async def recalculate_ratio(body: RecalcRequest):
+async def recalculate_ratio(body: RecalcByIdRequest):
     """Apply per-channel CT/VT ratio overrides and return recalculated samples."""
+    payload = load_analysis(body.analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+
     ratio_map = {r.channel_id: (r.primary, r.secondary) for r in body.ratios}
     updated_channels = []
-    for ch in body.comtrade.analog_channels:
-        if ch.id in ratio_map:
-            pri, sec = ratio_map[ch.id]
+    for channel in payload["analog_channels"]:
+        channel_id = channel["id"]
+        if channel_id in ratio_map:
+            pri, sec = ratio_map[channel_id]
             factor = pri / sec if sec != 0 else 1.0
-            # Original samples are in primary; re-scale to new ratio
-            orig_factor = ch.ct_primary / ch.ct_secondary if ch.ct_secondary != 0 else 1.0
-            new_samples = [s / orig_factor * factor for s in ch.samples]
-            updated_channels.append({**ch.model_dump(), "samples": new_samples, "ct_primary": pri, "ct_secondary": sec})
+            orig_secondary = channel["ct_secondary"]
+            orig_primary = channel["ct_primary"]
+            orig_factor = orig_primary / orig_secondary if orig_secondary != 0 else 1.0
+            new_samples = [sample / orig_factor * factor for sample in channel["samples"]]
+            updated_channels.append(
+                {
+                    **channel,
+                    "samples": new_samples,
+                    "ct_primary": pri,
+                    "ct_secondary": sec,
+                }
+            )
         else:
-            updated_channels.append(ch.model_dump())
+            updated_channels.append(channel)
 
-    return {**body.comtrade.model_dump(), "analog_channels": updated_channels}
+    return {**payload, "analog_channels": updated_channels}

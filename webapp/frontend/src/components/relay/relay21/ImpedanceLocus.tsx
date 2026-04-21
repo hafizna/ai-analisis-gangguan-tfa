@@ -1,6 +1,5 @@
 import { useState } from "react";
 import Plot from "react-plotly.js";
-import type { ComtradeData } from "../../../context/AnalysisContext";
 import { computeLocus } from "../../../api/client";
 import styles from "../../panels/Panel.module.css";
 
@@ -63,7 +62,7 @@ function quadTrace(zone: Zone): Partial<Plotly.ScatterData> {
   };
 }
 
-export default function ImpedanceLocus({ comtrade }: { comtrade: ComtradeData }) {
+export default function ImpedanceLocus({ analysisId }: { analysisId: string }) {
   const [zones, setZones] = useState<Zone[]>(DEFAULT_ZONES);
   const [loop, setLoop] = useState("ZA");
   const [points, setPoints] = useState<LocusPoint[]>([]);
@@ -74,7 +73,7 @@ export default function ImpedanceLocus({ comtrade }: { comtrade: ComtradeData })
     setLoading(true);
     setError(null);
     try {
-      const res = await computeLocus(comtrade, zones, loop);
+      const res = await computeLocus(analysisId, zones, loop);
       setPoints(res.points ?? []);
     } catch {
       setError("Failed to compute impedance locus. Check that current/voltage channels are present.");

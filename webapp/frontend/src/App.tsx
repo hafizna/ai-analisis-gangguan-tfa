@@ -11,7 +11,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/upload" element={<Upload />} />
-          <Route path="/workspace/:relayType" element={<Workspace />} />
+          <Route path="/workspace/:relayType/:analysisId" element={<Workspace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

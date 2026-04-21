@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from .routers import upload, relay_21, relay_87l, relay_87t, relay_ocr, relay_ref
+from .storage import get_session_ttl_hours, get_storage_backend
 
 app = FastAPI(
     title="COMTRADE Fault Analyser",
@@ -44,7 +45,12 @@ app.include_router(relay_ref.router)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "2.0.0"}
+    return {
+        "status": "ok",
+        "version": "2.0.0",
+        "analysis_storage": get_storage_backend(),
+        "analysis_ttl_hours": get_session_ttl_hours(),
+    }
 
 
 # Serve React production build at root (when built)

@@ -5,11 +5,12 @@ import numpy as np
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from ..schemas import OvercurrentRequest, OvercurrentResponse, OvercurrentPoint
+from ..schemas import OvercurrentAnalysisRequest, OvercurrentResponse, OvercurrentPoint
+from ..storage import load_analysis
 
 router = APIRouter(prefix="/api/analyze/ocr", tags=["relay-ocr"])
 
@@ -53,11 +54,15 @@ def _find_max_current(channels, time):
 
 
 @router.post("/characteristic", response_model=OvercurrentResponse)
-async def overcurrent_characteristic(body: OvercurrentRequest):
-    channels = body.comtrade.analog_channels
-    time = body.comtrade.time
+async def overcurrent_characteristic(body: OvercurrentAnalysisRequest):
+    payload = load_analysis(body.analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
 
-    measured_a = _find_max_current([c.model_dump() for c in channels], time)
+    channels = payload["analog_channels"]
+    time = payload["time"]
+
+    measured_a = _find_max_current(channels, time)
 
     # Build the curve from 1.0× to 20× pickup
     curve_points = []

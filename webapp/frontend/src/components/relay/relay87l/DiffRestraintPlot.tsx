@@ -1,11 +1,10 @@
 import { useState } from "react";
 import Plot from "react-plotly.js";
-import type { ComtradeData } from "../../../context/AnalysisContext";
 import { diffRestraint87L, diffRestraint87T } from "../../../api/client";
 import styles from "../../panels/Panel.module.css";
 
 interface Props {
-  comtrade: ComtradeData;
+  analysisId: string;
   relayType: "87L" | "87T";
 }
 
@@ -66,7 +65,7 @@ function buildCharacteristic(p: DiffParams) {
   return points;
 }
 
-export default function DiffRestraintPlot({ comtrade, relayType }: Props) {
+export default function DiffRestraintPlot({ analysisId, relayType }: Props) {
   const [params, setParams] = useState<DiffParams>(SP5_DEFAULTS);
   const [samples, setSamples] = useState<Sample[]>([]);
   const [status, setStatus] = useState<string | null>(null);
@@ -85,7 +84,7 @@ export default function DiffRestraintPlot({ comtrade, relayType }: Props) {
     setLoading(true);
     try {
       const fn = relayType === "87T" ? diffRestraint87T : diffRestraint87L;
-      const res = await fn(comtrade, params);
+      const res = await fn(analysisId, params);
       setSamples(res.samples ?? []);
       setStatus(res.operated_status);
       setOperatedPhases(res.operated_phases ?? []);

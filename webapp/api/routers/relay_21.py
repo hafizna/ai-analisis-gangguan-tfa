@@ -12,9 +12,10 @@ from fastapi import APIRouter, HTTPException
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from ..schemas import (
-    LocusRequest, LocusResponse, LocusPoint,
+    LocusAnalysisRequest, LocusResponse, LocusPoint,
     AIFaultFeatures, AIFaultResult,
 )
+from ..storage import load_analysis
 
 router = APIRouter(prefix="/api/analyze/21", tags=["relay-21"])
 
@@ -103,11 +104,15 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
 
 
 @router.post("/locus", response_model=LocusResponse)
-async def compute_locus(body: LocusRequest):
+async def compute_locus(body: LocusAnalysisRequest):
     """Compute impedance locus (R-X trajectory) for the selected loop."""
+    payload = load_analysis(body.analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+
     loop = asyncio.get_event_loop()
     points = await loop.run_in_executor(
-        None, partial(_compute_locus, body.comtrade.model_dump(), body.loop)
+        None, partial(_compute_locus, payload, body.loop)
     )
     return LocusResponse(
         loop=body.loop,

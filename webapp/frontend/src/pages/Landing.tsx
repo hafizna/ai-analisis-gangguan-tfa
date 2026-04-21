@@ -30,27 +30,27 @@ const RELAY_OPTIONS: RelayOption[] = [
   },
   {
     id: "87T",
-    label: "87T - Differential Transformer",
-    subtitle: "Transformer differential review",
+    label: "87T / REF",
+    subtitle: "Transformer differential and restricted earth fault",
     tooltip:
-      "HV and LV differential-restraint plots per phase with operated, not operated, and IDIFF FAST state checks.",
+      "Use this category for transformer differential and REF-style review where the operating principle follows the same transformer-zone fault logic.",
     icon: "87T",
   },
   {
     id: "OCR",
-    label: "50/51 - OCR",
-    subtitle: "Overcurrent timing and pickup review",
+    label: "50/51 / GFR",
+    subtitle: "Time-delay overcurrent and ground fault review",
     tooltip:
-      "Measured current against IEC and IEEE overcurrent characteristic curves with configurable pickup and TMS.",
+      "Use this category for OCR and GFR relays that operate with time delay and pickup-based timing behavior.",
     icon: "50/51",
   },
   {
-    id: "REF",
-    label: "REF / GFR / SBEF",
-    subtitle: "Earth-fault supporting panels",
+    id: "SBEF",
+    label: "SBEF",
+    subtitle: "Sensitive back earth fault timing review",
     tooltip:
-      "Waveform viewer, COMTRADE explorer, CT/VT ratio correction, and sequence-of-events timeline for earth-fault relays.",
-    icon: "REF",
+      "Use this category when the earth-fault protection uses a dedicated SBEF timing characteristic and should be reviewed separately from GFR.",
+    icon: "SBEF",
   },
 ];
 
