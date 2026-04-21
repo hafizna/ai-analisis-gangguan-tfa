@@ -30,4 +30,4 @@ COPY --from=frontend-build /app/webapp/frontend/dist /app/webapp/frontend/dist
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn webapp.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --timeout-keep-alive 120"]
+CMD uvicorn webapp.api.main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 120
