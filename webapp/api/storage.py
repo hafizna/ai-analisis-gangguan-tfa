@@ -154,6 +154,47 @@ def save_analysis(payload: dict[str, Any]) -> str:
         return _save_analysis_file(payload, analysis_id)
 
 
+def update_analysis(analysis_id: str, payload: dict[str, Any]) -> str:
+    if not _db_enabled():
+        return _save_analysis_file(payload, analysis_id)
+
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS)
+
+    try:
+        _init_db()
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO analysis_sessions (
+                        analysis_id,
+                        expires_at,
+                        station_name,
+                        rec_dev_id,
+                        total_samples,
+                        payload_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (analysis_id) DO UPDATE SET
+                        expires_at = EXCLUDED.expires_at,
+                        station_name = EXCLUDED.station_name,
+                        rec_dev_id = EXCLUDED.rec_dev_id,
+                        total_samples = EXCLUDED.total_samples,
+                        payload_json = EXCLUDED.payload_json
+                    """,
+                    (
+                        analysis_id,
+                        expires_at,
+                        str(payload.get("station_name", "")),
+                        str(payload.get("rec_dev_id", "")),
+                        int(payload.get("total_samples", 0) or 0),
+                        json.dumps(payload, ensure_ascii=False),
+                    ),
+                )
+        return analysis_id
+    except Exception:
+        return _save_analysis_file(payload, analysis_id)
+
+
 def load_analysis(analysis_id: str) -> dict[str, Any] | None:
     if not _db_enabled():
         return _load_analysis_file(analysis_id)
