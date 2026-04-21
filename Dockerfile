@@ -27,7 +27,8 @@ RUN pip install --upgrade pip \
 
 COPY . ./
 COPY --from=frontend-build /app/webapp/frontend/dist /app/webapp/frontend/dist
+RUN chmod +x /app/start.sh
 
 EXPOSE 8000
 
-CMD uvicorn webapp.api.main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 120
+CMD ["./start.sh"]
