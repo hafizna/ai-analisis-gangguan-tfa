@@ -1,0 +1,135 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+  padding: 24px;
+}
+
+.back {
+  align-self: flex-start;
+  margin-bottom: 24px;
+  background: none;
+  border: none;
+  color: #3b82f6;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.back:hover { text-decoration: underline; }
+
+.card {
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 40px 48px;
+  width: 100%;
+  max-width: 640px;
+}
+
+.badge {
+  display: inline-block;
+  background: #eff6ff;
+  color: #3b82f6;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 99px;
+  margin-bottom: 16px;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 8px;
+}
+
+.hint {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin: 0 0 28px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dropRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.dropzone {
+  border: 2px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.dropzone:hover,
+.dropzoneOver {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.dropzoneFilled {
+  border-style: solid;
+  border-color: #22c55e;
+  background: #f0fdf4;
+}
+
+.dropLabel {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #475569;
+  font-family: monospace;
+}
+
+.dropHint {
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.fileName {
+  font-size: 0.78rem;
+  color: #16a34a;
+  word-break: break-all;
+  font-weight: 500;
+}
+
+.error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.submit {
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 0;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.submit:hover:not(:disabled) { background: #2563eb; }
+.submit:disabled { background: #94a3b8; cursor: not-allowed; }
