@@ -1,0 +1,108 @@
+.page {
+  min-height: 100vh;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  background: #fff;
+  border-bottom: 1.5px solid #e2e8f0;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.homeBtn {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.homeBtn:hover { text-decoration: underline; }
+
+.relayBadge {
+  display: inline-block;
+  background: #eff6ff;
+  color: #3b82f6;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 99px;
+  margin-right: 10px;
+}
+
+.stationName {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-right: 8px;
+}
+
+.deviceId {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.headerRight {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.meta {
+  font-size: 0.78rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 3px 10px;
+  border-radius: 99px;
+}
+
+.tabs {
+  background: #fff;
+  border-bottom: 1.5px solid #e2e8f0;
+  padding: 0 24px;
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2.5px solid transparent;
+  padding: 12px 18px;
+  font-size: 0.85rem;
+  color: #64748b;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.tab:hover { color: #1e293b; }
+
+.tabActive {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+  font-weight: 600;
+}
+
+.content {
+  flex: 1;
+  padding: 24px;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
