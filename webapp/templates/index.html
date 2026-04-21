@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Mulai Analisis — TFA{% endblock %}
-{% block topbar_title %}Pilih Jalur Analisis{% endblock %}
-{% block topbar_sub %}Pisahkan gangguan jaringan dan trafo sejak awal{% endblock %}
+{% block topbar_title %}Fault Analysis Reimagined{% endblock %}
+{% block topbar_sub %}Klasifikasi penyebab gangguan dengan AI{% endblock %}
 {% block nav_upload %}active{% endblock %}
 
 {% block extra_css %}
@@ -80,11 +80,12 @@
 <div class="landing-shell">
     <section class="landing-hero">
         <div>
-            <h1>Analisis gangguan transmisi bertenaga AI — <em>pilih jalurnya.</em></h1>
+            <h1>Analisis gangguan transmisi berbasis AI</h1>
             <p>
-                Klasifikasi penyebab gangguan pakai AI (aturan deterministik + ML) langsung dari
-                rekaman COMTRADE. Jaringan dan trafo punya alur berbeda, jadi pilih jalur yang tepat
-                supaya input, hasil, dan evidence yang diminta sesuai cara baca gangguan di lapangan.
+                Klasifikasi penyebab gangguan menggunakan AI (aturan deterministik + ML) langsung dari
+                rekaman COMTRADE. Gangguan transmisi dan trafo punya alur klasifikasi yang berbeda, 
+                pilih jalur yang tepat supaya input, hasil, dan evidence yang diminta sesuai
+                dengan cara baca analisa gangguan di lapangan.
             </p>
             <div class="hero-tag-row">
                 <span class="hero-tag">Distance / 21</span>
@@ -98,7 +99,7 @@
             <h3>Prinsip Kerja</h3>
             <ul>
                 <li>Jaringan: baca pola arus-tegangan, auto-reclose, lalu cause ranking.</li>
-                <li>Trafo: mulai dari relay role, event meaning, origin fault, lalu selectivity.</li>
+                <li>Trafo: mulai dari relay role, event meaning, fault origin, lalu relay selectivity.</li>
                 <li>Kalau evidence kurang, sistem minta relay tambahan, bukan memaksa final cause.</li>
             </ul>
         </div>
