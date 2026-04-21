@@ -17,11 +17,51 @@ export interface UploadedAnalysis {
   status_channel_count: number;
 }
 
+export interface AnalysisChannelSummary {
+  id: string;
+  name: string;
+  canonical_name: string;
+  unit: string;
+  phase: string | null;
+  measurement: string;
+  ct_primary: number;
+  ct_secondary: number;
+  pors: string;
+}
+
+export interface StatusChannelSummary {
+  id: string;
+  name: string;
+  sample_count: number;
+  on_count: number;
+  transition_count: number;
+}
+
+export interface AnalysisSummary {
+  analysis_id: string;
+  station_name: string;
+  rec_dev_id: string;
+  rev_year: string;
+  sampling_rates: [number, number][];
+  trigger_time: number;
+  total_samples: number;
+  frequency: number;
+  duration_ms: number;
+  analog_channels: AnalysisChannelSummary[];
+  status_channels: StatusChannelSummary[];
+  warnings: string[];
+}
+
 export async function uploadComtrade(cfg: File, dat: File) {
   const form = new FormData();
   form.append("cfg_file", cfg);
   form.append("dat_file", dat);
   const { data } = await api.post<UploadedAnalysis>("/api/upload", form);
+  return data;
+}
+
+export async function fetchAnalysisSummary(analysisId: string) {
+  const { data } = await api.get<AnalysisSummary>(`/api/analysis/${analysisId}/summary`);
   return data;
 }
 
