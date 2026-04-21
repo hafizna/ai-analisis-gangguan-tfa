@@ -1,8 +1,11 @@
 import axios from "axios";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL?.trim() || "";
 
-export const api = axios.create({ baseURL: BASE });
+export const api = axios.create({
+  baseURL: BASE,
+  timeout: 30000,
+});
 
 export async function uploadComtrade(cfg: File, dat: File) {
   const form = new FormData();

@@ -5,11 +5,11 @@ import { uploadComtrade } from "../api/client";
 import styles from "./Upload.module.css";
 
 const RELAY_LABELS: Record<string, string> = {
-  "21": "21 — Distance",
-  "87L": "87L — Differential Line",
-  "87T": "87T — Differential Transformer",
-  "OCR": "50/51 — Overcurrent",
-  "REF": "REF / GFR / SBEF",
+  "21": "21 - Distance",
+  "87L": "87L - Differential Line",
+  "87T": "87T - Differential Transformer",
+  OCR: "50/51 - Overcurrent",
+  REF: "REF / GFR / SBEF",
 };
 
 export default function Upload() {
@@ -35,16 +35,20 @@ export default function Upload() {
       setError("Please select both .cfg and .dat files.");
       return;
     }
+
     setError(null);
     setLoading(true);
+
     try {
       const data = await uploadComtrade(cfgFile, datFile);
       setComtrade(data);
       navigate(`/workspace/${relayType}`);
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        "Upload failed. Check that the file pair is valid.";
+      const response = (err as { response?: { data?: { detail?: string } } }).response;
+      const msg = response?.data?.detail
+        ?? (response
+          ? "Upload failed. Make sure the .cfg and .dat belong to the same COMTRADE record."
+          : "Cannot reach the analysis API. In deployment, this usually means the frontend is pointing to the wrong backend URL.");
       setError(msg);
     } finally {
       setLoading(false);
@@ -53,27 +57,32 @@ export default function Upload() {
 
   return (
     <div className={styles.page}>
-      <button className={styles.back} onClick={() => navigate("/")}>
-        ← Change relay type
+      <div className={styles.glowTop} />
+      <div className={styles.glowBottom} />
+
+      <button className={styles.back} onClick={() => navigate("/")} type="button">
+        Back to relay selection
       </button>
 
       <div className={styles.card}>
         <div className={styles.badge}>{RELAY_LABELS[relayType]}</div>
         <h1 className={styles.title}>Upload COMTRADE Files</h1>
-        <p className={styles.hint}>Select the .cfg and .dat pair from your relay or DFR recorder.</p>
+        <p className={styles.hint}>
+          Select the matching <code>.cfg</code> and <code>.dat</code> files from your relay or DFR recorder.
+        </p>
 
         <form onSubmit={handleSubmit} className={styles.form}>
           <div className={styles.dropRow}>
             <DropZone
               label=".cfg"
-              accept=".cfg"
+              accept=".cfg,.CFG"
               file={cfgFile}
               inputRef={cfgRef}
               onChange={setCfgFile}
             />
             <DropZone
               label=".dat"
-              accept=".dat"
+              accept=".dat,.DAT"
               file={datFile}
               inputRef={datRef}
               onChange={setDatFile}
@@ -87,7 +96,7 @@ export default function Upload() {
             className={styles.submit}
             disabled={loading || !cfgFile || !datFile}
           >
-            {loading ? "Parsing…" : "Analyse"}
+            {loading ? "Parsing..." : "Analyze"}
           </button>
         </form>
       </div>
@@ -120,7 +129,10 @@ function DropZone({
   return (
     <div
       className={`${styles.dropzone} ${over ? styles.dropzoneOver : ""} ${file ? styles.dropzoneFilled : ""}`}
-      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setOver(true);
+      }}
       onDragLeave={() => setOver(false)}
       onDrop={handleDrop}
       onClick={() => inputRef.current?.click()}
@@ -130,7 +142,10 @@ function DropZone({
         type="file"
         accept={accept}
         style={{ display: "none" }}
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) onChange(f); }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onChange(f);
+        }}
       />
       <span className={styles.dropLabel}>{label}</span>
       {file ? (
