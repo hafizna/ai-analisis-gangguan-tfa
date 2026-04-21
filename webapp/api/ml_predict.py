@@ -12,21 +12,9 @@ from typing import Optional
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from models.train import (
-    FEATURE_COLS,
-    encode_reclose,
-    encode_trip_type,
-    encode_zone,
-    parse_phase_count,
-)
-from models.predict import (
-    _calibrate_proba,
-    _build_feature_vector,
-    _apply_transient_ambiguity_confidence_cap,
-    _apply_equipment_caution_cap,
-)
+_PIPELINE_DIR = Path(__file__).parent.parent.parent
+if str(_PIPELINE_DIR) not in sys.path:
+    sys.path.insert(0, str(_PIPELINE_DIR))
 
 _MODEL_PATH = Path(__file__).parent.parent.parent / "models" / "fault_classifier.pkl"
 
@@ -288,7 +276,25 @@ def run_ml_prediction(payload: dict, relay_type: str = "21") -> dict:
     """
     Run the LightGBM fault classifier on session payload.
     Returns a dict matching the AIFaultResult schema.
+    Heavy model imports are deferred to here so server startup never fails.
     """
+    # Lazy imports — only executed when AI analysis is requested
+    try:
+        from models.train import FEATURE_COLS, encode_reclose, encode_trip_type, encode_zone, parse_phase_count  # noqa: F401
+        from models.predict import (
+            _calibrate_proba,
+            _build_feature_vector,
+            _apply_transient_ambiguity_confidence_cap,
+            _apply_equipment_caution_cap,
+        )
+    except Exception as e:
+        return {
+            "fault_type": "transient",
+            "cause_ranking": [],
+            "overall_confidence": 0.0,
+            "evidence": [f"Model imports gagal: {e}"],
+        }
+
     model_bundle = _load_model()
     row = extract_ml_features(payload, relay_type)
 
@@ -303,7 +309,6 @@ def run_ml_prediction(payload: dict, relay_type: str = "21") -> dict:
     }
 
     if model_bundle is None:
-        # Fallback: flat equal ranking if model not available
         n = len(LABEL_MAP)
         ranking = [
             {"cause": k, "label": v, "confidence": round(1 / n, 3)}
@@ -318,13 +323,16 @@ def run_ml_prediction(payload: dict, relay_type: str = "21") -> dict:
 
     clf = model_bundle["clf"]
     classes = list(getattr(clf, "classes_", model_bundle.get("classes", [])))
-    model_type = model_bundle.get("model_type", "binary")
 
-    X = _build_feature_vector(row, model_bundle.get("feature_cols", FEATURE_COLS))
+    try:
+        from models.train import FEATURE_COLS as _FC
+    except Exception:
+        _FC = model_bundle.get("feature_cols", [])
+
+    X = _build_feature_vector(row, model_bundle.get("feature_cols", _FC))
     pred = str(clf.predict(X)[0])
     proba = clf.predict_proba(X)[0]
 
-    # Temperature calibration (same T=1.5 as predict.py)
     proba = _calibrate_proba(proba, temperature=1.5)
     confidence = float(proba.max())
     if confidence > 0.92:
