@@ -35,9 +35,10 @@ interface ImportedZone {
   radius?: number;
   reach?: number;
   poly?: { r: number; x: number }[];
-  X?: number;
-  R?: number;
+  X?: number;    // reactance reach (Z reach, Ohm)
+  R?: number;    // fault resistance reach (Ohm)
   RF?: number | null;
+  lineAngleDeg?: number;  // line impedance angle for tilted zone rendering
 }
 
 interface ImportedRelayData {
@@ -49,8 +50,8 @@ interface ImportedRelayData {
     angleDeg: number;
     source: string;
   };
-  ctRatio?: number;   // ct_primary / ct_secondary — used to override secondary_scale
-  vtRatio?: number;   // vt_primary / vt_secondary — used to override secondary_scale
+  ctRatio?: number;
+  vtRatio?: number;
 }
 
 type LoopName = "ZA" | "ZB" | "ZC" | "ZAB" | "ZBC" | "ZCA";
@@ -135,8 +136,8 @@ function parseTripCharCircle(block: string) {
   if (!arc) return null;
 
   const radius = Number.parseFloat(arc[1]);
-  // arc[2] is the angle (degrees) of the START point measured from the circle center,
-  // NOT the R-coordinate of the center. Center = START − radius×(cos(angle), sin(angle)).
+  // arc[2] is the angle (degrees) of the START point measured from the circle centre.
+  // Centre = START − radius×(cos(angle), sin(angle)).
   const arcAngleDeg = Number.parseFloat(arc[2]);
   const sweep = Number.parseFloat(arc[3]);
   if (!Number.isFinite(radius) || radius <= 0 || Math.abs(sweep) < 359) {
@@ -216,11 +217,9 @@ function parseRioEarthComp(text: string): ImportedRelayData["earthComp"] {
   const reRl = text.match(/\bRE\/RL\s+([-0-9.]+)\s*,\s*([-0-9.]+)/i);
   const xeXl = text.match(/\bXE\/XL\s+([-0-9.]+)\s*,\s*([-0-9.]+)/i);
   if (!reRl || !xeXl) return undefined;
-
   const re = Number.parseFloat(reRl[1]);
   const xe = Number.parseFloat(xeXl[1]);
   if (!Number.isFinite(re) || !Number.isFinite(xe)) return undefined;
-
   return {
     k0: Math.hypot(re, xe),
     angleDeg: (Math.atan2(xe, re) * 180) / Math.PI,
@@ -292,67 +291,71 @@ function parseXRIO(text: string): ImportedRelayData | null {
   if (xml.querySelector("parsererror")) return null;
 
   const params = Array.from(xml.querySelectorAll("Parameter"));
-  const distanceParams = params.filter((node) => (node.getAttribute("Id") || "").includes("APP1_DISTANCE"));
 
-  function getValue(name: string) {
-    const param = distanceParams.find((node) => node.querySelector("Name")?.textContent === name);
-    return param?.querySelector("Value")?.textContent ?? null;
+  // Return FIRST occurrence of a parameter by Name text — avoids picking up duplicate
+  // calibration blocks (e.g. GE P442 repeats many params with default values).
+  function getFirst(name: string): string | null {
+    const p = params.find((node) => node.querySelector("Name")?.textContent?.trim() === name);
+    return p?.querySelector("Value")?.textContent?.trim() ?? null;
   }
 
-  // Search outside of APP1_DISTANCE (e.g. CT_AND_VT_RATIOS block)
-  function getValueGlobal(name: string) {
-    const param = params.find((node) => node.querySelector("Name")?.textContent?.trim() === name);
-    return param?.querySelector("Value")?.textContent ?? null;
+  const lineAngleDeg = Number.parseFloat(getFirst("Line Angle") ?? "75");
+  const angDeg = Number.isFinite(lineAngleDeg) ? lineAngleDeg : 75;
+
+  // GE/Alstom P442 xrio naming: Z1/Z2/Z3 = X reach (along line angle, Ohm secondary)
+  //   R1G/R2G/R3G-R4G = earth fault resistance coverage (Ohm secondary)
+  //   R1Ph/R2Ph/R3Ph-R4Ph = phase fault resistance coverage (Ohm secondary)
+  const EARTH_ZONES = [
+    { label: "Z1", xKey: "Z1",  rKey: "R1G" },
+    { label: "Z2", xKey: "Z2",  rKey: "R2G" },
+    { label: "Z3", xKey: "Z3",  rKey: "R3G-R4G" },
+  ];
+  const PHASE_ZONES = [
+    { label: "Z1", xKey: "Z1",  rKey: "R1Ph" },
+    { label: "Z2", xKey: "Z2",  rKey: "R2Ph" },
+    { label: "Z3", xKey: "Z3",  rKey: "R3Ph-R4Ph" },
+  ];
+
+  function buildP442Zones(defs: typeof EARTH_ZONES): ImportedZone[] {
+    return defs.flatMap(({ label, xKey, rKey }) => {
+      const xStr = getFirst(xKey);
+      const rStr = getFirst(rKey);
+      if (!xStr || !rStr) return [];
+      const x = Number.parseFloat(xStr);
+      const r = Number.parseFloat(rStr);
+      if (!Number.isFinite(x) || x <= 0 || !Number.isFinite(r) || r <= 0) return [];
+      return [{ label, shapeType: "xrio" as const, X: x, R: r, lineAngleDeg: angDeg }];
+    });
   }
 
-  function buildZones(prefix: string): ImportedZone[] {
-    const out: ImportedZone[] = [];
-    for (let i = 1; i <= 5; i += 1) {
-      const x = getValue(`X1${prefix}${i}`);
-      const r = getValue(`R1${prefix}${i}`);
-      const rf = getValue(`RF${prefix}${i}`);
-      if (!x || !r) continue;
-      out.push({
-        label: `Z${i}`,
-        shapeType: "xrio",
-        X: Number.parseFloat(x),
-        R: Number.parseFloat(r),
-        RF: rf ? Number.parseFloat(rf) : null,
-      });
-    }
-    return out;
-  }
-
-  // Extract CT/VT ratios from the "CT AND VT RATIOS" xrio block
-  const vtPrimaryRaw = getValueGlobal("Main VT Primary");
-  const vtSecondaryRaw = getValueGlobal("Main VT Sec'y");
-  const ctPrimaryRaw = getValueGlobal("Phase CT Primary");
-  const ctSecondaryRaw = getValueGlobal("Phase CT Sec'y");
-
-  const vtPrimary = vtPrimaryRaw ? Number.parseFloat(vtPrimaryRaw) : null;
-  const vtSecondary = vtSecondaryRaw ? Number.parseFloat(vtSecondaryRaw) : null;
-  const ctPrimary = ctPrimaryRaw ? Number.parseFloat(ctPrimaryRaw) : null;
-  const ctSecondary = ctSecondaryRaw ? Number.parseFloat(ctSecondaryRaw) : null;
-
-  const vtRatio = vtPrimary && vtSecondary && vtSecondary > 0 ? vtPrimary / vtSecondary : null;
-  const ctRatio = ctPrimary && ctSecondary && ctSecondary > 0 ? ctPrimary / ctSecondary : null;
-
-  // Earth compensation — try common GE/Alstom P442 parameter names
-  const k0MagRaw = getValue("kZ1") ?? getValue("KZN") ?? getValue("K0Mag");
-  const k0AngRaw = getValue("kZ1Ang") ?? getValue("KZNAng") ?? getValue("K0Ang");
+  // Earth compensation: kZ1 Res Comp + kZ1 Angle (GE P442)
+  const k0MagStr = getFirst("kZ1 Res Comp");
+  const k0AngStr = getFirst("kZ1 Angle");
   let earthComp: ImportedRelayData["earthComp"];
-  if (k0MagRaw && k0AngRaw) {
-    const k0 = Number.parseFloat(k0MagRaw);
-    const angleDeg = Number.parseFloat(k0AngRaw);
+  if (k0MagStr && k0AngStr) {
+    const k0 = Number.parseFloat(k0MagStr);
+    const angleDeg = Number.parseFloat(k0AngStr);
     if (Number.isFinite(k0) && Number.isFinite(angleDeg)) {
       earthComp = { k0, angleDeg, source: `xrio kZ1=${k0.toFixed(4)}, ∠=${angleDeg.toFixed(1)}°` };
     }
   }
 
+  // CT/VT ratios from the "CT AND VT RATIOS" block
+  const vtPrimary = Number.parseFloat(getFirst("Main VT Primary") ?? "");
+  const vtSecondary = Number.parseFloat(getFirst("Main VT Sec'y") ?? "");
+  const ctPrimary = Number.parseFloat(getFirst("Phase CT Primary") ?? "");
+  const ctSecondary = Number.parseFloat(getFirst("Phase CT Sec'y") ?? "");
+  const vtRatio = Number.isFinite(vtPrimary) && vtSecondary > 0 ? vtPrimary / vtSecondary : null;
+  const ctRatio = Number.isFinite(ctPrimary) && ctSecondary > 0 ? ctPrimary / ctSecondary : null;
+
+  const phGnd = buildP442Zones(EARTH_ZONES);
+  const phPh = buildP442Zones(PHASE_ZONES);
+  if (phGnd.length === 0 && phPh.length === 0) return null;
+
   return {
     kind: "xrio",
-    phGnd: buildZones("PEZ").slice(0, 3),
-    phPh: buildZones("PPZ").slice(0, 3),
+    phGnd,
+    phPh,
     ...(earthComp ? { earthComp } : {}),
     ...(ctRatio !== null && vtRatio !== null ? { ctRatio, vtRatio } : {}),
   };
@@ -370,19 +373,34 @@ function importedZoneToConfig(zone: ImportedZone, fallback: Zone): Zone {
     };
   }
 
-  if (zone.shapeType === "xrio") {
-    const r = zone.R ?? fallback.rf_fwd;
-    const x = zone.X ?? fallback.xf;
-    const rf = zone.RF ?? r * 0.8;
+  if (zone.shapeType === "xrio" && zone.X != null && zone.R != null) {
+    // P442-style quadrilateral: X = reactance reach (along line angle), R = fault resistance reach.
+    // Build polygon vertices using the tilted-top boundary formula:
+    //   X_top(R) = xReach + (R − xReach·cot) · cot    where cot = cos/sin
+    const ang = ((zone.lineAngleDeg ?? fallback.line_angle_deg) * Math.PI) / 180;
+    const sinA = Math.sin(ang);
+    const cosA = Math.cos(ang);
+    const cotA = sinA > 0.01 ? cosA / sinA : 0;
+    const xf = zone.X;
+    const rfFwd = zone.R;
+    const rfRev = Math.max(1, rfFwd * 0.15);
+    const xr = Math.max(1, xf * 0.08);
+    const xReachR = xf * cotA;                             // R at the line-reach point
+    const xTopRight = xf + (rfFwd - xReachR) * cotA;
+    const xTopLeft  = xf + (-rfRev - xReachR) * cotA;
+    const polyR = [-rfRev, rfFwd, rfFwd, -rfRev, -rfRev];
+    const polyX = [-xr, -xr, xTopRight, Math.max(xTopLeft, xTopRight * 0.6), -xr];
     return {
       ...fallback,
       label: zone.label || fallback.label,
       shape: "quad",
-      rf_fwd: rf,
-      rf_rev: Math.max(1, rf * 0.3),
-      xf: x,
-      xr: Math.max(0.5, x * 0.15),
-      line_angle_deg: r > 0 ? Math.round((Math.atan2(x, r) * 180) / Math.PI) : fallback.line_angle_deg,
+      rf_fwd: rfFwd,
+      rf_rev: rfRev,
+      xf,
+      xr,
+      line_angle_deg: zone.lineAngleDeg ?? fallback.line_angle_deg,
+      poly_r: polyR,
+      poly_x: polyX,
     };
   }
 
@@ -393,7 +411,6 @@ function importedZoneToConfig(zone: ImportedZone, fallback: Zone): Zone {
     const minR = Math.min(...rs);
     const maxX = Math.max(...xs);
     const minX = Math.min(...xs);
-    // Close the polygon by repeating the first vertex
     const polyR = [...rs, rs[0]];
     const polyX = [...xs, xs[0]];
     return {
@@ -410,6 +427,12 @@ function importedZoneToConfig(zone: ImportedZone, fallback: Zone): Zone {
   }
 
   return fallback;
+}
+
+function isRenderableImportedZone(zone: ImportedZone) {
+  if (zone.shapeType === "xrio") return zone.X != null && zone.X > 0 && zone.R != null && zone.R > 0;
+  if (zone.shapeType === "poly") return !!zone.poly && zone.poly.length >= 3;
+  return zone.shapeType === "circle" || zone.shapeType === "mho";
 }
 
 function loopTrace(loop: LoopName, points: LocusPoint[]): Partial<Plotly.ScatterData> {
@@ -608,7 +631,6 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
   const [k0Mag, setK0Mag] = useState(0.0);
   const [k0Ang, setK0Ang] = useState(0.0);
   const [invertI, setInvertI] = useState(false);
-  // CT/VT ratio overrides: set when xrio provides explicit ratios (overrides COMTRADE auto-detect)
   const [ctRatioOverride, setCtRatioOverride] = useState<number | null>(null);
   const [vtRatioOverride, setVtRatioOverride] = useState<number | null>(null);
   const rioInputRef = useRef<HTMLInputElement>(null);
@@ -628,7 +650,10 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       const results = await Promise.all(
         [...GROUND_LOOPS, ...PHASE_LOOPS].map(async (loop) => {
           const zones = GROUND_LOOPS.includes(loop) ? nextGroundZones : nextPhaseZones;
-          const response = await computeLocus(analysisId, zones, loop, nextK0Mag, nextK0Ang, nextInvertI, nextCtRatio ?? undefined, nextVtRatio ?? undefined);
+          const response = await computeLocus(
+            analysisId, zones, loop, nextK0Mag, nextK0Ang, nextInvertI,
+            nextCtRatio ?? undefined, nextVtRatio ?? undefined,
+          );
           return [loop, response.points ?? []] as const;
         })
       );
@@ -700,15 +725,19 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
         return;
       }
 
-      const nextGroundZones = imported.phGnd.slice(0, 3).map((zone, idx) =>
+      const renderableGroundZones = imported.phGnd.filter(isRenderableImportedZone);
+      const renderablePhaseZones = imported.phPh.filter(isRenderableImportedZone);
+
+      const nextGroundZones = renderableGroundZones.slice(0, 3).map((zone, idx) =>
         importedZoneToConfig(zone, { ...GROUND_ZONE_TEMPLATES[idx % GROUND_ZONE_TEMPLATES.length] })
       );
-      const nextPhaseZones = imported.phPh.slice(0, 3).map((zone, idx) =>
+      const nextPhaseZones = renderablePhaseZones.slice(0, 3).map((zone, idx) =>
         importedZoneToConfig(zone, { ...PHASE_ZONE_TEMPLATES[idx % PHASE_ZONE_TEMPLATES.length] })
       );
 
       setGroundZones(nextGroundZones);
       setPhaseZones(nextPhaseZones);
+
       let nextK0Mag = k0Mag;
       let nextK0Ang = k0Ang;
       if (imported.earthComp) {
@@ -718,7 +747,6 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
         setK0Ang(nextK0Ang);
       }
 
-      // CT/VT ratio override from xrio — only apply when COMTRADE has no ratio info (primary=secondary=1)
       let nextCtRatio = ctRatioOverride;
       let nextVtRatio = vtRatioOverride;
       if (imported.ctRatio != null && imported.vtRatio != null) {
@@ -731,7 +759,7 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       const gndCount = imported.phGnd.length;
       const phCount = imported.phPh.length;
       const polyCount = [...imported.phGnd, ...imported.phPh].filter((z) => z.shapeType === "poly").length;
-      const polyNote = polyCount > 0 ? ` (${polyCount} zona polygon dari .rio, dalam secondary Ω)` : "";
+      const polyNote = polyCount > 0 ? ` (${polyCount} zona polygon dari .rio)` : "";
       const compNote = imported.earthComp ? ` Earth comp: ${imported.earthComp.source}` : "";
       const ratioNote = nextCtRatio != null && nextVtRatio != null
         ? ` | CT=${nextCtRatio.toFixed(0)}:1, VT=${nextVtRatio.toFixed(1)}:1`
@@ -958,7 +986,6 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       <div className={styles.panelHeader}>
         <h2 className={styles.panelTitle}>Impedance Locus Diagram</h2>
         <div className={styles.controls} style={{ flexWrap: "wrap", gap: 10 }}>
-          {/* Polarity toggle — fixes Sifang/DFR that record I in line-flow direction */}
           <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.78rem", color: "#64748b", cursor: "pointer" }}>
             <input
               type="checkbox"
@@ -969,7 +996,6 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
             <span>Invert I (polarity)</span>
           </label>
 
-          {/* Complex KZN (k0) for earth loops */}
           <label className={styles.zoneLabel} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
             <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>|KZN|</span>
             <input
@@ -996,16 +1022,7 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
             <button
               type="button"
               title="PLN standard: |KZN|=0.66, ∠=−5°"
-              style={{
-                padding: "2px 7px",
-                fontSize: "0.7rem",
-                borderRadius: 6,
-                border: "1.5px solid #94a3b8",
-                background: "#f8fafc",
-                color: "#475569",
-                cursor: "pointer",
-                whiteSpace: "nowrap",
-              }}
+              style={{ padding: "2px 7px", fontSize: "0.7rem", borderRadius: 6, border: "1.5px solid #94a3b8", background: "#f8fafc", color: "#475569", cursor: "pointer", whiteSpace: "nowrap" }}
               onClick={() => { setK0Mag(0.66); setK0Ang(-5); }}
             >
               PLN std
