@@ -986,16 +986,6 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       <div className={styles.panelHeader}>
         <h2 className={styles.panelTitle}>Impedance Locus Diagram</h2>
         <div className={styles.controls} style={{ flexWrap: "wrap", gap: 10 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.78rem", color: "#64748b", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={invertI}
-              onChange={(e) => setInvertI(e.target.checked)}
-              style={{ accentColor: "#dc2626" }}
-            />
-            <span>Invert I (polarity)</span>
-          </label>
-
           <label className={styles.zoneLabel} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
             <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>|KZN|</span>
             <input

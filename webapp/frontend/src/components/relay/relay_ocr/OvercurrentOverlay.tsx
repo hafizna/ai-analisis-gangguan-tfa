@@ -1,6 +1,6 @@
 import { useState } from "react";
-import Plot from "react-plotly.js";
 import { overCurrentCharacteristic } from "../../../api/client";
+import Plot from "../../plot/PlotlyChart";
 import styles from "../../panels/Panel.module.css";
 
 interface Props {

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import Plot from "react-plotly.js";
 import { diffRestraint87L, diffRestraint87T } from "../../../api/client";
+import Plot from "../../plot/PlotlyChart";
 import styles from "../../panels/Panel.module.css";
 
 interface Props {
@@ -9,7 +9,7 @@ interface Props {
 }
 
 interface DiffParams {
-  device_type: "SP5" | "SP4";
+  device_type: string;
   idiff_pickup: number;
   slope1: number;
   intersection1: number;
@@ -18,25 +18,39 @@ interface DiffParams {
   idiff_fast: number;
 }
 
-const SP5_DEFAULTS: DiffParams = {
-  device_type: "SP5",
-  idiff_pickup: 0.20,
-  slope1: 0.30,
-  intersection1: 0.30,
-  slope2: 0.70,
-  intersection2: 2.50,
-  idiff_fast: 7.50,
-};
+interface Preset {
+  key: string;
+  label: string;
+  hint: string;
+  params: DiffParams;
+}
 
-const SP4_DEFAULTS: DiffParams = {
-  device_type: "SP4",
-  idiff_pickup: 0.20,
-  slope1: 0.25,
-  intersection1: 0.0,
-  slope2: 0.50,
-  intersection2: 2.50,
-  idiff_fast: 7.50,
-};
+const PRESETS: Preset[] = [
+  {
+    key: "std-30-70",
+    label: "Standar — s₁=30%, s₂=70%",
+    hint: "Dual-slope dengan zona pickup flat 0→0.30 pu. Umum pada relay modern (Siemens 7UT8x, ABB RET670, GE T60).",
+    params: { device_type: "std-30-70", idiff_pickup: 0.20, slope1: 0.30, intersection1: 0.30, slope2: 0.70, intersection2: 2.50, idiff_fast: 7.50 },
+  },
+  {
+    key: "cons-25-50",
+    label: "Konservatif — s₁=25%, s₂=50%",
+    hint: "Slope lebih rendah; tidak ada zona flat (langsung slope dari 0). Cocok untuk relay generasi lama (Siemens 7UT6x, GE T35).",
+    params: { device_type: "cons-25-50", idiff_pickup: 0.20, slope1: 0.25, intersection1: 0.0, slope2: 0.50, intersection2: 2.50, idiff_fast: 7.50 },
+  },
+  {
+    key: "agr-20-80",
+    label: "Agresif — s₁=20%, s₂=80%",
+    hint: "Slope rendah di tahap 1 (sensitif terhadap gangguan kecil), slope tinggi di tahap 2 (stabil saat arus inrush). Umum pada ABB RET650 / SEL-387.",
+    params: { device_type: "agr-20-80", idiff_pickup: 0.20, slope1: 0.20, intersection1: 0.0, slope2: 0.80, intersection2: 2.00, idiff_fast: 7.50 },
+  },
+  {
+    key: "custom",
+    label: "Custom",
+    hint: "Atur semua parameter secara manual sesuai setting aktual relay di lapangan.",
+    params: { device_type: "custom", idiff_pickup: 0.20, slope1: 0.30, intersection1: 0.30, slope2: 0.70, intersection2: 2.50, idiff_fast: 7.50 },
+  },
+];
 
 interface Sample { t: number; i_diff: number; i_rest: number; phase: string; }
 
@@ -66,18 +80,25 @@ function buildCharacteristic(p: DiffParams) {
 }
 
 export default function DiffRestraintPlot({ analysisId, relayType }: Props) {
-  const [params, setParams] = useState<DiffParams>(SP5_DEFAULTS);
+  const [selectedPreset, setSelectedPreset] = useState<string>(PRESETS[0].key);
+  const [params, setParams] = useState<DiffParams>(PRESETS[0].params);
   const [samples, setSamples] = useState<Sample[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [operatedPhases, setOperatedPhases] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const activePreset = PRESETS.find((p) => p.key === selectedPreset) ?? PRESETS[0];
+
   function updateParam(field: keyof DiffParams, val: number | string) {
-    setParams((prev) => ({ ...prev, [field]: val }));
+    setParams((prev) => ({ ...prev, [field]: val, device_type: "custom" }));
+    setSelectedPreset("custom");
   }
 
-  function setDeviceType(t: "SP5" | "SP4") {
-    setParams(t === "SP5" ? SP5_DEFAULTS : SP4_DEFAULTS);
+  function applyPreset(key: string) {
+    const preset = PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    setSelectedPreset(key);
+    if (key !== "custom") setParams(preset.params);
   }
 
   async function fetchPlot() {
@@ -155,14 +176,23 @@ export default function DiffRestraintPlot({ analysisId, relayType }: Props) {
       <div className={styles.panelHeader}>
         <h2 className={styles.panelTitle}>Differential / Restraint Characteristic</h2>
         <div className={styles.controls}>
-          <select className={styles.selectField} value={params.device_type} onChange={(e) => setDeviceType(e.target.value as "SP5" | "SP4")}>
-            <option value="SP5">SIPROTEC 5</option>
-            <option value="SP4">SIPROTEC 4</option>
+          <select
+            className={styles.selectField}
+            value={selectedPreset}
+            onChange={(e) => applyPreset(e.target.value)}
+            style={{ minWidth: 220 }}
+          >
+            {PRESETS.map((p) => (
+              <option key={p.key} value={p.key}>{p.label}</option>
+            ))}
           </select>
           <button className={styles.applyBtn} onClick={fetchPlot} disabled={loading}>
             {loading ? "Computing…" : "Compute"}
           </button>
         </div>
+      </div>
+      <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginBottom: 10, lineHeight: 1.5 }}>
+        {activePreset.hint}
       </div>
 
       {status && (

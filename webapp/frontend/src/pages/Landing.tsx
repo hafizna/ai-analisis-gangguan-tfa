@@ -69,7 +69,7 @@ export default function Landing() {
       <div className={styles.orbRight} />
 
       <header className={styles.header}>
-        <div className={styles.eyebrow}>DFR UIT JBT</div>
+        <div className={styles.eyebrow}>PLN AI-Powered DFR Analytics</div>
         <div className={styles.logo}>DFR Analyser</div>
         <p className={styles.subtitle}>
           Pick the protection family first, then upload the COMTRADE pair for analysis.

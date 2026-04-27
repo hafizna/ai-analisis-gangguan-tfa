@@ -6,6 +6,7 @@ as models/predict.py.
 """
 
 import pickle
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -72,6 +73,139 @@ def _symmetrical_components(ia: np.ndarray, ib: np.ndarray, ic: np.ndarray):
     return float(np.sqrt(np.mean(np.abs(i0) ** 2))), float(np.sqrt(np.mean(np.abs(i1) ** 2))), float(np.sqrt(np.mean(np.abs(i2) ** 2)))
 
 
+def _phase_from_status_name(name: str) -> Optional[str]:
+    upper = name.upper()
+    for phase in "ABC":
+        patterns = [
+            rf"\bPH\s*{phase}\b",
+            rf"\bPH-{phase}\b",
+            rf"\bPH{phase}\b",
+            rf"\bPHASE\s+{phase}\b",
+            rf"\b{phase}\s+PHASE\b",
+            rf"\b{phase}\s*-\s*PH\b",
+            rf"\b{phase}\s+PH\b",
+        ]
+        if any(re.search(pattern, upper) for pattern in patterns):
+            return phase
+    return None
+
+
+def _first_on_ms(samples: list, time: np.ndarray, start_idx: int = 0) -> Optional[float]:
+    if len(time) == 0:
+        return None
+    n = min(len(samples), len(time))
+    start = max(0, min(start_idx, n - 1))
+    prev = int(samples[start - 1]) if start > 0 else 0
+    for idx in range(start, n):
+        val = int(samples[idx])
+        if val == 1 and prev == 0:
+            return float(time[idx] * 1000)
+        prev = val
+    if start == 0 and n and int(samples[0]) == 1:
+        return float(time[0] * 1000)
+    return None
+
+
+def _status_any_on(samples: list) -> bool:
+    return any(int(v) == 1 for v in samples or [])
+
+
+def _digital_sequence_features(status_channels: list, time: np.ndarray, inception_idx: int) -> dict:
+    start_idx = max(0, inception_idx - 2)
+    trip_phases: dict[str, float] = {}
+    cb_open_phases: dict[str, float] = {}
+    startup_phases: dict[str, float] = {}
+    fault_phases: dict[str, float] = {}
+    zone_times: dict[str, float] = {}
+    ar_flags = {
+        "lockout": False,
+        "not_ready": False,
+        "block": False,
+        "successful": False,
+        "failed": False,
+    }
+
+    for sch in status_channels:
+        raw_name = str(sch.get("name", "") or "")
+        name = raw_name.upper()
+        samples = sch.get("samples") or []
+        if not samples or not _status_any_on(samples):
+            continue
+        first_ms = _first_on_ms(samples, time, start_idx)
+        phase = _phase_from_status_name(raw_name)
+
+        is_trip = "TRIP" in name
+        is_cb_open = "CB OPEN" in name or "PMT OPEN" in name or "BREAKER OPEN" in name or ("52" in name and "OPEN" in name)
+        is_startup = "STARTUP" in name or "START UP" in name or "PICKUP" in name or "PICK UP" in name
+        is_fault = "FAULT" in name and phase is not None
+
+        if phase and first_ms is not None:
+            if is_trip:
+                trip_phases[phase] = min(first_ms, trip_phases.get(phase, first_ms))
+            if is_cb_open:
+                cb_open_phases[phase] = min(first_ms, cb_open_phases.get(phase, first_ms))
+            if is_startup:
+                startup_phases[phase] = min(first_ms, startup_phases.get(phase, first_ms))
+            if is_fault:
+                fault_phases[phase] = min(first_ms, fault_phases.get(phase, first_ms))
+
+        if is_trip and "ZONE" in name and first_ms is not None:
+            for zone in ("1", "2", "3", "4", "5"):
+                if f"ZONE{zone}" in name.replace(" ", "") or f"Z{zone}" in name:
+                    zone_times[f"Z{zone}"] = min(first_ms, zone_times.get(f"Z{zone}", first_ms))
+
+        if "AR" in name or "RECLOS" in name or "RECLOSE" in name:
+            if "LOCKOUT" in name or "LOCK OUT" in name:
+                ar_flags["lockout"] = True
+                ar_flags["failed"] = True
+            if "NOT READY" in name or "NOTREADY" in name or "BLOCK" in name:
+                ar_flags["not_ready" if "READY" in name else "block"] = True
+                ar_flags["failed"] = True
+            if "SUCCESS" in name or "CLOSE" in name or "RECLOS" in name:
+                if "LOCK" not in name and "NOT READY" not in name and "BLOCK" not in name:
+                    ar_flags["successful"] = True
+
+    def sorted_phases(data: dict[str, float]) -> list[str]:
+        return sorted(data.keys(), key=lambda ph: data[ph])
+
+    trip_type = None
+    if len(cb_open_phases) >= 3 or len(trip_phases) >= 3:
+        trip_type = "three_pole"
+    elif len(cb_open_phases) == 1 or len(trip_phases) == 1:
+        trip_type = "single_pole"
+
+    ar_status = None
+    if ar_flags["failed"]:
+        ar_status = False
+    elif ar_flags["successful"]:
+        ar_status = True
+
+    first_trip_candidates = list(trip_phases.values()) + list(zone_times.values())
+    first_trip_ms = min(first_trip_candidates) if first_trip_candidates else None
+    if first_trip_ms is not None:
+        startup_phases = {
+            phase: ms for phase, ms in startup_phases.items()
+            if ms <= first_trip_ms + 5.0
+        }
+    first_startup_ms = min(startup_phases.values()) if startup_phases else None
+
+    return {
+        "digital_trip_type": trip_type,
+        "digital_trip_phases": sorted_phases(trip_phases),
+        "digital_cb_open_phases": sorted_phases(cb_open_phases),
+        "digital_startup_phases": sorted_phases(startup_phases),
+        "digital_fault_phases": sorted_phases(fault_phases),
+        "digital_zone": min(zone_times, key=zone_times.get) if zone_times else "",
+        "digital_ar_status": ar_status,
+        "digital_ar_lockout": ar_flags["lockout"],
+        "digital_ar_not_ready": ar_flags["not_ready"],
+        "digital_first_startup_ms": round(first_startup_ms, 2) if first_startup_ms is not None else None,
+        "digital_first_trip_ms": round(first_trip_ms, 2) if first_trip_ms is not None else None,
+        "digital_startup_to_trip_ms": round(first_trip_ms - first_startup_ms, 2)
+        if first_startup_ms is not None and first_trip_ms is not None else None,
+    }
+
+
 def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
     """Build the 17-feature dict from a stored COMTRADE session payload."""
     channels = payload.get("analog_channels", [])
@@ -89,15 +223,28 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
     ia = _find_ch(channels, ["IA", "IL1", "I1"])
     ib = _find_ch(channels, ["IB", "IL2", "I2"])
     ic = _find_ch(channels, ["IC", "IL3", "I3"])
-    i_primary = ia if ia is not None else (ib if ib is not None else ic)
-
     # Voltage channels
     va = _find_ch(channels, ["VA", "VAN", "UA"])
     vb = _find_ch(channels, ["VB", "VBN", "UB"])
     vc = _find_ch(channels, ["VC", "VCN", "UC"])
 
-    if i_primary is None:
+    phase_currents = [(ia, "A"), (ib, "B"), (ic, "C")]
+    scored_currents = []
+    for arr, phase in phase_currents:
+        if arr is None or len(arr) < 4:
+            continue
+        pre_n = min(2 * cycle_n, len(arr) // 4)
+        pre = float(np.sqrt(np.mean(arr[:pre_n] ** 2))) if pre_n > 1 else 0.0
+        peak = float(np.max(np.abs(arr)))
+        scored_currents.append((peak / max(pre, 1.0), peak, arr, phase))
+
+    if not scored_currents:
         return _empty_features()
+
+    _, _, i_primary, primary_phase = max(scored_currents, key=lambda item: (item[0], item[1]))
+    v_primary = {"A": va, "B": vb, "C": vc}.get(primary_phase)
+    if v_primary is None:
+        v_primary = va if va is not None else (vb if vb is not None else vc)
 
     # --- Fault inception detection (same logic as relay_21._extract_features_from_payload) ---
     pre_end = min(2 * cycle_n, len(i_primary) // 4)
@@ -131,10 +278,10 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
 
     # Fault inception angle (FIA)
     fia_deg = 0.0
-    if va is not None and inception_idx < len(va):
-        v_peak = float(np.max(np.abs(va[:inception_idx]))) if inception_idx > 0 else float(np.max(np.abs(va)))
+    if v_primary is not None and inception_idx < len(v_primary):
+        v_peak = float(np.max(np.abs(v_primary[:inception_idx]))) if inception_idx > 0 else float(np.max(np.abs(v_primary)))
         if v_peak > 0:
-            ratio = float(np.clip(va[inception_idx] / v_peak, -1.0, 1.0))
+            ratio = float(np.clip(v_primary[inception_idx] / v_peak, -1.0, 1.0))
             fia_deg = float(np.degrees(np.arcsin(ratio)))
 
     # Symmetrical components (zero-seq / pos-seq ratio)
@@ -197,6 +344,8 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
             v_thds.append(_thd_percent(seg, sr, freq))
         voltage_thd_max_percent = float(max(v_thds)) if v_thds else 0.0
 
+    digital = _digital_sequence_features(status_channels, time, inception_idx)
+
     # AR result
     ar_result = None
     for sch in status_channels:
@@ -207,6 +356,8 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
             else:
                 ar_result = False
             break
+    if digital.get("digital_ar_status") is not None:
+        ar_result = digital["digital_ar_status"]
 
     # Ground fault detection (I0 > 20% of I1)
     is_ground = i0_i1_ratio > 0.2
@@ -221,16 +372,25 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
         if "1PH" in name or "SINGLE" in name or "1P" in name or "SINGLE_POLE" in name:
             trip_type_str = "single_pole"
             break
+    if digital.get("digital_trip_type"):
+        trip_type_str = digital["digital_trip_type"]
 
-    # Faulted phases (approximate from which phases exceeded threshold)
+    # Faulted phases — per-phase 3× pre-fault RMS threshold to avoid false 3Ph detection
     faulted_phases = []
-    for v_arr, phase in [(ia, "A"), (ib, "B"), (ic, "C")]:
-        if v_arr is None:
+    for ph_arr, phase in [(ia, "A"), (ib, "B"), (ic, "C")]:
+        if ph_arr is None:
             continue
-        seg = v_arr[inception_idx: inception_idx + cycle_n]
-        if len(seg) > 0 and float(np.max(np.abs(seg))) > threshold * 0.5:
+        pre_end_ph = min(2 * cycle_n, len(ph_arr) // 4)
+        if pre_end_ph < 2:
+            continue
+        pre_rms_ph = float(np.sqrt(np.mean(ph_arr[:pre_end_ph] ** 2)))
+        ph_thr = max(pre_rms_ph * 3.0, peak_fault_current_a * 0.10, 1.0)
+        seg = ph_arr[inception_idx: inception_idx + cycle_n]
+        if len(seg) > 0 and float(np.max(np.abs(seg))) > ph_thr:
             faulted_phases.append(phase)
     faulted_phases_str = "+".join(faulted_phases) if faulted_phases else "A"
+    if len(digital.get("digital_startup_phases") or []) == 1:
+        faulted_phases_str = digital["digital_startup_phases"][0]
 
     # Zone from status channels
     zone_str = ""
@@ -240,8 +400,10 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
             if z in name and 1 in (sch.get("samples") or []):
                 zone_str = z.replace(" ", "")
                 break
+    if digital.get("digital_zone"):
+        zone_str = digital["digital_zone"]
 
-    return {
+    result = {
         "fault_duration_ms": round(max(fault_duration_ms, 0.0), 1),
         "fault_count": 1,
         "peak_fault_current_a": round(peak_fault_current_a, 2),
@@ -260,16 +422,33 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
         "faulted_phases": faulted_phases_str,
         "zone_operated": zone_str,
     }
+    result.update(digital)
+    return result
 
 
 def _empty_features() -> dict:
-    return {k: 0 for k in [
+    row = {k: 0 for k in [
         "fault_duration_ms", "fault_count", "peak_fault_current_a", "di_dt_max",
         "i0_i1_ratio", "thd_percent", "inception_angle_degrees", "voltage_sag_depth_pu",
         "voltage_phase_ratio_spread_pu", "healthy_phase_voltage_ratio", "v2_v1_ratio",
         "voltage_thd_max_percent", "reclose_successful", "is_ground_fault",
         "trip_type", "faulted_phases", "zone_operated",
     ]}
+    row.update({
+        "digital_trip_type": None,
+        "digital_trip_phases": [],
+        "digital_cb_open_phases": [],
+        "digital_startup_phases": [],
+        "digital_fault_phases": [],
+        "digital_zone": "",
+        "digital_ar_status": None,
+        "digital_ar_lockout": False,
+        "digital_ar_not_ready": False,
+        "digital_first_startup_ms": None,
+        "digital_first_trip_ms": None,
+        "digital_startup_to_trip_ms": None,
+    })
+    return row
 
 
 def run_ml_prediction(payload: dict, relay_type: str = "21") -> dict:
@@ -369,35 +548,146 @@ def run_ml_prediction(payload: dict, relay_type: str = "21") -> dict:
         reverse=True,
     )
 
-    # Fault type: transient if top class is in transient set or AR succeeded
-    ar_ok = row.get("reclose_successful")
-    top_class = ranking[0]["cause"] if ranking else pred
-    fault_type = "transient" if (top_class in _TRANSIENT or ar_ok is True) else "permanent"
-    if ar_ok is False:
-        fault_type = "permanent"
-
-    # Evidence bullets
-    evidence = []
-    evidence.append(
-        f"Model LightGBM multi-class (T=1.5 kalibrasi): {pred} ({confidence:.0%})"
+    digital_trip_phases = row.get("digital_trip_phases") or []
+    digital_cb_open_phases = row.get("digital_cb_open_phases") or []
+    digital_startup_to_trip = row.get("digital_startup_to_trip_ms")
+    digital_caution = (
+        row.get("digital_ar_lockout")
+        or row.get("digital_ar_not_ready")
+        or len(digital_cb_open_phases) >= 3
+        or (digital_startup_to_trip is not None and digital_startup_to_trip > 20)
     )
+    if pred == "PETIR" and digital_caution:
+        confidence = min(confidence, 0.72)
+        for item in ranking:
+            if item["cause"] == "PETIR":
+                item["confidence"] = min(float(item["confidence"]), 0.72)
+            elif item["cause"] == "HEWAN":
+                item["confidence"] = max(float(item["confidence"]), 0.12)
+            elif item["cause"] == "KONDUKTOR":
+                item["confidence"] = max(float(item["confidence"]), 0.08)
+            elif item["cause"] == "PERALATAN":
+                item["confidence"] = max(float(item["confidence"]), 0.06)
+        ranking.sort(key=lambda x: x["confidence"], reverse=True)
+
+    # Fault type: driven purely by ML top cause nature, not by AR result
+    top_class = ranking[0]["cause"] if ranking else pred
+    fault_type = "transient" if top_class in _TRANSIENT else "permanent"
+
+    ar_ok = row.get("reclose_successful")
+
+    # --- Rich narrative evidence ---
+    evidence = []
+
+    # 1. Fault detection summary
+    phases_str = row.get("faulted_phases", "A")
+    phases = [p for p in phases_str.split("+") if p]
+    is_ground = bool(row.get("is_ground_fault", False))
+    n_phases = len(phases)
+    peak_a = row.get("peak_fault_current_a", 0.0)
+    sag_pct = row.get("voltage_sag_depth_pu", 0.0) * 100
+
+    if n_phases >= 3:
+        fault_code, type_name = "3Ph", "Gangguan Tiga Fasa"
+    elif n_phases == 2 and is_ground:
+        fault_code, type_name = "DLG", "Double Line to Ground"
+    elif n_phases == 2:
+        fault_code, type_name = "LL", "Line to Line"
+    elif is_ground:
+        fault_code, type_name = "SLG", "Single Line to Ground"
+    else:
+        fault_code, type_name = "SL", "Single Line"
+
+    phases_label = "+".join(phases) + ("-N" if is_ground and n_phases < 3 else "")
+
+    if peak_a > 0 and sag_pct > 0:
+        evidence.append(
+            f"Terdeteksi Gangguan Fasa {phases_label} ({type_name}) "
+            f"dengan kenaikan arus puncak mencapai {peak_a:.2f} A "
+            f"dan penurunan tegangan (voltage sag) sebesar {sag_pct:.1f}%."
+        )
+    elif peak_a > 0:
+        evidence.append(
+            f"Terdeteksi Gangguan Fasa {phases_label} ({type_name}) "
+            f"dengan kenaikan arus puncak mencapai {peak_a:.2f} A."
+        )
+
+    # 2. Protection operation
+    zone = row.get("zone_operated", "")
+    trip = row.get("trip_type", "")
+    dur = row.get("fault_duration_ms", 0.0)
+    if zone or (trip and trip != "unknown"):
+        zone_str = f"Zona {zone}" if zone else "zona tidak teridentifikasi"
+        trip_str = trip.replace("_", " ") if trip and trip != "unknown" else "tidak teridentifikasi"
+        evidence.append(
+            f"Fungsi proteksi {zone_str} bekerja mentrigger TRIP ({trip_str}) "
+            f"dengan Fault Clearing Time (FCT) {dur:.0f} ms."
+        )
+    elif dur > 0:
+        evidence.append(f"Fault Clearing Time (FCT) {dur:.0f} ms.")
+
+    trip_phases = row.get("digital_trip_phases") or []
+    cb_open_phases = row.get("digital_cb_open_phases") or []
+    startup_phases = row.get("digital_startup_phases") or []
+    startup_to_trip = row.get("digital_startup_to_trip_ms")
+    if trip_phases or cb_open_phases or startup_phases:
+        details = []
+        if startup_phases:
+            details.append(f"startup fase {', '.join(startup_phases)}")
+        if trip_phases:
+            details.append(f"trip fase {', '.join(trip_phases)}")
+        if cb_open_phases:
+            details.append(f"CB open fase {', '.join(cb_open_phases)}")
+        if startup_to_trip is not None:
+            details.append(f"selang startup ke trip {startup_to_trip:.1f} ms")
+        evidence.append("Pembacaan kanal digital menunjukkan " + "; ".join(details) + ".")
+
+    if cb_open_phases and len(cb_open_phases) >= 3 and trip == "single_pole":
+        evidence.append(
+            "Catatan koreksi: meskipun loop gangguan terdeteksi satu fasa ke tanah, kanal digital menunjukkan "
+            "PMT/CB tiga fasa membuka; trip operasi lebih tepat dibaca sebagai three-pole."
+        )
+
+    # 3. AR status
+    if ar_ok is True:
+        evidence.append("Auto Reclose (AR) berhasil — gangguan terkonfirmasi bersifat transien.")
+    elif ar_ok is False:
+        evidence.append("Auto Reclose (AR) gagal — gangguan kemungkinan bersifat permanen.")
+    else:
+        evidence.append("Status Auto Reclose (AR) tidak teridentifikasi dari rekaman digital.")
+
+    # 4. AI classification conclusion
+    evidence.append(
+        f"Berdasarkan analisis pola gelombang, AI mengklasifikasikan gangguan ini sebagai "
+        f"{ranking[0]['label']} dengan tingkat keyakinan {confidence:.0%}."
+    )
+
+    if pred == "PETIR" and (
+        row.get("digital_ar_lockout")
+        or row.get("digital_ar_not_ready")
+        or (cb_open_phases and len(cb_open_phases) >= 3)
+        or (startup_to_trip is not None and startup_to_trip > 20)
+    ):
+        evidence.append(
+            "Catatan interpretasi: label PETIR perlu dibaca hati-hati karena kanal digital menunjukkan "
+            "evolusi pickup/trip dan/atau operasi tiga fasa/AR lockout; kandidat fisik seperti Hewan, "
+            "Konduktor, atau Peralatan tetap perlu diverifikasi dari inspeksi lapangan."
+        )
+
+    # 5. FIA note
+    fia = row.get("inception_angle_degrees", 0.0)
+    if abs(fia) > 60:
+        evidence.append(
+            f"Fault Inception Angle (FIA) = {fia:.1f}° — gangguan terjadi dekat puncak tegangan, "
+            f"pola tipikal gangguan petir."
+        )
+
+    # 6. Thin margin warning
     if margin < 0.15 and len(ranking) >= 2:
         evidence.append(
-            f"Keputusan tipis — selisih ke runner-up {ranking[1]['cause']} "
-            f"hanya {margin * 100:.1f} pp. Verifikasi lapangan disarankan."
+            f"Catatan: Selisih keyakinan ke kandidat kedua ({ranking[1]['label']}) "
+            f"hanya {margin * 100:.1f} pp — verifikasi lapangan tetap disarankan."
         )
-    dur = row.get("fault_duration_ms", 0)
-    if dur < 100:
-        evidence.append(f"Durasi gangguan singkat ({dur:.0f} ms) — indikator gangguan transien.")
-    elif dur > 400:
-        evidence.append(f"Durasi gangguan panjang ({dur:.0f} ms) — indikator gangguan permanen.")
-    if ar_ok is True:
-        evidence.append("AR berhasil — gangguan terkonfirmasi transien.")
-    elif ar_ok is False:
-        evidence.append("AR gagal — indikator kuat gangguan permanen.")
-    fia = row.get("inception_angle_degrees", 0)
-    if abs(fia) > 60:
-        evidence.append(f"FIA = {fia:.1f}° — gangguan dekat puncak tegangan, tipikal petir.")
 
     return {
         "fault_type": fault_type,

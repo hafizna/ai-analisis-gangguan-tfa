@@ -25,71 +25,61 @@ LOOP_CHANNELS = {
     "ZA":  {"v": ["VA", "VAN", "UA"], "i": ["IA"], "phase": "A"},
     "ZB":  {"v": ["VB", "VBN", "UB"], "i": ["IB"], "phase": "B"},
     "ZC":  {"v": ["VC", "VCN", "UC"], "i": ["IC"], "phase": "C"},
-    # Phase-to-phase loops: ZAB = VAB / (IB−IA) matches SIGRA convention.
-    # Subtraction order is i[0]−i[1], so first element is the minuend.
-    "ZAB": {"v": ["VAB", "UAB"], "i": ["IB", "IA"], "diff": True, "phases": ("A", "B")},
-    "ZBC": {"v": ["VBC", "UBC"], "i": ["IC", "IB"], "diff": True, "phases": ("B", "C")},
-    "ZCA": {"v": ["VCA", "UCA"], "i": ["IA", "IC"], "diff": True, "phases": ("C", "A")},
+    "ZAB": {"v": ["VAB", "UAB"], "i": ["IA", "IB"], "diff": True, "phases": ("A", "B")},
+    "ZBC": {"v": ["VBC", "UBC"], "i": ["IB", "IC"], "diff": True, "phases": ("B", "C")},
+    "ZCA": {"v": ["VCA", "UCA"], "i": ["IC", "IA"], "diff": True, "phases": ("C", "A")},
 }
-
-
-def _get_secondary_scale(
-    channels: list,
-    ct_ratio_override: Optional[float] = None,
-    vt_ratio_override: Optional[float] = None,
-) -> float:
-    """
-    Return scale factor to convert primary Ω → secondary Ω: ct_ratio / vt_ratio.
-    Relay zone settings (.rio with IMPPRIM NO) are in secondary Ω, so the locus
-    must be in the same unit for meaningful visual comparison.
-
-    When COMTRADE stores primary=secondary=1 (pors=P, ratio not in CFG), the
-    caller may pass explicit ct/vt ratios extracted from the xrio file to get the
-    correct secondary_scale instead of falling back to 1.0.
-    """
-    vt_ratio = 1.0
-    ct_ratio = 1.0
-    for ch in channels:
-        pri = float(ch.get("ct_primary") or 1)
-        sec = float(ch.get("ct_secondary") or 1)
-        if sec <= 0:
-            sec = 1.0
-        if ch.get("measurement") == "voltage" and pri > 1 and vt_ratio == 1.0:
-            vt_ratio = pri / sec
-        elif ch.get("measurement") == "current" and pri > 1 and ct_ratio == 1.0:
-            ct_ratio = pri / sec
-
-    # Apply overrides when COMTRADE has no ratio info (primary=secondary=1)
-    if ct_ratio_override is not None and ct_ratio_override > 0 and ct_ratio == 1.0:
-        ct_ratio = ct_ratio_override
-    if vt_ratio_override is not None and vt_ratio_override > 0 and vt_ratio == 1.0:
-        vt_ratio = vt_ratio_override
-
-    return (ct_ratio / vt_ratio) if vt_ratio > 0 else 1.0
 
 
 def _find_channel(channels, candidates: list[str]) -> Optional[np.ndarray]:
     """Return samples for the first matching canonical name."""
+    wanted = {c.upper() for c in candidates}
     for ch in channels:
-        if ch["canonical_name"] in candidates or ch["name"].upper() in candidates:
-            return np.array(ch["samples"])
+        canonical = (ch.get("canonical_name") or "").upper()
+        name = (ch.get("name") or "").upper()
+        if canonical in wanted or name in wanted:
+            return np.array(ch["samples"], dtype=float)
     return None
 
 
 def _find_phase_voltage(channels, phase: str) -> Optional[np.ndarray]:
+    phase = phase.upper()
+    aliases = {phase}
+    if phase == "A":
+        aliases.update({"L1", "1"})
+    elif phase == "B":
+        aliases.update({"L2", "2"})
+    elif phase == "C":
+        aliases.update({"L3", "3"})
+
     for ch in channels:
         if ch.get("measurement") != "voltage":
             continue
-        if (ch.get("phase") or "").upper() == phase:
+        ch_phase = (ch.get("phase") or "").upper()
+        canonical = (ch.get("canonical_name") or "").upper()
+        name = (ch.get("name") or "").upper()
+        if ch_phase in aliases or any(canonical.endswith(alias) or name.endswith(alias) for alias in aliases):
             return np.array(ch["samples"], dtype=float)
     return None
 
 
 def _find_phase_current(channels, phase: str) -> Optional[np.ndarray]:
+    phase = phase.upper()
+    aliases = {phase}
+    if phase == "A":
+        aliases.update({"L1", "1"})
+    elif phase == "B":
+        aliases.update({"L2", "2"})
+    elif phase == "C":
+        aliases.update({"L3", "3"})
+
     for ch in channels:
         if ch.get("measurement") != "current":
             continue
-        if (ch.get("phase") or "").upper() == phase:
+        ch_phase = (ch.get("phase") or "").upper()
+        canonical = (ch.get("canonical_name") or "").upper()
+        name = (ch.get("name") or "").upper()
+        if ch_phase in aliases or any(canonical.endswith(alias) or name.endswith(alias) for alias in aliases):
             return np.array(ch["samples"], dtype=float)
     return None
 
@@ -113,59 +103,10 @@ def _find_voltage_for_loop(channels, mapping: dict) -> Optional[np.ndarray]:
     return None
 
 
-def _detect_fault_window_indices(channels: list, time: np.ndarray, freq: float) -> tuple[int, int]:
-    """Return a broad fault window from the strongest phase-current envelope."""
-    if len(time) < 4:
-        return 0, max(0, len(time) - 1)
-
-    sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
-    cycle_n = max(4, int(sr / freq))
-    currents = [
-        arr for arr in (
-            _find_phase_current(channels, "A"),
-            _find_phase_current(channels, "B"),
-            _find_phase_current(channels, "C"),
-        )
-        if arr is not None and len(arr) == len(time)
-    ]
-    if not currents:
-        return 0, len(time) - 1
-
-    envelope = np.max(np.vstack([np.abs(arr.astype(float)) for arr in currents]), axis=0)
-    pre_end = min(max(2 * cycle_n, 1), max(len(envelope) // 4, 1))
-    pre_rms = float(np.sqrt(np.mean(envelope[:pre_end] ** 2))) if pre_end > 1 else 0.0
-    peak = float(np.max(envelope)) if len(envelope) else 0.0
-    threshold = max(pre_rms * 2.0, peak * 0.25, 0.05)
-
-    start = next(
-        (idx for idx in range(pre_end, len(envelope)) if envelope[idx] >= threshold),
-        int(np.argmax(envelope)),
-    )
-    end = len(envelope) - 1
-    for idx in range(start + cycle_n, len(envelope)):
-        left = max(0, idx - cycle_n // 2)
-        rms = float(np.sqrt(np.mean(envelope[left : idx + 1] ** 2)))
-        if rms < threshold * 0.6:
-            end = idx
-            break
-
-    return max(0, start - cycle_n // 2), min(len(envelope) - 1, end + 2 * cycle_n)
-
-
-def _compute_locus(
-    comtrade_data: dict,
-    loop: str,
-    k0: float = 0.0,
-    k0_angle_deg: float = 0.0,
-    invert_i: bool = False,
-    ct_ratio_override: Optional[float] = None,
-    vt_ratio_override: Optional[float] = None,
-) -> list[dict]:
+def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
     channels = comtrade_data["analog_channels"]
     time = np.array(comtrade_data["time"])
     mapping = LOOP_CHANNELS.get(loop, LOOP_CHANNELS["ZA"])
-    # Scale to convert primary Ω → secondary Ω so locus aligns with .rio zone polygons
-    secondary_scale = _get_secondary_scale(channels, ct_ratio_override, vt_ratio_override)
 
     v = _find_voltage_for_loop(channels, mapping)
     if v is None:
@@ -182,130 +123,43 @@ def _compute_locus(
         raise HTTPException(status_code=422, detail=f"Could not find current channel(s) for loop {loop}")
 
     if mapping.get("diff") and len(i_channels) == 2:
-        i = i_channels[0].astype(float) - i_channels[1].astype(float)
+        i = i_channels[0] - i_channels[1]
     else:
-        i = i_channels[0].astype(float)
+        i = i_channels[0]
 
-    # Current polarity correction: some DFRs (e.g. Sifang) store I in line-flow
-    # direction (positive = away from bus), opposite to the relay convention
-    # (positive = toward fault). Negating aligns the locus to the correct quadrant.
-    if invert_i:
-        i = -i
-
-    phase_currents: dict[str, np.ndarray] = {}
-    for phase in ("A", "B", "C"):
-        phase_current = _find_phase_current(channels, phase)
-        if phase_current is not None and len(phase_current) == len(time):
-            phase_currents[phase] = -phase_current.astype(float) if invert_i else phase_current.astype(float)
-
-    freq = comtrade_data.get("frequency", 50.0)
-    sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
-    win = max(4, int(sr / freq))  # one cycle window
-    fault_start_idx, fault_end_idx = _detect_fault_window_indices(channels, time, freq)
-    if loop in ("ZAB", "ZBC", "ZCA") and phase_currents:
-        phase_peaks = {
-            phase: float(np.max(np.abs(arr[fault_start_idx : fault_end_idx + 1])))
-            for phase, arr in phase_currents.items()
-            if len(arr) > fault_start_idx
-        }
-        max_peak = max(phase_peaks.values()) if phase_peaks else 0.0
-        pair = mapping.get("phases") or ()
-        if max_peak > 0.01 and pair and all(phase_peaks.get(phase, 0.0) < max_peak * 0.33 for phase in pair):
-            return []
-    # Precompute reference sinusoids for the full window (reused every iteration)
-    t_win = np.arange(win) / sr
-    cos_win = np.cos(2.0 * np.pi * freq * t_win)
-    sin_win = np.sin(2.0 * np.pi * freq * t_win)
-
-    # Prepare k0 residual current for ground loops (complex KZN in frequency domain)
-    k0_complex: complex | None = None
-    i_res: np.ndarray | None = None
-    if loop in ("ZA", "ZB", "ZC") and k0 != 0.0:
-        ia = phase_currents.get("A")
-        ib = phase_currents.get("B")
-        ic = phase_currents.get("C")
-        if ia is not None and ib is not None and ic is not None:
-            i_res = ia + ib + ic
-            k0_complex = k0 * np.exp(1j * np.radians(k0_angle_deg))
-
-    # Sliding DFT phasor division: Z = V_phasor / I_phasor
-    # Compared to the gradient-based LS fit, DFT naturally rejects DC offset
-    # (asymmetric fault inception) and converges faster when fault current dominates
-    # the window — the large fault I overwhelms any residual pre-fault samples.
-    v = v.astype(float)
-    scale = 1000.0 * secondary_scale
-    r = np.full(len(time), np.nan, dtype=float)
-    x = np.full(len(time), np.nan, dtype=float)
-    i_ph_mag = np.full(len(time), np.nan, dtype=float)
-
-    for s in range(0, max(0, len(time) - win + 1)):
-        k = s + win // 2
-        if k < fault_start_idx or k > fault_end_idx:
-            continue
-        if loop in ("ZAB", "ZBC", "ZCA") and k < fault_start_idx + win // 2:
-            continue
-
-        v_w = v[s : s + win]
-        i_w = i[s : s + win]
-        if np.max(np.abs(i_w)) < 0.01:
-            continue
-
-        # DFT projection: phasor = (2/n) × (Σ x·cos − j·Σ x·sin)
-        v_re = (2.0 / win) * float(v_w @ cos_win)
-        v_im = -(2.0 / win) * float(v_w @ sin_win)
-        i_re = (2.0 / win) * float(i_w @ cos_win)
-        i_im = -(2.0 / win) * float(i_w @ sin_win)
-
-        V_ph = complex(v_re, v_im)
-        I_ph = complex(i_re, i_im)
-
-        # k0 compensation: I_loop = I_phase + KZN × I_residual (frequency domain)
-        if k0_complex is not None and i_res is not None:
-            ires_w = i_res[s : s + win]
-            ir_re = (2.0 / win) * float(ires_w @ cos_win)
-            ir_im = -(2.0 / win) * float(ires_w @ sin_win)
-            I_ph = I_ph + k0_complex * complex(ir_re, ir_im)
-
-        I_mag_sq = I_ph.real ** 2 + I_ph.imag ** 2
-        if I_mag_sq < 1e-6:
-            continue
-
-        Z = V_ph / I_ph  # phasor division: Z = R + jX (secondary Ω after scaling)
-        r[k] = Z.real * scale
-        x[k] = Z.imag * scale
-        i_ph_mag[k] = float(np.sqrt(I_mag_sq))
-
-    ok = np.isfinite(r) & np.isfinite(x) & (np.abs(r) <= 500) & (np.abs(x) <= 500)
-    finite_i = i_ph_mag[np.isfinite(i_ph_mag)]
-    if finite_i.size:
-        threshold_i = max(float(np.nanmax(finite_i)) * 0.08, 0.01)
-        ok &= np.isfinite(i_ph_mag) & (i_ph_mag >= threshold_i)
-        if loop in ("ZAB", "ZBC", "ZCA"):
-            strong = np.where(ok & (i_ph_mag >= float(np.nanmax(finite_i)) * 0.35))[0]
-            if strong.size:
-                ok &= np.arange(len(ok)) <= int(strong[-1])
-    if len(ok) >= 3:
-        isolated = ok.copy()
-        isolated[1:-1] = ok[1:-1] & ~ok[:-2] & ~ok[2:]
-        isolated[0] = ok[0] and not ok[1]
-        isolated[-1] = ok[-1] and not ok[-2]
-        ok &= ~isolated
-
-    valid_idx = np.where(ok)[0]
-    if len(valid_idx) >= 4:
-        step = np.sqrt(np.diff(r[valid_idx]) ** 2 + np.diff(x[valid_idx]) ** 2)
-        finite_step = step[np.isfinite(step)]
-        if finite_step.size:
-            jump_limit = max(35.0, float(np.nanmedian(finite_step)) * 8.0)
-            for break_idx in np.where(step > jump_limit)[0]:
-                if break_idx == 0:
-                    ok[valid_idx[break_idx]] = False
-                ok[valid_idx[break_idx + 1]] = False
+    if np.iscomplexobj(v) or np.iscomplexobj(i):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            z = np.where(np.abs(i) > 0.01, v / i, np.nan + 1j * np.nan)
+        r = np.real(z)
+        x = np.imag(z)
+    else:
+        freq = comtrade_data.get("frequency", 50.0)
+        sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
+        win = max(1, int(sr / freq))  # one cycle window
+        r_list, x_list = [], []
+        for k in range(len(time)):
+            s = max(0, k - win + 1)
+            v_w = v[s:k+1]
+            i_w = i[s:k+1]
+            if len(v_w) < 2 or np.max(np.abs(i_w)) < 0.01:
+                r_list.append(float("nan"))
+                x_list.append(float("nan"))
+            else:
+                # Least-squares: V = R*I + X*I_90  (I_90 = Hilbert approx)
+                i_90 = np.gradient(i_w) / (2 * np.pi * freq / sr)
+                A = np.column_stack([i_w, i_90])
+                try:
+                    coeffs, _, _, _ = np.linalg.lstsq(A, v_w, rcond=None)
+                    r_list.append(float(coeffs[0]))
+                    x_list.append(float(coeffs[1]))
+                except Exception:
+                    r_list.append(float("nan"))
+                    x_list.append(float("nan"))
+        r = np.array(r_list)
+        x = np.array(x_list)
 
     points = []
     for k in range(len(time)):
-        if not ok[k]:
-            continue
         rv, xv = float(r[k]), float(x[k])
         if np.isnan(rv) or np.isnan(xv):
             continue
@@ -383,10 +237,10 @@ def _extract_features_from_payload(payload: dict) -> dict:
         denom = pos + abs(neg)
         asymmetry = abs(pos - abs(neg)) / denom if denom > 0 else 0.0
 
-    # |Z| at inception — V in kV, I in A → *1000 → Ω
+    # |Z| at inception
     impedance_ohm = 0.0
     if v is not None and inception_idx < len(v) and abs(i[inception_idx]) > 0.01:
-        impedance_ohm = float(abs(v[inception_idx] * 1000.0 / i[inception_idx]))
+        impedance_ohm = float(abs(v[inception_idx] / i[inception_idx]))
 
     # AR result from binary channels
     ar_result = None
@@ -415,34 +269,19 @@ def _compute_electrical_params(payload: dict) -> dict:
     time = np.array(payload.get("time", []))
     freq = float(payload.get("frequency", 50.0))
 
-    def find_phase_ch(phases: list[str], meas: str):
-        for p in phases:
-            for ch in channels:
-                if ch.get("measurement") != meas:
-                    continue
-                ph = (ch.get("phase") or "").upper()
-                cn = ch.get("canonical_name", "").upper()
-                nm = ch.get("name", "").upper()
-                if ph == p or cn.endswith(p) or nm.endswith(p):
-                    return np.array(ch["samples"], dtype=float)
-        return None
-
-    ia = find_phase_ch(["A", "L1", "1"], "current")
-    ib = find_phase_ch(["B", "L2", "2"], "current")
-    ic = find_phase_ch(["C", "L3", "3"], "current")
-    va = find_phase_ch(["A", "L1", "1"], "voltage")
-    vb = find_phase_ch(["B", "L2", "2"], "voltage")
-    vc = find_phase_ch(["C", "L3", "3"], "voltage")
+    ia = _find_phase_current(channels, "A")
+    ib = _find_phase_current(channels, "B")
+    ic = _find_phase_current(channels, "C")
+    va = _find_phase_voltage(channels, "A")
+    vb = _find_phase_voltage(channels, "B")
+    vc = _find_phase_voltage(channels, "C")
 
     result: dict = {}
-
     if len(time) < 4:
         return result
 
     sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
     cycle_n = max(4, int(sr / freq))
-
-    # Use IA to find inception index
     i_ref = ia if ia is not None else (ib if ib is not None else ic)
     pre_end = min(2 * cycle_n, len(i_ref) // 4) if i_ref is not None else 0
     inception_idx = 0
@@ -450,37 +289,33 @@ def _compute_electrical_params(payload: dict) -> dict:
 
     if i_ref is not None and pre_end > 1:
         pre_rms = float(np.sqrt(np.mean(i_ref[:pre_end] ** 2)))
-        thr = max(pre_rms * 2.0, np.max(np.abs(i_ref)) * 0.3, 0.05)
+        threshold = max(pre_rms * 2.0, np.max(np.abs(i_ref)) * 0.3, 0.05)
         inception_idx = next(
-            (k for k in range(pre_end, len(i_ref)) if abs(i_ref[k]) > thr),
+            (idx for idx in range(pre_end, len(i_ref)) if abs(i_ref[idx]) > threshold),
             int(np.argmax(np.abs(i_ref))),
         )
-        for k in range(inception_idx + cycle_n, len(i_ref)):
-            s = max(0, k - cycle_n // 2)
-            if float(np.sqrt(np.mean(i_ref[s : k + 1] ** 2))) < thr * 0.6:
-                extinction_idx = k
+        for idx in range(inception_idx + cycle_n, len(i_ref)):
+            start = max(0, idx - cycle_n // 2)
+            if float(np.sqrt(np.mean(i_ref[start : idx + 1] ** 2))) < threshold * 0.6:
+                extinction_idx = idx
                 break
 
     fault_slice = slice(inception_idx, min(extinction_idx + 1, len(time)))
 
-    # I_peak per phase (kA or A)
     for label, arr in [("IA", ia), ("IB", ib), ("IC", ic)]:
         if arr is not None and len(arr) > inception_idx:
             result[f"i_peak_{label.lower()}_a"] = round(float(np.max(np.abs(arr[fault_slice]))), 2)
 
-    # V_sag: prefault RMS vs fault-window RMS (%)
     if va is not None and pre_end > 1:
         v_pre_rms = float(np.sqrt(np.mean(va[:pre_end] ** 2)))
         v_fault_rms = float(np.sqrt(np.mean(va[fault_slice] ** 2))) if len(va) > inception_idx else v_pre_rms
         if v_pre_rms > 0:
             result["v_sag_pct"] = round((1.0 - v_fault_rms / v_pre_rms) * 100, 1)
 
-    # Symmetrical components (Fortescue) at inception using one-cycle window
     a_op = np.exp(1j * 2 * np.pi / 3)
     a2_op = np.exp(-1j * 2 * np.pi / 3)
 
     def rms_phasor(arr, idx, n):
-        """Estimate fundamental phasor at index idx using DFT over n samples."""
         if arr is None or idx + n > len(arr):
             return None
         seg = arr[idx : idx + n]
@@ -489,30 +324,29 @@ def _compute_electrical_params(payload: dict) -> dict:
         sin_ref = np.sin(2 * np.pi * freq * t_seg)
         re = 2 * np.mean(seg * cos_ref)
         im = -2 * np.mean(seg * sin_ref)
-        return complex(re, im) / np.sqrt(2)  # RMS phasor
+        return complex(re, im) / np.sqrt(2)
 
-    pI_a = rms_phasor(ia, inception_idx, cycle_n)
-    pI_b = rms_phasor(ib, inception_idx, cycle_n)
-    pI_c = rms_phasor(ic, inception_idx, cycle_n)
+    p_i_a = rms_phasor(ia, inception_idx, cycle_n)
+    p_i_b = rms_phasor(ib, inception_idx, cycle_n)
+    p_i_c = rms_phasor(ic, inception_idx, cycle_n)
 
-    if pI_a is not None and pI_b is not None and pI_c is not None:
-        I0 = (pI_a + pI_b + pI_c) / 3
-        I1 = (pI_a + a_op * pI_b + a2_op * pI_c) / 3
-        I2 = (pI_a + a2_op * pI_b + a_op * pI_c) / 3
-        result["i_pos_seq_a"] = round(abs(I1), 2)
-        result["i_neg_seq_a"] = round(abs(I2), 2)
-        result["i_zero_seq_a"] = round(abs(I0), 2)
+    if p_i_a is not None and p_i_b is not None and p_i_c is not None:
+        i_zero = (p_i_a + p_i_b + p_i_c) / 3
+        i_pos = (p_i_a + a_op * p_i_b + a2_op * p_i_c) / 3
+        i_neg = (p_i_a + a2_op * p_i_b + a_op * p_i_c) / 3
+        result["i_pos_seq_a"] = round(abs(i_pos), 2)
+        result["i_neg_seq_a"] = round(abs(i_neg), 2)
+        result["i_zero_seq_a"] = round(abs(i_zero), 2)
 
-    # Z at inception and R/X from least-squares (V in kV, I in A → multiply by 1000 → Ω)
     if va is not None and ia is not None:
         win = min(cycle_n, len(va) - inception_idx)
         if win >= 4:
-            v_w = va[inception_idx : inception_idx + win] * 1000.0  # kV → V
+            v_w = va[inception_idx : inception_idx + win] * 1000.0
             i_w = ia[inception_idx : inception_idx + win]
             i_90 = np.gradient(i_w) / (2 * np.pi * freq / sr)
-            A = np.column_stack([i_w, i_90])
+            matrix = np.column_stack([i_w, i_90])
             try:
-                coeffs, _, _, _ = np.linalg.lstsq(A, v_w, rcond=None)
+                coeffs, _, _, _ = np.linalg.lstsq(matrix, v_w, rcond=None)
                 r_val = float(coeffs[0])
                 x_val = float(coeffs[1])
                 result["r_at_fault_ohm"] = round(r_val, 2)
@@ -526,13 +360,12 @@ def _compute_electrical_params(payload: dict) -> dict:
             except Exception:
                 pass
 
-    # AR dead time: time between extinction and next high current (reclose)
     ar_dead_ms = None
     for sch in payload.get("status_channels", []):
         name = sch.get("name", "").upper()
-        if any(k in name for k in ("AR", "RECLOSE", "RECLOS")):
-            samp = sch.get("samples", [])
-            close_idx = next((k for k in range(extinction_idx, len(samp)) if samp[k] == 1), None)
+        if any(key in name for key in ("AR", "RECLOSE", "RECLOS")):
+            samples = sch.get("samples", [])
+            close_idx = next((idx for idx in range(extinction_idx, len(samples)) if samples[idx] == 1), None)
             if close_idx is not None and close_idx < len(time):
                 ar_dead_ms = round((time[close_idx] - time[extinction_idx]) * 1000, 1)
             break
@@ -541,7 +374,6 @@ def _compute_electrical_params(payload: dict) -> dict:
 
     result["fault_duration_ms"] = round((time[extinction_idx] - time[inception_idx]) * 1000, 1)
     result["inception_time_ms"] = round(float(time[inception_idx]) * 1000, 1)
-
     return result
 
 
@@ -549,21 +381,27 @@ def _compute_fault_classification(payload: dict) -> dict:
     """Derive fault type code, phases, zone, trip and timing for the Jenis Gangguan panel."""
     time = np.array(payload.get("time", []))
     empty = {
-        "fault_code": "Unknown", "phases": [], "phases_label": "-",
-        "to_ground": False, "trip_type": None, "zone": None,
-        "prefault_ms": 0.0, "fault_ms": 0.0, "total_ms": 0.0, "ar_status": None,
+        "fault_code": "Unknown",
+        "phases": [],
+        "phases_label": "-",
+        "to_ground": False,
+        "trip_type": None,
+        "zone": None,
+        "prefault_ms": 0.0,
+        "fault_ms": 0.0,
+        "total_ms": 0.0,
+        "ar_status": None,
     }
     if len(time) < 4:
         return empty
 
     row = extract_ml_features(payload, "21")
-
     total_ms = round(float((time[-1] - time[0]) * 1000), 1)
-    fault_ms = float(row.get("fault_duration_ms", 0))
+    fault_ms = float(row.get("fault_duration_ms", 0) or 0)
     prefault_ms = max(0.0, round(total_ms - fault_ms, 1))
 
     phases_str = row.get("faulted_phases", "") or ""
-    phases = [p for p in phases_str.split("+") if p]
+    phases = [phase for phase in phases_str.split("+") if phase]
     to_ground = bool(row.get("is_ground_fault", False))
     n_phases = len(phases)
 
@@ -585,7 +423,6 @@ def _compute_fault_classification(payload: dict) -> dict:
 
     ar_ok = row.get("reclose_successful")
     ar_status = "successful" if ar_ok is True else ("failed" if ar_ok is False else None)
-
     phases_label = "+".join(phases) + ("-N" if to_ground and n_phases < 3 else "")
 
     return {
@@ -644,10 +481,7 @@ async def compute_locus(body: LocusAnalysisRequest):
 
     loop = asyncio.get_event_loop()
     points = await loop.run_in_executor(
-        None, partial(
-            _compute_locus, payload, body.loop, body.k0, body.k0_angle_deg, body.invert_i,
-            body.ct_ratio_override, body.vt_ratio_override,
-        )
+        None, partial(_compute_locus, payload, body.loop)
     )
     return LocusResponse(
         loop=body.loop,
