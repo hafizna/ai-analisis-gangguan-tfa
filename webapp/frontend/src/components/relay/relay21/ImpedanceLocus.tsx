@@ -44,6 +44,13 @@ interface ImportedRelayData {
   kind: "rio" | "xrio";
   phGnd: ImportedZone[];
   phPh: ImportedZone[];
+  earthComp?: {
+    k0: number;
+    angleDeg: number;
+    source: string;
+  };
+  ctRatio?: number;   // ct_primary / ct_secondary — used to override secondary_scale
+  vtRatio?: number;   // vt_primary / vt_secondary — used to override secondary_scale
 }
 
 type LoopName = "ZA" | "ZB" | "ZC" | "ZAB" | "ZBC" | "ZCA";
@@ -55,9 +62,9 @@ const GROUND_LOOPS: LoopName[] = ["ZA", "ZB", "ZC"];
 const PHASE_LOOPS: LoopName[] = ["ZAB", "ZBC", "ZCA"];
 
 const LOOP_COLORS: Record<LoopName, string> = {
-  ZA: "#1d4ed8",
-  ZB: "#16a34a",
-  ZC: "#7c3aed",
+  ZA: "#16a34a",
+  ZB: "#d946ef",
+  ZC: "#2563eb",
   ZAB: "#0891b2",
   ZBC: "#b45309",
   ZCA: "#be123c",
@@ -205,6 +212,22 @@ function parseSifangRIO(text: string): ImportedRelayData | null {
   return { kind: "rio", phGnd: phGnd.slice(0, 3), phPh: phPh.slice(0, 3) };
 }
 
+function parseRioEarthComp(text: string): ImportedRelayData["earthComp"] {
+  const reRl = text.match(/\bRE\/RL\s+([-0-9.]+)\s*,\s*([-0-9.]+)/i);
+  const xeXl = text.match(/\bXE\/XL\s+([-0-9.]+)\s*,\s*([-0-9.]+)/i);
+  if (!reRl || !xeXl) return undefined;
+
+  const re = Number.parseFloat(reRl[1]);
+  const xe = Number.parseFloat(xeXl[1]);
+  if (!Number.isFinite(re) || !Number.isFinite(xe)) return undefined;
+
+  return {
+    k0: Math.hypot(re, xe),
+    angleDeg: (Math.atan2(xe, re) * 180) / Math.PI,
+    source: `RIO RE/RL=${re.toFixed(3)}, XE/XL=${xe.toFixed(3)}`,
+  };
+}
+
 function parseRIO(text: string): ImportedRelayData | null {
   if (!/BEGIN\s+PROTECTIONDEVICE/i.test(text)) return parseSifangRIO(text);
 
@@ -259,6 +282,7 @@ function parseRIO(text: string): ImportedRelayData | null {
     kind: "rio",
     phGnd: phGnd.slice(0, 3),
     phPh: phPh.slice(0, 3),
+    earthComp: parseRioEarthComp(text),
   };
 }
 
@@ -272,6 +296,12 @@ function parseXRIO(text: string): ImportedRelayData | null {
 
   function getValue(name: string) {
     const param = distanceParams.find((node) => node.querySelector("Name")?.textContent === name);
+    return param?.querySelector("Value")?.textContent ?? null;
+  }
+
+  // Search outside of APP1_DISTANCE (e.g. CT_AND_VT_RATIOS block)
+  function getValueGlobal(name: string) {
+    const param = params.find((node) => node.querySelector("Name")?.textContent?.trim() === name);
     return param?.querySelector("Value")?.textContent ?? null;
   }
 
@@ -293,10 +323,38 @@ function parseXRIO(text: string): ImportedRelayData | null {
     return out;
   }
 
+  // Extract CT/VT ratios from the "CT AND VT RATIOS" xrio block
+  const vtPrimaryRaw = getValueGlobal("Main VT Primary");
+  const vtSecondaryRaw = getValueGlobal("Main VT Sec'y");
+  const ctPrimaryRaw = getValueGlobal("Phase CT Primary");
+  const ctSecondaryRaw = getValueGlobal("Phase CT Sec'y");
+
+  const vtPrimary = vtPrimaryRaw ? Number.parseFloat(vtPrimaryRaw) : null;
+  const vtSecondary = vtSecondaryRaw ? Number.parseFloat(vtSecondaryRaw) : null;
+  const ctPrimary = ctPrimaryRaw ? Number.parseFloat(ctPrimaryRaw) : null;
+  const ctSecondary = ctSecondaryRaw ? Number.parseFloat(ctSecondaryRaw) : null;
+
+  const vtRatio = vtPrimary && vtSecondary && vtSecondary > 0 ? vtPrimary / vtSecondary : null;
+  const ctRatio = ctPrimary && ctSecondary && ctSecondary > 0 ? ctPrimary / ctSecondary : null;
+
+  // Earth compensation — try common GE/Alstom P442 parameter names
+  const k0MagRaw = getValue("kZ1") ?? getValue("KZN") ?? getValue("K0Mag");
+  const k0AngRaw = getValue("kZ1Ang") ?? getValue("KZNAng") ?? getValue("K0Ang");
+  let earthComp: ImportedRelayData["earthComp"];
+  if (k0MagRaw && k0AngRaw) {
+    const k0 = Number.parseFloat(k0MagRaw);
+    const angleDeg = Number.parseFloat(k0AngRaw);
+    if (Number.isFinite(k0) && Number.isFinite(angleDeg)) {
+      earthComp = { k0, angleDeg, source: `xrio kZ1=${k0.toFixed(4)}, ∠=${angleDeg.toFixed(1)}°` };
+    }
+  }
+
   return {
     kind: "xrio",
     phGnd: buildZones("PEZ").slice(0, 3),
     phPh: buildZones("PPZ").slice(0, 3),
+    ...(earthComp ? { earthComp } : {}),
+    ...(ctRatio !== null && vtRatio !== null ? { ctRatio, vtRatio } : {}),
   };
 }
 
@@ -367,8 +425,19 @@ function loopTrace(loop: LoopName, points: LocusPoint[]): Partial<Plotly.Scatter
   // medianGap*1.8 is too tight — it fragments locus during inception settling (10ms gap at 1kHz).
   // Use max(medianGap*8, 0.04s) so we only break on genuine multi-cycle discontinuities.
   const gapThreshold = Math.max(medianGap * 8, 0.04);
+  const distances = points
+    .slice(1)
+    .map((point, idx) => Math.hypot(point.r - points[idx].r, point.x - points[idx].x))
+    .filter((distance) => Number.isFinite(distance) && distance > 0);
+  const medianDistance = distances.length
+    ? [...distances].sort((a, b) => a - b)[Math.floor(distances.length / 2)]
+    : 0;
+  const jumpThreshold = Math.max(35, medianDistance * 8);
   points.forEach((point, idx) => {
-    if (idx > 0 && medianGap > 0 && point.t - points[idx - 1].t > gapThreshold) {
+    const prev = points[idx - 1];
+    const timeGap = idx > 0 && medianGap > 0 && point.t - prev.t > gapThreshold;
+    const spatialJump = idx > 0 && Math.hypot(point.r - prev.r, point.x - prev.x) > jumpThreshold;
+    if (timeGap || spatialJump) {
       xVals.push(null);
       yVals.push(null);
       tVals.push(null);
@@ -539,6 +608,9 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
   const [k0Mag, setK0Mag] = useState(0.0);
   const [k0Ang, setK0Ang] = useState(0.0);
   const [invertI, setInvertI] = useState(false);
+  // CT/VT ratio overrides: set when xrio provides explicit ratios (overrides COMTRADE auto-detect)
+  const [ctRatioOverride, setCtRatioOverride] = useState<number | null>(null);
+  const [vtRatioOverride, setVtRatioOverride] = useState<number | null>(null);
   const rioInputRef = useRef<HTMLInputElement>(null);
 
   async function fetchAllLoci(
@@ -547,6 +619,8 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
     nextK0Mag = k0Mag,
     nextK0Ang = k0Ang,
     nextInvertI = invertI,
+    nextCtRatio = ctRatioOverride,
+    nextVtRatio = vtRatioOverride,
   ) {
     setLoading(true);
     setError(null);
@@ -554,7 +628,7 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       const results = await Promise.all(
         [...GROUND_LOOPS, ...PHASE_LOOPS].map(async (loop) => {
           const zones = GROUND_LOOPS.includes(loop) ? nextGroundZones : nextPhaseZones;
-          const response = await computeLocus(analysisId, zones, loop, nextK0Mag, nextK0Ang, nextInvertI);
+          const response = await computeLocus(analysisId, zones, loop, nextK0Mag, nextK0Ang, nextInvertI, nextCtRatio ?? undefined, nextVtRatio ?? undefined);
           return [loop, response.points ?? []] as const;
         })
       );
@@ -635,12 +709,35 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
 
       setGroundZones(nextGroundZones);
       setPhaseZones(nextPhaseZones);
+      let nextK0Mag = k0Mag;
+      let nextK0Ang = k0Ang;
+      if (imported.earthComp) {
+        nextK0Mag = Number(imported.earthComp.k0.toFixed(4));
+        nextK0Ang = Number(imported.earthComp.angleDeg.toFixed(2));
+        setK0Mag(nextK0Mag);
+        setK0Ang(nextK0Ang);
+      }
+
+      // CT/VT ratio override from xrio — only apply when COMTRADE has no ratio info (primary=secondary=1)
+      let nextCtRatio = ctRatioOverride;
+      let nextVtRatio = vtRatioOverride;
+      if (imported.ctRatio != null && imported.vtRatio != null) {
+        nextCtRatio = imported.ctRatio;
+        nextVtRatio = imported.vtRatio;
+        setCtRatioOverride(nextCtRatio);
+        setVtRatioOverride(nextVtRatio);
+      }
+
       const gndCount = imported.phGnd.length;
       const phCount = imported.phPh.length;
       const polyCount = [...imported.phGnd, ...imported.phPh].filter((z) => z.shapeType === "poly").length;
       const polyNote = polyCount > 0 ? ` (${polyCount} zona polygon dari .rio, dalam secondary Ω)` : "";
-      setRelayStatus(`${file.name} dimuat: ${gndCount} zona ground, ${phCount} zona phase.${polyNote}`);
-      await fetchAllLoci(nextGroundZones, nextPhaseZones);
+      const compNote = imported.earthComp ? ` Earth comp: ${imported.earthComp.source}` : "";
+      const ratioNote = nextCtRatio != null && nextVtRatio != null
+        ? ` | CT=${nextCtRatio.toFixed(0)}:1, VT=${nextVtRatio.toFixed(1)}:1`
+        : "";
+      setRelayStatus(`${file.name} dimuat: ${gndCount} zona ground, ${phCount} zona phase.${polyNote}${compNote}${ratioNote}`);
+      await fetchAllLoci(nextGroundZones, nextPhaseZones, nextK0Mag, nextK0Ang, invertI, nextCtRatio, nextVtRatio);
     } catch {
       setRelayStatus("Gagal membaca file relay.");
     }
@@ -917,7 +1014,7 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
 
           <button
             className={styles.applyBtn}
-            onClick={() => void fetchAllLoci(groundZones, phaseZones, k0Mag, k0Ang, invertI)}
+            onClick={() => void fetchAllLoci(groundZones, phaseZones, k0Mag, k0Ang, invertI, ctRatioOverride, vtRatioOverride)}
             disabled={loading}
           >
             {loading ? "Computing..." : "Refresh All Loci"}

@@ -15,6 +15,8 @@ export interface UploadedAnalysis {
   total_samples: number;
   analog_channel_count: number;
   status_channel_count: number;
+  suggested_relay_type?: string | null;
+  detection_confidence?: number | null;
 }
 
 export interface AnalysisChannelSummary {
@@ -75,9 +77,64 @@ export async function recalculateRatio(analysisId: string, ratios: unknown[]) {
   return data;
 }
 
-export async function computeLocus(analysisId: string, zones: unknown[], loop: string) {
-  const { data } = await api.post("/api/analyze/21/locus", { analysis_id: analysisId, zones, loop });
+export async function computeLocus(
+  analysisId: string,
+  zones: unknown[],
+  loop: string,
+  k0 = 0.0,
+  k0AngleDeg = 0.0,
+  invertI = false,
+  ctRatioOverride?: number,
+  vtRatioOverride?: number,
+) {
+  const { data } = await api.post("/api/analyze/21/locus", {
+    analysis_id: analysisId,
+    zones,
+    loop,
+    k0,
+    k0_angle_deg: k0AngleDeg,
+    invert_i: invertI,
+    ...(ctRatioOverride != null ? { ct_ratio_override: ctRatioOverride } : {}),
+    ...(vtRatioOverride != null ? { vt_ratio_override: vtRatioOverride } : {}),
+  });
   return data;
+}
+
+export async function fetchFaultClassification21(analysisId: string) {
+  const { data } = await api.get(`/api/analyze/21/fault-classification?analysis_id=${analysisId}`);
+  return data as {
+    fault_code: string;
+    phases: string[];
+    phases_label: string;
+    to_ground: boolean;
+    trip_type: string | null;
+    zone: string | null;
+    prefault_ms: number;
+    fault_ms: number;
+    total_ms: number;
+    ar_status: "successful" | "failed" | null;
+  };
+}
+
+export async function fetchElectricalParams21(analysisId: string) {
+  const { data } = await api.get(`/api/analyze/21/electrical-params?analysis_id=${analysisId}`);
+  return data as {
+    fault_duration_ms?: number;
+    inception_time_ms?: number;
+    i_peak_ia_a?: number;
+    i_peak_ib_a?: number;
+    i_peak_ic_a?: number;
+    v_sag_pct?: number;
+    i_pos_seq_a?: number;
+    i_neg_seq_a?: number;
+    i_zero_seq_a?: number;
+    z_at_inception_ohm?: number;
+    r_at_fault_ohm?: number;
+    x_at_fault_ohm?: number;
+    rx_ratio?: number;
+    z_angle_deg?: number;
+    ar_dead_time_ms?: number;
+  };
 }
 
 export async function extractFeatures21(analysisId: string) {

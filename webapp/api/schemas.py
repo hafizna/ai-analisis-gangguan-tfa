@@ -44,6 +44,8 @@ class AnalysisCreatedResponse(BaseModel):
     total_samples: int
     analog_channel_count: int
     status_channel_count: int
+    suggested_relay_type: Optional[str] = None   # auto-detected from status channels, None if unknown
+    detection_confidence: Optional[float] = None
 
 
 class AnalysisRequestBase(BaseModel):
@@ -128,6 +130,12 @@ class LocusRequest(BaseModel):
 class LocusAnalysisRequest(AnalysisRequestBase):
     zones: List[ZoneConfig] = []
     loop: str = "ZA"
+    k0: float = 0.0          # |KZN| zero-sequence compensation magnitude
+    k0_angle_deg: float = 0.0 # KZN Res Angle in degrees (complex k0 angle)
+    invert_i: bool = False    # Invert current polarity (flip sign of I channels)
+    # Optional CT/VT ratio overrides from xrio — used when COMTRADE stores primary=secondary=1 (pors=P)
+    ct_ratio_override: Optional[float] = None  # ct_primary / ct_secondary (e.g. 4000 for 4000:1)
+    vt_ratio_override: Optional[float] = None  # vt_primary / vt_secondary (e.g. 1363.6 for 150000:110)
 
 
 class LocusPoint(BaseModel):
