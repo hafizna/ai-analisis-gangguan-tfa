@@ -16,25 +16,123 @@ from ..schemas import (
     AIFaultFeatures, AIFaultResult,
 )
 from ..storage import load_analysis
+from ..ml_predict import run_ml_prediction, extract_ml_features
 
 router = APIRouter(prefix="/api/analyze/21", tags=["relay-21"])
 
 # Phase-to-channel mappings for each loop
 LOOP_CHANNELS = {
-    "ZA":  {"v": ["VA", "VAN", "UA"], "i": ["IA"]},
-    "ZB":  {"v": ["VB", "VBN", "UB"], "i": ["IB"]},
-    "ZC":  {"v": ["VC", "VCN", "UC"], "i": ["IC"]},
-    "ZAB": {"v": ["VAB", "UAB"], "i": ["IA", "IB"], "diff": True},
-    "ZBC": {"v": ["VBC", "UBC"], "i": ["IB", "IC"], "diff": True},
-    "ZCA": {"v": ["VCA", "UCA"], "i": ["IC", "IA"], "diff": True},
+    "ZA":  {"v": ["VA", "VAN", "UA"], "i": ["IA"], "phase": "A"},
+    "ZB":  {"v": ["VB", "VBN", "UB"], "i": ["IB"], "phase": "B"},
+    "ZC":  {"v": ["VC", "VCN", "UC"], "i": ["IC"], "phase": "C"},
+    "ZAB": {"v": ["VAB", "UAB"], "i": ["IA", "IB"], "diff": True, "phases": ("A", "B")},
+    "ZBC": {"v": ["VBC", "UBC"], "i": ["IB", "IC"], "diff": True, "phases": ("B", "C")},
+    "ZCA": {"v": ["VCA", "UCA"], "i": ["IC", "IA"], "diff": True, "phases": ("C", "A")},
 }
 
 
 def _find_channel(channels, candidates: list[str]) -> Optional[np.ndarray]:
     """Return samples for the first matching canonical name."""
+    wanted = {c.upper() for c in candidates}
     for ch in channels:
-        if ch["canonical_name"] in candidates or ch["name"].upper() in candidates:
-            return np.array(ch["samples"])
+        canonical = (ch.get("canonical_name") or "").upper()
+        name = (ch.get("name") or "").upper()
+        if canonical in wanted or name in wanted:
+            return np.array(ch["samples"], dtype=float)
+    return None
+
+
+def _secondary_impedance_scale(channels: list) -> float:
+    """Convert primary ohms to relay secondary ohms: Zsec = Zpri * CT_ratio / VT_ratio."""
+    vt_ratio = 1.0
+    ct_ratio = 1.0
+    for ch in channels:
+        measurement = ch.get("measurement")
+        primary = float(ch.get("ct_primary") or 1.0)
+        secondary = float(ch.get("ct_secondary") or 1.0)
+        if primary <= 0 or secondary <= 0:
+            continue
+        ratio = primary / secondary
+        if measurement == "voltage" and ratio > 1.0 and vt_ratio == 1.0:
+            vt_ratio = ratio
+        elif measurement == "current" and ratio > 1.0 and ct_ratio == 1.0:
+            ct_ratio = ratio
+
+    return (ct_ratio / vt_ratio) if vt_ratio > 0 else 1.0
+
+
+def _voltage_to_volts_scale(channels: list) -> float:
+    """COMTRADE parser stores power-system voltages in kV; impedance math needs volts."""
+    for ch in channels:
+        if ch.get("measurement") != "voltage":
+            continue
+        unit = (ch.get("unit") or "").strip().lower()
+        if unit == "kv":
+            return 1000.0
+        if unit == "mv":
+            return 1_000_000.0
+        return 1.0
+    return 1.0
+
+
+def _find_phase_voltage(channels, phase: str) -> Optional[np.ndarray]:
+    phase = phase.upper()
+    aliases = {phase}
+    if phase == "A":
+        aliases.update({"L1", "1"})
+    elif phase == "B":
+        aliases.update({"L2", "2"})
+    elif phase == "C":
+        aliases.update({"L3", "3"})
+
+    for ch in channels:
+        if ch.get("measurement") != "voltage":
+            continue
+        ch_phase = (ch.get("phase") or "").upper()
+        canonical = (ch.get("canonical_name") or "").upper()
+        name = (ch.get("name") or "").upper()
+        if ch_phase in aliases or any(canonical.endswith(alias) or name.endswith(alias) for alias in aliases):
+            return np.array(ch["samples"], dtype=float)
+    return None
+
+
+def _find_phase_current(channels, phase: str) -> Optional[np.ndarray]:
+    phase = phase.upper()
+    aliases = {phase}
+    if phase == "A":
+        aliases.update({"L1", "1"})
+    elif phase == "B":
+        aliases.update({"L2", "2"})
+    elif phase == "C":
+        aliases.update({"L3", "3"})
+
+    for ch in channels:
+        if ch.get("measurement") != "current":
+            continue
+        ch_phase = (ch.get("phase") or "").upper()
+        canonical = (ch.get("canonical_name") or "").upper()
+        name = (ch.get("name") or "").upper()
+        if ch_phase in aliases or any(canonical.endswith(alias) or name.endswith(alias) for alias in aliases):
+            return np.array(ch["samples"], dtype=float)
+    return None
+
+
+def _find_voltage_for_loop(channels, mapping: dict) -> Optional[np.ndarray]:
+    direct = _find_channel(channels, mapping["v"])
+    if direct is not None:
+        return direct.astype(float)
+
+    phase = mapping.get("phase")
+    if phase:
+        return _find_phase_voltage(channels, phase)
+
+    phases = mapping.get("phases")
+    if phases:
+        left = _find_phase_voltage(channels, phases[0])
+        right = _find_phase_voltage(channels, phases[1])
+        if left is not None and right is not None:
+            return left - right
+
     return None
 
 
@@ -42,12 +140,19 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
     channels = comtrade_data["analog_channels"]
     time = np.array(comtrade_data["time"])
     mapping = LOOP_CHANNELS.get(loop, LOOP_CHANNELS["ZA"])
+    voltage_scale = _voltage_to_volts_scale(channels)
+    secondary_scale = _secondary_impedance_scale(channels)
 
-    v = _find_channel(channels, mapping["v"])
+    v = _find_voltage_for_loop(channels, mapping)
     if v is None:
         raise HTTPException(status_code=422, detail=f"Could not find voltage channel for loop {loop}")
 
-    i_channels = [_find_channel(channels, [c]) for c in mapping["i"]]
+    i_channels = []
+    for candidate in mapping["i"]:
+        current = _find_channel(channels, [candidate])
+        if current is None and candidate.startswith("I") and len(candidate) >= 2:
+            current = _find_phase_current(channels, candidate[-1])
+        i_channels.append(current)
     i_channels = [c for c in i_channels if c is not None]
     if not i_channels:
         raise HTTPException(status_code=422, detail=f"Could not find current channel(s) for loop {loop}")
@@ -57,15 +162,12 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
     else:
         i = i_channels[0]
 
-    # Avoid division by zero
-    with np.errstate(divide="ignore", invalid="ignore"):
-        z = np.where(np.abs(i) > 0.01, v / i, np.nan + 1j * np.nan)
-
-    r = np.real(z) if np.iscomplexobj(z) else np.zeros_like(v)
-    x = np.imag(z) if np.iscomplexobj(z) else np.zeros_like(v)
-
-    # If signals are real (not complex analytic), compute instantaneous R/X via DFT window
-    if not np.iscomplexobj(z):
+    if np.iscomplexobj(v) or np.iscomplexobj(i):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            z = np.where(np.abs(i) > 0.01, (v * voltage_scale / i) * secondary_scale, np.nan + 1j * np.nan)
+        r = np.real(z)
+        x = np.imag(z)
+    else:
         freq = comtrade_data.get("frequency", 50.0)
         sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
         win = max(1, int(sr / freq))  # one cycle window
@@ -82,9 +184,9 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
                 i_90 = np.gradient(i_w) / (2 * np.pi * freq / sr)
                 A = np.column_stack([i_w, i_90])
                 try:
-                    coeffs, _, _, _ = np.linalg.lstsq(A, v_w, rcond=None)
-                    r_list.append(float(coeffs[0]))
-                    x_list.append(float(coeffs[1]))
+                    coeffs, _, _, _ = np.linalg.lstsq(A, v_w * voltage_scale, rcond=None)
+                    r_list.append(float(coeffs[0]) * secondary_scale)
+                    x_list.append(float(coeffs[1]) * secondary_scale)
                 except Exception:
                     r_list.append(float("nan"))
                     x_list.append(float("nan"))
@@ -96,7 +198,7 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
         rv, xv = float(r[k]), float(x[k])
         if np.isnan(rv) or np.isnan(xv):
             continue
-        if abs(rv) > 500 or abs(xv) > 500:
+        if abs(rv) > 1_000_000 or abs(xv) > 1_000_000:
             continue
         points.append({"t": float(time[k]), "r": rv, "x": xv})
 
@@ -196,6 +298,204 @@ def _extract_features_from_payload(payload: dict) -> dict:
     }
 
 
+def _compute_electrical_params(payload: dict) -> dict:
+    """Compute extended electrical parameters for the workspace panel."""
+    channels = payload.get("analog_channels", [])
+    time = np.array(payload.get("time", []))
+    freq = float(payload.get("frequency", 50.0))
+
+    ia = _find_phase_current(channels, "A")
+    ib = _find_phase_current(channels, "B")
+    ic = _find_phase_current(channels, "C")
+    va = _find_phase_voltage(channels, "A")
+    vb = _find_phase_voltage(channels, "B")
+    vc = _find_phase_voltage(channels, "C")
+
+    result: dict = {}
+    if len(time) < 4:
+        return result
+
+    sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
+    cycle_n = max(4, int(sr / freq))
+    i_ref = ia if ia is not None else (ib if ib is not None else ic)
+    pre_end = min(2 * cycle_n, len(i_ref) // 4) if i_ref is not None else 0
+    inception_idx = 0
+    extinction_idx = len(time) - 1
+
+    if i_ref is not None and pre_end > 1:
+        pre_rms = float(np.sqrt(np.mean(i_ref[:pre_end] ** 2)))
+        threshold = max(pre_rms * 2.0, np.max(np.abs(i_ref)) * 0.3, 0.05)
+        inception_idx = next(
+            (idx for idx in range(pre_end, len(i_ref)) if abs(i_ref[idx]) > threshold),
+            int(np.argmax(np.abs(i_ref))),
+        )
+        for idx in range(inception_idx + cycle_n, len(i_ref)):
+            start = max(0, idx - cycle_n // 2)
+            if float(np.sqrt(np.mean(i_ref[start : idx + 1] ** 2))) < threshold * 0.6:
+                extinction_idx = idx
+                break
+
+    fault_slice = slice(inception_idx, min(extinction_idx + 1, len(time)))
+
+    for label, arr in [("IA", ia), ("IB", ib), ("IC", ic)]:
+        if arr is not None and len(arr) > inception_idx:
+            result[f"i_peak_{label.lower()}_a"] = round(float(np.max(np.abs(arr[fault_slice]))), 2)
+
+    if va is not None and pre_end > 1:
+        v_pre_rms = float(np.sqrt(np.mean(va[:pre_end] ** 2)))
+        v_fault_rms = float(np.sqrt(np.mean(va[fault_slice] ** 2))) if len(va) > inception_idx else v_pre_rms
+        if v_pre_rms > 0:
+            result["v_sag_pct"] = round((1.0 - v_fault_rms / v_pre_rms) * 100, 1)
+
+    a_op = np.exp(1j * 2 * np.pi / 3)
+    a2_op = np.exp(-1j * 2 * np.pi / 3)
+
+    def rms_phasor(arr, idx, n):
+        if arr is None or idx + n > len(arr):
+            return None
+        seg = arr[idx : idx + n]
+        t_seg = np.arange(n) / sr
+        cos_ref = np.cos(2 * np.pi * freq * t_seg)
+        sin_ref = np.sin(2 * np.pi * freq * t_seg)
+        re = 2 * np.mean(seg * cos_ref)
+        im = -2 * np.mean(seg * sin_ref)
+        return complex(re, im) / np.sqrt(2)
+
+    p_i_a = rms_phasor(ia, inception_idx, cycle_n)
+    p_i_b = rms_phasor(ib, inception_idx, cycle_n)
+    p_i_c = rms_phasor(ic, inception_idx, cycle_n)
+
+    if p_i_a is not None and p_i_b is not None and p_i_c is not None:
+        i_zero = (p_i_a + p_i_b + p_i_c) / 3
+        i_pos = (p_i_a + a_op * p_i_b + a2_op * p_i_c) / 3
+        i_neg = (p_i_a + a2_op * p_i_b + a_op * p_i_c) / 3
+        result["i_pos_seq_a"] = round(abs(i_pos), 2)
+        result["i_neg_seq_a"] = round(abs(i_neg), 2)
+        result["i_zero_seq_a"] = round(abs(i_zero), 2)
+
+    if va is not None and ia is not None:
+        win = min(cycle_n, len(va) - inception_idx)
+        if win >= 4:
+            v_w = va[inception_idx : inception_idx + win] * 1000.0
+            i_w = ia[inception_idx : inception_idx + win]
+            i_90 = np.gradient(i_w) / (2 * np.pi * freq / sr)
+            matrix = np.column_stack([i_w, i_90])
+            try:
+                coeffs, _, _, _ = np.linalg.lstsq(matrix, v_w, rcond=None)
+                r_val = float(coeffs[0])
+                x_val = float(coeffs[1])
+                result["r_at_fault_ohm"] = round(r_val, 2)
+                result["x_at_fault_ohm"] = round(x_val, 2)
+                if x_val != 0:
+                    result["rx_ratio"] = round(r_val / x_val, 3)
+                z_mag = float(np.sqrt(r_val ** 2 + x_val ** 2))
+                result["z_at_inception_ohm"] = round(z_mag, 2)
+                if z_mag > 0:
+                    result["z_angle_deg"] = round(float(np.degrees(np.arctan2(x_val, r_val))), 1)
+            except Exception:
+                pass
+
+    ar_dead_ms = None
+    for sch in payload.get("status_channels", []):
+        name = sch.get("name", "").upper()
+        if any(key in name for key in ("AR", "RECLOSE", "RECLOS")):
+            samples = sch.get("samples", [])
+            close_idx = next((idx for idx in range(extinction_idx, len(samples)) if samples[idx] == 1), None)
+            if close_idx is not None and close_idx < len(time):
+                ar_dead_ms = round((time[close_idx] - time[extinction_idx]) * 1000, 1)
+            break
+    if ar_dead_ms is not None:
+        result["ar_dead_time_ms"] = ar_dead_ms
+
+    result["fault_duration_ms"] = round((time[extinction_idx] - time[inception_idx]) * 1000, 1)
+    result["inception_time_ms"] = round(float(time[inception_idx]) * 1000, 1)
+    return result
+
+
+def _compute_fault_classification(payload: dict) -> dict:
+    """Derive fault type code, phases, zone, trip and timing for the Jenis Gangguan panel."""
+    time = np.array(payload.get("time", []))
+    empty = {
+        "fault_code": "Unknown",
+        "phases": [],
+        "phases_label": "-",
+        "to_ground": False,
+        "trip_type": None,
+        "zone": None,
+        "prefault_ms": 0.0,
+        "fault_ms": 0.0,
+        "total_ms": 0.0,
+        "ar_status": None,
+    }
+    if len(time) < 4:
+        return empty
+
+    row = extract_ml_features(payload, "21")
+    total_ms = round(float((time[-1] - time[0]) * 1000), 1)
+    fault_ms = float(row.get("fault_duration_ms", 0) or 0)
+    prefault_ms = max(0.0, round(total_ms - fault_ms, 1))
+
+    phases_str = row.get("faulted_phases", "") or ""
+    phases = [phase for phase in phases_str.split("+") if phase]
+    to_ground = bool(row.get("is_ground_fault", False))
+    n_phases = len(phases)
+
+    if n_phases >= 3:
+        fault_code = "3Ph"
+    elif n_phases == 2 and to_ground:
+        fault_code = "DLG"
+    elif n_phases == 2:
+        fault_code = "LL"
+    elif n_phases == 1 and to_ground:
+        fault_code = "SLG"
+    else:
+        fault_code = "SL" if n_phases == 1 else "Unknown"
+
+    trip_type = row.get("trip_type") or None
+    if trip_type == "unknown":
+        trip_type = None
+    zone = row.get("zone_operated") or None
+
+    ar_ok = row.get("reclose_successful")
+    ar_status = "successful" if ar_ok is True else ("failed" if ar_ok is False else None)
+    phases_label = "+".join(phases) + ("-N" if to_ground and n_phases < 3 else "")
+
+    return {
+        "fault_code": fault_code,
+        "phases": phases,
+        "phases_label": phases_label if phases_label else "-",
+        "to_ground": to_ground,
+        "trip_type": trip_type,
+        "zone": zone,
+        "prefault_ms": prefault_ms,
+        "fault_ms": fault_ms,
+        "total_ms": total_ms,
+        "ar_status": ar_status,
+    }
+
+
+@router.get("/fault-classification")
+async def fault_classification(analysis_id: str):
+    """Classify fault type, phases, zone and trip for the Jenis Gangguan panel."""
+    payload = load_analysis(analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _compute_fault_classification, payload)
+    return result
+
+
+@router.get("/electrical-params")
+async def electrical_params(analysis_id: str):
+    """Compute extended electrical parameters for the fault analysis panel."""
+    payload = load_analysis(analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    loop = asyncio.get_event_loop()
+    params = await loop.run_in_executor(None, _compute_electrical_params, payload)
+    return params
+
+
 @router.get("/extract-features")
 async def extract_features(analysis_id: str):
     """Auto-extract fault features from stored COMTRADE data."""
@@ -228,88 +528,12 @@ async def compute_locus(body: LocusAnalysisRequest):
 
 @router.post("/ai-analysis", response_model=AIFaultResult)
 async def ai_fault_analysis(features: AIFaultFeatures):
-    """Run AI fault cause analysis for relay 21 (distance protection)."""
-    # Feature-based heuristic rules (ML model integration point)
-    scores: dict[str, float] = {
-        "PETIR": 0.0,
-        "LAYANG": 0.0,
-        "POHON": 0.0,
-        "HEWAN": 0.0,
-        "BENDA_ASING": 0.0,
-        "KONDUKTOR": 0.0,
-    }
-    evidence: list[str] = []
-
-    fia = features.fault_inception_angle_deg
-    dur = features.fault_duration_ms
-    asym = features.waveform_asymmetry
-    dc = features.dc_offset
-
-    # High DC offset + fault near voltage zero-crossing → lightning signature
-    if abs(dc) > 0.3 and (abs(fia) < 30 or abs(fia) > 150):
-        scores["PETIR"] += 0.4
-        evidence.append(f"High DC offset ({dc:.2f}) with fault near voltage zero-crossing (FIA={fia:.1f}°) — lightning signature")
-
-    # Very short fault duration → likely transient (lightning, kite)
-    if dur < 100:
-        scores["PETIR"] += 0.2
-        scores["LAYANG"] += 0.15
-        evidence.append(f"Short fault duration ({dur:.0f} ms) — consistent with transient cause")
-
-    # High waveform asymmetry → conductor damage or tree
-    if asym > 0.5:
-        scores["POHON"] += 0.25
-        scores["KONDUKTOR"] += 0.2
-        evidence.append(f"High waveform asymmetry ({asym:.2f}) — possible conductor/vegetation contact")
-
-    # Long fault → permanent (tree, conductor)
-    if dur > 500:
-        scores["POHON"] += 0.3
-        scores["KONDUKTOR"] += 0.25
-        fault_type = "permanent"
-        evidence.append(f"Long fault duration ({dur:.0f} ms) — permanent fault indicator")
-    else:
-        fault_type = "transient"
-
-    # AR result
-    if features.ar_result == "successful":
-        scores["PETIR"] += 0.15
-        scores["LAYANG"] += 0.15
-        evidence.append("Successful auto-reclose — supports transient fault classification")
-    elif features.ar_result == "failed":
-        scores["POHON"] += 0.2
-        scores["KONDUKTOR"] += 0.2
-        fault_type = "permanent"
-        evidence.append("Failed auto-reclose — supports permanent fault classification")
-
-    # Normalise
-    total = sum(scores.values()) or 1.0
-    ranking = sorted(
-        [
-            {
-                "cause": k,
-                "label_id": k,
-                "label": {
-                    "PETIR": "Petir / Lightning",
-                    "LAYANG": "Layang-Layang / Kite",
-                    "POHON": "Pohon / Vegetasi",
-                    "HEWAN": "Hewan / Binatang",
-                    "BENDA_ASING": "Benda Asing",
-                    "KONDUKTOR": "Konduktor / Tower",
-                }.get(k, k),
-                "confidence": round(v / total, 3),
-            }
-            for k, v in scores.items()
-        ],
-        key=lambda x: x["confidence"],
-        reverse=True,
-    )
-
-    overall_confidence = ranking[0]["confidence"] if ranking else 0.0
-
-    return AIFaultResult(
-        cause_ranking=ranking,
-        fault_type=fault_type,
-        overall_confidence=overall_confidence,
-        evidence=evidence,
-    )
+    """Run LightGBM fault cause analysis for relay 21 (distance protection)."""
+    if not features.analysis_id:
+        raise HTTPException(status_code=422, detail="analysis_id is required for AI analysis.")
+    payload = load_analysis(features.analysis_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Analysis session not found or expired.")
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, run_ml_prediction, payload, "21")
+    return AIFaultResult(**result)

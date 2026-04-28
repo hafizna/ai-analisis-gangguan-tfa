@@ -83,7 +83,7 @@ class ComtradeRecord:
     rec_dev_id: str            # Relay model identifier
     rev_year: str              # COMTRADE revision year
     sampling_rates: List[tuple]  # List of (rate_hz, end_sample) tuples
-    trigger_time: float        # Trigger timestamp (seconds since epoch, or 0 if unknown)
+    trigger_time: float        # Trigger offset from recording start in seconds (0 if unknown)
     total_samples: int
     frequency: float           # Nominal frequency (should be 50 Hz for Indonesia)
 
@@ -177,13 +177,22 @@ def parse_comtrade(cfg_path: str, dat_path: Optional[str] = None) -> Optional[Co
                     logger.warning(f"Unexpected sample_rates format: {rate_info}")
                     warnings.append(f"Unexpected sample rate format")
 
-        # Get trigger time
+        # Get trigger offset from recording start (seconds).
+        # The comtrade library stores start_time / trigger_time as datetime objects;
+        # float(datetime) raises TypeError which we handle here.
         trigger_time = 0.0
-        if hasattr(com, 'trigger_time'):
+        if hasattr(com, 'start_time') and hasattr(com, 'trigger_time'):
             try:
-                trigger_time = float(com.trigger_time)
-            except (ValueError, TypeError):
-                warnings.append("Could not parse trigger time")
+                from datetime import datetime as _dt
+                st, tt = com.start_time, com.trigger_time
+                if isinstance(st, _dt) and isinstance(tt, _dt):
+                    offset = (tt - st).total_seconds()
+                    if offset >= 0:
+                        trigger_time = offset
+                elif isinstance(tt, (int, float)):
+                    trigger_time = float(tt)
+            except Exception:
+                warnings.append("Could not parse trigger time offset")
 
         # Get frequency
         frequency = 50.0  # Default for Indonesia
@@ -372,11 +381,17 @@ def _parse_analog_channels(com: Comtrade, manufacturer: str, warnings: List[str]
             # inflate them by another 1000–4000×.
             if pors == 'S' and ct_primary > 0 and ct_secondary > 0 and ct_primary != ct_secondary:
                 max_abs = float(np.max(np.abs(samples_primary))) if len(samples_primary) > 0 else 0.0
-                already_primary = max_abs > ct_secondary * 10
+                # Guard: some relays (e.g. NARI/NR PCS-9xx) embed the full CT/VT
+                # ratio inside `a` but still write PS='S'. Their samples will already
+                # be in primary-magnitude territory (>> ct_primary/2).
+                # Using ct_primary*0.5 as the threshold correctly handles relays like
+                # Sifang CSC-101M where secondary=1 but nominal secondary voltage is
+                # ~58V — the old ct_secondary*10 threshold (=10V) fired too easily.
+                already_primary = max_abs > ct_primary * 0.5
                 if already_primary:
                     warnings.append(
                         f"Channel {ch_name}: pors=S but max value ({max_abs:.1f}) >> "
-                        f"secondary range ({ct_secondary:.1f}×10) — skipping ratio "
+                        f"primary/2 ({ct_primary * 0.5:.1f}) — skipping ratio "
                         f"conversion (a-factor already encodes primary units)"
                     )
                 else:

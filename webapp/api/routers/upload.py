@@ -11,8 +11,16 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from core.comtrade_parser import ComtradeRecord, parse_comtrade
+from core.protection_router import ProtectionType, determine_protection
 from ..schemas import AnalysisCreatedResponse, AnalysisSummaryOut, ComtradeOut, RecalcByIdRequest
 from ..storage import load_analysis, save_analysis, update_analysis
+
+_PROTECTION_TO_RELAY: dict[ProtectionType, str] = {
+    ProtectionType.DISTANCE: "21",
+    ProtectionType.DIFFERENTIAL: "87L",
+    ProtectionType.TRANSFORMER_DIFF: "87T",
+    ProtectionType.OVERCURRENT: "OCR",
+}
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -145,6 +153,18 @@ async def upload_comtrade(
 
     payload = _record_to_out(record)
     analysis_id = save_analysis(payload)
+
+    suggested_relay_type: str | None = None
+    detection_confidence: float | None = None
+    try:
+        event = determine_protection(record)
+        mapped = _PROTECTION_TO_RELAY.get(event.primary_protection)
+        if mapped and event.confidence >= 0.7:
+            suggested_relay_type = mapped
+            detection_confidence = event.confidence
+    except Exception:
+        pass
+
     return AnalysisCreatedResponse(
         analysis_id=analysis_id,
         station_name=payload["station_name"],
@@ -152,6 +172,8 @@ async def upload_comtrade(
         total_samples=payload["total_samples"],
         analog_channel_count=len(payload["analog_channels"]),
         status_channel_count=len(payload["status_channels"]),
+        suggested_relay_type=suggested_relay_type,
+        detection_confidence=detection_confidence,
     )
 
 

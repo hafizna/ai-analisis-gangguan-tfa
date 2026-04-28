@@ -44,6 +44,8 @@ class AnalysisCreatedResponse(BaseModel):
     total_samples: int
     analog_channel_count: int
     status_channel_count: int
+    suggested_relay_type: Optional[str] = None   # auto-detected from status channels, None if unknown
+    detection_confidence: Optional[float] = None
 
 
 class AnalysisRequestBase(BaseModel):
@@ -128,6 +130,11 @@ class LocusRequest(BaseModel):
 class LocusAnalysisRequest(AnalysisRequestBase):
     zones: List[ZoneConfig] = []
     loop: str = "ZA"
+    k0: float = 0.0
+    k0_angle_deg: float = 0.0
+    invert_i: bool = False
+    ct_ratio_override: Optional[float] = None
+    vt_ratio_override: Optional[float] = None
 
 
 class LocusPoint(BaseModel):
@@ -144,6 +151,7 @@ class LocusResponse(BaseModel):
 
 
 class AIFaultFeatures(BaseModel):
+    analysis_id: Optional[str] = None
     fault_inception_angle_deg: float
     fault_duration_ms: float
     prefault_load_a: float

@@ -81,7 +81,7 @@ from models.predict import (
     _transient_recommendation,
 )
 from models.rules import apply_rules
-from core.comtrade_parser import parse_comtrade
+from core.comtrade_parser import parse_comtrade, _windows_long_path
 from core.rio_parser import parse_rio_text_to_relay_data
 from core.path_heuristics import (
     infer_path_kind,
@@ -1437,6 +1437,7 @@ def _build_analysis_payload(result, original_filename: str, ts: str, cfg_path: s
     analysis_payload["locus_data"] = _build_locus_payload(
         str(cfg_path),
         analysis_payload["fault_inception_ms"],
+        analysis_payload["fault_duration_ms"],
         ct_primary=analysis_payload.get("ratio_base_ct_primary"),
         ct_secondary=analysis_payload.get("ratio_base_ct_secondary"),
         vt_primary=analysis_payload.get("ratio_base_vt_primary"),
@@ -2208,6 +2209,7 @@ def _find_nearby_rio(cfg_path: str):
 def _build_locus_payload(
     cfg_path: str,
     inception_ms: float = 0.0,
+    duration_ms: float = 0.0,
     ct_primary: float = None,
     ct_secondary: float = None,
     vt_primary: float = None,
@@ -2319,7 +2321,8 @@ def _build_locus_payload(
         mag = np.abs(ic)
         safe = np.where(mag > MIN_I, ic, np.ones(m, dtype=complex))
         with np.errstate(divide="ignore", invalid="ignore"):
-            return np.where(mag > MIN_I, vp[ph] / safe, np.nan + 0j)
+            z = np.where(mag > MIN_I, vp[ph] / safe, np.nan + 0j)
+        return z, mag, MIN_I
 
     def z_pp(p1: str, p2: str):
         if not (p1 in vp and p2 in vp and p1 in ip and p2 in ip):
@@ -2328,24 +2331,99 @@ def _build_locus_payload(
         mag = np.abs(id_)
         safe = np.where(mag > MIN_I_PP, id_, np.ones(m, dtype=complex))
         with np.errstate(divide="ignore", invalid="ignore"):
-            return np.where(mag > MIN_I_PP, (vp[p1] - vp[p2]) / safe, np.nan + 0j)
+            z = np.where(mag > MIN_I_PP, (vp[p1] - vp[p2]) / safe, np.nan + 0j)
+        return z, mag, MIN_I_PP
 
     # Time axis relative to inception
     t_ms = t_s * 1000.0
-    t0 = float(inception_ms) if inception_ms else float(t_ms[0])
-    t_out = (t_ms[out_idx] - t0).tolist()
+    has_event_t0 = bool(inception_ms)
+    t0 = float(inception_ms) if has_event_t0 else float(t_ms[0])
+    t_out_arr = t_ms[out_idx] - t0
+    t_out = t_out_arr.tolist()
+    settle_ms = (1000.0 / freq) * 0.5 if has_event_t0 else 0.0
+    fault_duration_ms = max(0.0, float(duration_ms or 0.0))
 
     CLIP = 1500.0  # Ohms — clip extreme pre-fault load impedance outliers
 
-    def serialize(z_arr):
-        if z_arr is None:
-            return None
+    def _median_smooth(values: "np.ndarray", ok: "np.ndarray", half_window: int = 1) -> "np.ndarray":
+        """Small display-only median smoother; NaNs still break noisy segments."""
+        out = values.copy()
+        idx = np.flatnonzero(ok)
+        for i in idx:
+            lo = max(0, i - half_window)
+            hi = min(len(values), i + half_window + 1)
+            w = values[lo:hi]
+            w = w[np.isfinite(w)]
+            if len(w):
+                out[i] = float(np.median(w))
+        return out
+
+    def _quality_mask(z_arr: "np.ndarray", current_mag: "np.ndarray", min_current: float):
         r, x = np.real(z_arr), np.imag(z_arr)
         ok = (np.abs(r) < CLIP) & (np.abs(x) < CLIP) & np.isfinite(r) & np.isfinite(x)
-        r, x = np.where(ok, r, np.nan), np.where(ok, x, np.nan)
+
+        mag = np.asarray(current_mag, dtype=float)
+        mag_pos = mag[np.isfinite(mag) & (mag > 0)]
+        mag_floor = float(min_current)
+        if len(mag_pos):
+            # Reject denominator collapses that create vertical "needles" near zero current.
+            mag_floor = max(mag_floor, 0.015 * float(np.percentile(mag_pos, 95)))
+        ok &= np.isfinite(mag) & (mag >= mag_floor)
+        if settle_ms > 0:
+            # Sliding phasors during inception contain mixed pre-fault/fault samples.
+            ok &= ~((t_out_arr >= 0.0) & (t_out_arr < settle_ms))
+            if fault_duration_ms > 0:
+                ok &= ~((t_out_arr >= fault_duration_ms) & (t_out_arr < fault_duration_ms + settle_ms))
+
+        finite_z = z_arr[ok]
+        if len(finite_z) >= 8:
+            steps = np.abs(np.diff(np.where(ok, z_arr, np.nan + 0j)))
+            step_vals = steps[np.isfinite(steps)]
+            if len(step_vals):
+                med = float(np.median(step_vals))
+                mad = float(np.median(np.abs(step_vals - med)))
+                z_abs = np.abs(finite_z)
+                z_scale = float(np.percentile(z_abs, 90)) if len(z_abs) else 0.0
+                jump_limit = max(20.0, med + 10.0 * mad, 0.04 * z_scale)
+                jump_limit = min(jump_limit, 0.35 * CLIP)
+                large_jump = steps > jump_limit
+                if np.any(large_jump):
+                    # Mark the arriving sample as invalid so Plotly breaks the segment.
+                    bad = np.zeros(len(ok), dtype=bool)
+                    bad[1:] = large_jump
+                    ok &= ~bad
+
+        if len(ok) >= 3:
+            isolated = ok.copy()
+            isolated[1:-1] = ok[1:-1] & ~ok[:-2] & ~ok[2:]
+            isolated[0] = ok[0] and not ok[1]
+            isolated[-1] = ok[-1] and not ok[-2]
+            ok &= ~isolated
+
+        return ok, mag_floor
+
+    def serialize(z_pack):
+        if z_pack is None:
+            return None
+        z_arr, current_mag, min_current = z_pack
+        r, x = np.real(z_arr), np.imag(z_arr)
+        raw_ok = (np.abs(r) < CLIP) & (np.abs(x) < CLIP) & np.isfinite(r) & np.isfinite(x)
+        ok, mag_floor = _quality_mask(z_arr, current_mag, min_current)
+        r = _median_smooth(np.where(ok, r, np.nan), ok)
+        x = _median_smooth(np.where(ok, x, np.nan), ok)
         def _lst(a):
             return [None if not np.isfinite(v) else round(float(v), 3) for v in a]
-        return {"r": _lst(r), "x": _lst(x)}
+        return {
+            "r": _lst(r),
+            "x": _lst(x),
+            "quality": {
+                "raw_points": int(np.sum(raw_ok)),
+                "kept_points": int(np.sum(ok)),
+                "current_floor": round(float(mag_floor), 6),
+                "settle_ms": round(float(settle_ms), 3),
+                "clearing_ms": round(float(fault_duration_ms), 3),
+            },
+        }
 
     loops = {}
     for name, z_arr in [
@@ -2370,7 +2448,7 @@ def _build_locus_payload(
         if rio_path:
             from pathlib import Path
             kind = "xrio" if rio_path.lower().endswith(".xrio") else "rio"
-            text = Path(rio_path).read_text(errors="replace")
+            text = Path(_windows_long_path(rio_path)).read_text(errors="replace")
             parsed = parse_rio_text_to_relay_data(text) if kind == "rio" else None
             relay_hint = {
                 "kind": kind,
@@ -2390,6 +2468,7 @@ def _build_locus_payload(
             "kscale": round(KSCALE, 6),
             "ohm_domain": "secondary" if KSCALE != 1000.0 else "primary",
             "residual_source": residual_source,
+            "locus_filter": "current_floor+half_cycle_settle+jump_break+median3",
         },
         "relay_hint": relay_hint,
     }
@@ -2709,6 +2788,7 @@ def analyze_from_browse():
     analysis_payload["locus_data"] = _build_locus_payload(
         str(cfg_path),
         analysis_payload["fault_inception_ms"],
+        analysis_payload["fault_duration_ms"],
         ct_primary=analysis_payload.get("ratio_base_ct_primary"),
         ct_secondary=analysis_payload.get("ratio_base_ct_secondary"),
         vt_primary=analysis_payload.get("ratio_base_vt_primary"),
@@ -2899,6 +2979,7 @@ def recalculate_with_ratio():
         updated["locus_data"] = _build_locus_payload(
             cfg_path,
             updated.get("fault_inception_ms"),
+            updated.get("fault_duration_ms"),
             ct_primary=ct_p,
             ct_secondary=ct_s,
             vt_primary=vt_p,
@@ -3009,6 +3090,7 @@ def api_rebuild_locus():
     locus = _build_locus_payload(
         cfg_path,
         analysis.get("fault_inception_ms"),
+        analysis.get("fault_duration_ms"),
         ct_primary=analysis.get("ratio_base_ct_primary"),
         ct_secondary=analysis.get("ratio_base_ct_secondary"),
         vt_primary=analysis.get("ratio_base_vt_primary"),

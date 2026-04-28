@@ -133,6 +133,8 @@
         return chs.map(ch => ({
             x: ch.x.slice(),
             y: ch.y.slice(),
+            name: channelLabel(ch),
+            unit: ch.unit || '',
             locked: false
         }));
     }
@@ -283,6 +285,14 @@
     });
     const digitalMaxLabelLen = digitalTickText.reduce((maxLen, label) => Math.max(maxLen, label.length), 0);
     const digitalLeftMargin = Math.min(260, Math.max(130, 78 + digitalMaxLabelLen * 5));
+    const digitalState = (wf.digital || []).map(ch => ({
+        x: (ch.x || []).slice(),
+        y: (ch.y || []).slice(),
+        name: ch.name || ch.id || 'Digital',
+        unit: 'state',
+        locked: false,
+        digital: true
+    }));
     const digitalTraces = (wf.digital || []).map((ch, idx) => {
         const offset = (digitalCount - 1 - idx) * digitalRowGap;
         return {
@@ -609,6 +619,7 @@
 
     let activeMeasure = 'current';
     let activeCurrentGroupKey = currentDefsWithPlots()[0]?.key || 'current_hv';
+    let activeDigitalTrace = 0;
     function setMeasure(mode, currentKey) {
         activeMeasure = mode;
         if (mode === 'current' && currentKey) {
@@ -625,13 +636,18 @@
     if (measureVoltageBtn) measureVoltageBtn.addEventListener('click', () => setMeasure('voltage'));
 
     function getActivePlot() {
+        if (activeMeasure === 'digital') return digitalPlot;
         return activeMeasure === 'voltage' ? voltagePlot : getCurrentPlotRef(activeCurrentGroupKey);
     }
     function getActiveState() {
+        if (activeMeasure === 'digital') return digitalState;
         return activeMeasure === 'voltage' ? vState : getCurrentStateRef(activeCurrentGroupKey);
     }
 
     function getActiveTraceIndex(plotRef) {
+        if (plotRef === digitalPlot) {
+            return Math.min(Math.max(activeDigitalTrace || 0, 0), Math.max(0, digitalState.length - 1));
+        }
         if (!plotRef || !plotRef.data) return 0;
         const visible = plotRef.data
             .map((t, i) => ({ t, i }))
@@ -663,17 +679,23 @@
         const xArr = st.x;
         const yArr = st.y;
         const unitSuffix = st.unit ? ` (${st.unit})` : '';
+        const isDigital = activeMeasure === 'digital' || st.digital;
 
         function valAt(x) {
             if (x === null || xArr.length === 0) return null;
             const i = nearestIndex(xArr, x);
-            return { x: xArr[i], y: yArr[i] };
+            return { x: xArr[i], y: yArr[i], name: st.name || 'Digital' };
         }
 
         const a = valAt(cursor.c1);
         const b = valAt(cursor.c2);
-        cursorAEl.textContent = a ? `${fmt(a.x, 2)} ms | ${fmt(a.y, 3)}${unitSuffix}` : '-';
-        cursorBEl.textContent = b ? `${fmt(b.x, 2)} ms | ${fmt(b.y, 3)}${unitSuffix}` : '-';
+        function cursorText(v) {
+            if (!v) return '-';
+            if (isDigital) return `${fmt(v.x, 2)} ms | ${v.name} = ${Number(v.y) ? 'ON' : 'OFF'}`;
+            return `${fmt(v.x, 2)} ms | ${fmt(v.y, 3)}${unitSuffix}`;
+        }
+        cursorAEl.textContent = cursorText(a);
+        cursorBEl.textContent = cursorText(b);
         if (deltaYLabelEl) {
             deltaYLabelEl.textContent = activeMeasure === 'voltage' ? `ΔV${unitSuffix}:` : `ΔI${unitSuffix}:`;
         }
@@ -684,6 +706,38 @@
             deltaTEl.textContent = '-';
             deltaYEl.textContent = '-';
         }
+        if (isDigital) {
+            if (deltaYLabelEl) deltaYLabelEl.textContent = 'Delta state:';
+            if (a && b) deltaYEl.textContent = `${Math.abs(Number(b.y) - Number(a.y))}`;
+        }
+    }
+
+    function digitalCursorAnnotations() {
+        const ann = [];
+        if (!digitalPlot) return ann;
+        if (cursor.c1 !== null) {
+            ann.push({
+                x: cursor.c1, y: 1, xref: 'x', yref: 'paper',
+                text: `C1 ${fmt(cursor.c1, 2)} ms`,
+                showarrow: true, arrowhead: 0, ax: 0, ay: -24,
+                font: { size: 10, color: '#22c55e' },
+                bgcolor: 'rgba(15,23,42,0.86)',
+                bordercolor: '#22c55e',
+                borderpad: 3
+            });
+        }
+        if (cursor.c2 !== null) {
+            ann.push({
+                x: cursor.c2, y: 1, xref: 'x', yref: 'paper',
+                text: `C2 ${fmt(cursor.c2, 2)} ms`,
+                showarrow: true, arrowhead: 0, ax: 0, ay: -42,
+                font: { size: 10, color: '#e11d48' },
+                bgcolor: 'rgba(15,23,42,0.86)',
+                bordercolor: '#e11d48',
+                borderpad: 3
+            });
+        }
+        return ann;
     }
 
     function drawCursors() {
@@ -698,20 +752,21 @@
         currentDefsWithPlots().forEach(def => {
             if (def.plot) Plotly.relayout(def.plot, { shapes });
         });
-        if (digitalPlot) Plotly.relayout(digitalPlot, { shapes });
+        if (digitalPlot) Plotly.relayout(digitalPlot, { shapes, annotations: digitalCursorAnnotations() });
         setActiveCursor(cursor.active);
         updateCursorReadout();
     }
 
     // Cursor placement: track last hovered x via plotly_hover, then place on div click.
     // This works anywhere on the plot area (not just exactly on a data point).
-    const lastHoveredX = { voltage: null, current_hv: null, current_lv: null, current_diff: null };
+    const lastHoveredX = { voltage: null, current_hv: null, current_lv: null, current_diff: null, digital: null };
 
     function _placeCursor(plotName, cursorSlot) {
         const x = lastHoveredX[plotName];
         if (x === null || x === undefined) return;
         if (cursorSlot === 2) cursor.c2 = x; else cursor.c1 = x;
-        setMeasure(plotName === 'voltage' ? 'voltage' : 'current', plotName);
+        if (plotName === 'digital') setMeasure('digital');
+        else setMeasure(plotName === 'voltage' ? 'voltage' : 'current', plotName);
         drawCursors();
     }
 
@@ -740,6 +795,15 @@
         });
         def.plot.addEventListener('click', e => _placeCursor(def.key, e.shiftKey ? 2 : cursor.active));
     });
+    if (digitalPlot && digitalTraces.length) {
+        bindPlotlyEvent(digitalPlot, 'plotly_hover', ev => {
+            if (ev.points && ev.points.length) {
+                lastHoveredX.digital = ev.points[0].x;
+                activeDigitalTrace = ev.points[0].curveNumber || 0;
+            }
+        });
+        digitalPlot.addEventListener('click', e => _placeCursor('digital', e.shiftKey ? 2 : cursor.active));
+    }
 
     if (cursorResetBtn) {
         cursorResetBtn.addEventListener('click', () => {
