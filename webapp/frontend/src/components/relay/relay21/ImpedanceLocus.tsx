@@ -168,6 +168,76 @@ function parseTripCharPolygon(block: string) {
   return points.length >= 3 ? points : null;
 }
 
+function clipShapeByRioLines(shapeText: string) {
+  const lines = Array.from(
+    shapeText.matchAll(
+      /^\s*LINE\s+([+-]?\d[\d.eE+-]*),\s*([+-]?\d[\d.eE+-]*),\s*([+-]?\d[\d.eE+-]*),\s*(LEFT|RIGHT)\b/gim
+    )
+  ).map((match) => ({
+    r: Number.parseFloat(match[1]),
+    x: Number.parseFloat(match[2]),
+    angleDeg: Number.parseFloat(match[3]),
+    side: match[4].toUpperCase() as "LEFT" | "RIGHT",
+  }));
+
+  if (lines.length < 2) return null;
+
+  const anchors = lines.flatMap((line) => [Math.abs(line.r), Math.abs(line.x)]).filter(Number.isFinite);
+  const extent = Math.max(100, ...anchors) * 4;
+  let poly = [
+    { r: -extent, x: -extent },
+    { r: extent, x: -extent },
+    { r: extent, x: extent },
+    { r: -extent, x: extent },
+  ];
+
+  const signedDistance = (point: { r: number; x: number }, line: (typeof lines)[number]) => {
+    const rad = (line.angleDeg * Math.PI) / 180;
+    const dirR = Math.cos(rad);
+    const dirX = Math.sin(rad);
+    return dirR * (point.x - line.x) - dirX * (point.r - line.r);
+  };
+
+  const isInside = (point: { r: number; x: number }, line: (typeof lines)[number]) => {
+    const value = signedDistance(point, line);
+    return line.side === "LEFT" ? value >= -1e-9 : value <= 1e-9;
+  };
+
+  for (const line of lines) {
+    const next: { r: number; x: number }[] = [];
+    for (let idx = 0; idx < poly.length; idx += 1) {
+      const current = poly[idx];
+      const previous = poly[(idx + poly.length - 1) % poly.length];
+      const currentInside = isInside(current, line);
+      const previousInside = isInside(previous, line);
+
+      if (currentInside !== previousInside) {
+        const prevDistance = signedDistance(previous, line);
+        const currentDistance = signedDistance(current, line);
+        const denom = prevDistance - currentDistance;
+        if (Math.abs(denom) > 1e-12) {
+          const t = prevDistance / denom;
+          next.push({
+            r: previous.r + (current.r - previous.r) * t,
+            x: previous.x + (current.x - previous.x) * t,
+          });
+        }
+      }
+
+      if (currentInside) next.push(current);
+    }
+    poly = next;
+    if (poly.length < 3) return null;
+  }
+
+  const deduped = poly.filter((point, idx) => {
+    const prev = poly[(idx + poly.length - 1) % poly.length];
+    return Math.hypot(point.r - prev.r, point.x - prev.x) > 1e-6;
+  });
+
+  return deduped.length >= 3 ? deduped : null;
+}
+
 function parseSifangRIO(text: string): ImportedRelayData | null {
   if (!/BEGIN\s+TESTOBJECT/i.test(text)) return null;
 
@@ -192,14 +262,8 @@ function parseSifangRIO(text: string): ImportedRelayData | null {
     const faultloop = loopMatch[1].toUpperCase();
     const shapeText = shapeMatch[1];
 
-    // Each LINE has: r, x, angle, direction — first two are (R, X) polygon vertices
-    const lineRe = /^\s*LINE\s+([+-]?\d[\d.eE+-]*),\s*([+-]?\d[\d.eE+-]*)/gm;
-    const poly: { r: number; x: number }[] = [];
-    let lm: RegExpExecArray | null;
-    while ((lm = lineRe.exec(shapeText)) !== null) {
-      poly.push({ r: parseFloat(lm[1]), x: parseFloat(lm[2]) });
-    }
-    if (poly.length < 3) continue;
+    const poly = clipShapeByRioLines(shapeText);
+    if (!poly || poly.length < 3) continue;
 
     const zone: ImportedZone = { label, shapeType: "poly", poly };
     if (faultloop === "LN") {
@@ -448,19 +512,10 @@ function loopTrace(loop: LoopName, points: LocusPoint[]): Partial<Plotly.Scatter
   // medianGap*1.8 is too tight — it fragments locus during inception settling (10ms gap at 1kHz).
   // Use max(medianGap*8, 0.04s) so we only break on genuine multi-cycle discontinuities.
   const gapThreshold = Math.max(medianGap * 8, 0.04);
-  const distances = points
-    .slice(1)
-    .map((point, idx) => Math.hypot(point.r - points[idx].r, point.x - points[idx].x))
-    .filter((distance) => Number.isFinite(distance) && distance > 0);
-  const medianDistance = distances.length
-    ? [...distances].sort((a, b) => a - b)[Math.floor(distances.length / 2)]
-    : 0;
-  const jumpThreshold = Math.max(35, medianDistance * 8);
   points.forEach((point, idx) => {
     const prev = points[idx - 1];
     const timeGap = idx > 0 && medianGap > 0 && point.t - prev.t > gapThreshold;
-    const spatialJump = idx > 0 && Math.hypot(point.r - prev.r, point.x - prev.x) > jumpThreshold;
-    if (timeGap || spatialJump) {
+    if (timeGap) {
       xVals.push(null);
       yVals.push(null);
       tVals.push(null);
@@ -630,7 +685,7 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
   const [playing, setPlaying] = useState(false);
   const [k0Mag, setK0Mag] = useState(0.0);
   const [k0Ang, setK0Ang] = useState(0.0);
-  const [invertI, setInvertI] = useState(false);
+  const [invertI] = useState(false);
   const [ctRatioOverride, setCtRatioOverride] = useState<number | null>(null);
   const [vtRatioOverride, setVtRatioOverride] = useState<number | null>(null);
   const rioInputRef = useRef<HTMLInputElement>(null);

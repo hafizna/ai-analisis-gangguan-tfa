@@ -42,6 +42,39 @@ def _find_channel(channels, candidates: list[str]) -> Optional[np.ndarray]:
     return None
 
 
+def _secondary_impedance_scale(channels: list) -> float:
+    """Convert primary ohms to relay secondary ohms: Zsec = Zpri * CT_ratio / VT_ratio."""
+    vt_ratio = 1.0
+    ct_ratio = 1.0
+    for ch in channels:
+        measurement = ch.get("measurement")
+        primary = float(ch.get("ct_primary") or 1.0)
+        secondary = float(ch.get("ct_secondary") or 1.0)
+        if primary <= 0 or secondary <= 0:
+            continue
+        ratio = primary / secondary
+        if measurement == "voltage" and ratio > 1.0 and vt_ratio == 1.0:
+            vt_ratio = ratio
+        elif measurement == "current" and ratio > 1.0 and ct_ratio == 1.0:
+            ct_ratio = ratio
+
+    return (ct_ratio / vt_ratio) if vt_ratio > 0 else 1.0
+
+
+def _voltage_to_volts_scale(channels: list) -> float:
+    """COMTRADE parser stores power-system voltages in kV; impedance math needs volts."""
+    for ch in channels:
+        if ch.get("measurement") != "voltage":
+            continue
+        unit = (ch.get("unit") or "").strip().lower()
+        if unit == "kv":
+            return 1000.0
+        if unit == "mv":
+            return 1_000_000.0
+        return 1.0
+    return 1.0
+
+
 def _find_phase_voltage(channels, phase: str) -> Optional[np.ndarray]:
     phase = phase.upper()
     aliases = {phase}
@@ -107,6 +140,8 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
     channels = comtrade_data["analog_channels"]
     time = np.array(comtrade_data["time"])
     mapping = LOOP_CHANNELS.get(loop, LOOP_CHANNELS["ZA"])
+    voltage_scale = _voltage_to_volts_scale(channels)
+    secondary_scale = _secondary_impedance_scale(channels)
 
     v = _find_voltage_for_loop(channels, mapping)
     if v is None:
@@ -129,7 +164,7 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
 
     if np.iscomplexobj(v) or np.iscomplexobj(i):
         with np.errstate(divide="ignore", invalid="ignore"):
-            z = np.where(np.abs(i) > 0.01, v / i, np.nan + 1j * np.nan)
+            z = np.where(np.abs(i) > 0.01, (v * voltage_scale / i) * secondary_scale, np.nan + 1j * np.nan)
         r = np.real(z)
         x = np.imag(z)
     else:
@@ -149,9 +184,9 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
                 i_90 = np.gradient(i_w) / (2 * np.pi * freq / sr)
                 A = np.column_stack([i_w, i_90])
                 try:
-                    coeffs, _, _, _ = np.linalg.lstsq(A, v_w, rcond=None)
-                    r_list.append(float(coeffs[0]))
-                    x_list.append(float(coeffs[1]))
+                    coeffs, _, _, _ = np.linalg.lstsq(A, v_w * voltage_scale, rcond=None)
+                    r_list.append(float(coeffs[0]) * secondary_scale)
+                    x_list.append(float(coeffs[1]) * secondary_scale)
                 except Exception:
                     r_list.append(float("nan"))
                     x_list.append(float("nan"))
@@ -163,7 +198,7 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
         rv, xv = float(r[k]), float(x[k])
         if np.isnan(rv) or np.isnan(xv):
             continue
-        if abs(rv) > 500 or abs(xv) > 500:
+        if abs(rv) > 1_000_000 or abs(xv) > 1_000_000:
             continue
         points.append({"t": float(time[k]), "r": rv, "x": xv})
 
