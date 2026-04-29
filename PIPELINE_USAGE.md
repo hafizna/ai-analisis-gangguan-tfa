@@ -62,21 +62,28 @@ python batch_extract.py
 
 ## 3. Web App
 
+Stack: **FastAPI** backend (`webapp/api/main.py`) + **React / Vite** frontend (`webapp/frontend/`).
+
 ```bash
 pip install -r requirements.txt
-python webapp/app.py
-# Buka http://localhost:5000
+
+# Terminal 1 — backend
+uvicorn webapp.api.main:app --reload --port 8000
+
+# Terminal 2 — frontend
+cd webapp/frontend
+npm install
+npm run dev
+# Buka http://localhost:5173
 ```
 
 Fitur:
-- Upload file `.cfg` + `.dat` atau pilih dari `raw_data/` via Browse
-- Tampilkan hasil klasifikasi + evidence + probabilitas per kelas (bar chart)
+- Upload file `.cfg` + `.dat` atau pilih dari `raw_data/`
+- Hasil klasifikasi + evidence + probabilitas per kelas (cause ranking)
+- Workspace per-rele (21 / 87L / 87T / OCR / REF)
+- Locus impedansi R-X interaktif (relay 21)
 
 Panduan labeling tim tersedia di [LABELING_GUIDELINES.md](LABELING_GUIDELINES.md).
-- Badge TRANSIEN / PERMANEN berdasarkan outcome reclose
-- Rekomendasi tindak lanjut berdasarkan kelas prediksi
-- Dark mode toggle
-- Riwayat analisis tersimpan di `webapp/history.csv`
 
 ---
 

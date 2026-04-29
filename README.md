@@ -83,7 +83,8 @@ Bila file berasal dari DFR eksternal (Qualitrol, Toshiba standalone) tanpa sinya
 | `models/predict.py` | Inference end-to-end untuk satu file .cfg |
 | `models/transformer_classifier.py` | Klasifikasi event trafo berbasis pengetahuan |
 | `models/fault_classifier.pkl` | Model terlatih aktif (jumlah kelas mengikuti data trainable) |
-| `webapp/app.py` | Flask app: upload, browse, history, API |
+| `webapp/api/main.py` | FastAPI backend: upload, analysis, relay-specific endpoints |
+| `webapp/frontend/` | React (Vite) UI yang terhubung ke FastAPI via `/api/*` |
 | `batch_extract.py` | Ekstraksi fitur batch dari seluruh raw_data/ termasuk corpus kandidat 87L |
 | `extract_all.py` | Ekstraksi arsip ZIP/RAR menggunakan 7-Zip |
 
@@ -95,8 +96,15 @@ Bila file berasal dari DFR eksternal (Qualitrol, Toshiba standalone) tanpa sinya
 ```bash
 cd pipeline
 pip install -r requirements.txt
-python webapp/app.py
-# buka http://localhost:5000
+
+# Backend FastAPI (terminal 1)
+uvicorn webapp.api.main:app --reload --port 8000
+
+# Frontend React/Vite (terminal 2)
+cd webapp/frontend
+npm install
+npm run dev
+# buka http://localhost:5173
 ```
 
 ### Ekstraksi arsip (ZIP/RAR)
