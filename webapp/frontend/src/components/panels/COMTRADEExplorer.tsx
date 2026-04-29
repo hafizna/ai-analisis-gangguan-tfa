@@ -124,6 +124,26 @@ function extractPrefix(name: string): string {
   return idx > 0 ? name.slice(0, idx) : "";
 }
 
+/**
+ * Extract Siemens 7UT-style trailing winding-side suffix.
+ *   "Current IA.a" → "a"  (Side 1, conventionally HV)
+ *   "Current IB.b" → "b"  (Side 2, conventionally LV)
+ *   "Current IC.c" → "c"  (Side 3, conventionally TV)
+ * Returns "" if no single-letter trailing suffix is present.
+ */
+function extractWindingSuffix(name: string): string {
+  const m = name.match(/\.([abc])\s*$/i);
+  return m ? m[1].toLowerCase() : "";
+}
+
+/** Map Siemens-style suffix to canonical short side code used elsewhere in the explorer. */
+const SUFFIX_SIDE_SHORT: Record<string, string> = { a: "HVS", b: "LVS", c: "TVS" };
+const SUFFIX_SIDE_LABEL: Record<string, string> = {
+  a: "Side 1 (HV)",
+  b: "Side 2 (LV)",
+  c: "Side 3 (TV)",
+};
+
 /** Human-readable label for a winding prefix. */
 function windingLabel(prefix: string): string {
   const upper = prefix.toUpperCase();
@@ -148,6 +168,25 @@ function detectChannelGroups(
   channels: AnalogChannel[]
 ): ChannelGroup[] | null {
   if (channels.length === 0) return null;
+
+  // --- Winding-suffix detection (Siemens 7UT-style ".a" / ".b" / ".c") ---
+  // Checked before the prefix path because names like "Current IA.a" / "Current IA.b"
+  // share the same dot-prefix ("Current IA") and would otherwise be grouped per phase
+  // instead of per winding side.
+  const suffixes = channels.map((ch) => extractWindingSuffix(ch.name));
+  const uniqueSuffixes = [...new Set(suffixes.filter((s) => s))];
+  const withSuffix = suffixes.filter((s) => s).length;
+  if (
+    uniqueSuffixes.length >= 2 &&
+    uniqueSuffixes.length <= 3 &&
+    withSuffix >= channels.length * 0.7
+  ) {
+    return uniqueSuffixes.sort().map((sfx) => ({
+      label: SUFFIX_SIDE_LABEL[sfx] ?? `Side ${sfx.toUpperCase()}`,
+      shortLabel: SUFFIX_SIDE_SHORT[sfx] ?? sfx.toUpperCase(),
+      channels: channels.filter((ch) => extractWindingSuffix(ch.name) === sfx),
+    }));
+  }
 
   // --- Winding-prefix detection ---
   const prefixes = channels.map((ch) => extractPrefix(ch.name));
