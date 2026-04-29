@@ -258,6 +258,99 @@ def _label_recommendation(model_class: str) -> str:
     )
 
 
+# Threshold references (kA, primary current):
+#   < 8 kA  → low stroke current → bypassed shield wire is the most likely path
+#             (Eriksson Electrogeometric Model: SF stroke current cap ≈ 20 kA at most
+#              transmission heights; the bulk of SF events sit well below that).
+#   ≥ 30 kA → high stroke current → only BFO can produce this fault current on a
+#             single phase since SF strokes are bounded by the EGM cap.
+_SF_PEAK_CURRENT_A = 8_000.0
+_BFO_PEAK_CURRENT_A = 30_000.0
+
+
+def _classify_petir_subtype(row: dict) -> tuple[str, str]:
+    """
+    Classify a PETIR event as Shielding Failure (SF) or Back-Flashover (BFO).
+
+    Discriminators (in order of strength):
+      1. Faulted phase count — multi-phase (DLG / 3PH / 3PH-G or > 1 phase letter)
+         strongly implies BFO, since simultaneous insulator flashover requires the
+         tower potential to rise (back-flash mechanism).
+      2. Peak primary current (only when CT scaling is reliable, peak ≥ 200 A):
+         SF strokes are capped by the EGM at ~20 kA; very high single-phase
+         currents (≥ 30 kA) point to BFO above BIL × tower footing resistance.
+
+    Returns: (subtype, sentence_id)
+      subtype     ∈ {"SHIELDING_FAILURE", "BACK_FLASHOVER", "INCONCLUSIVE"}
+      sentence_id ∈ {"sf", "bfo", "inconclusive"}  — short tag for downstream use
+    """
+    fault_type = str(row.get("fault_type", "") or "").upper().strip()
+    phases = str(row.get("faulted_phases", "") or "").upper().strip()
+    peak = float(row.get("peak_fault_current_a", 0) or 0)
+
+    # Count distinct phase letters (handles "AB", "BC", "ABC" formats)
+    phase_count = sum(1 for ch in phases if ch in "ABC")
+    is_multi_phase = (
+        fault_type in {"DLG", "3PH", "3PH-G", "LL", "LLL", "LLG", "LLLG"}
+        or phase_count >= 2
+    )
+
+    if is_multi_phase:
+        return "BACK_FLASHOVER", "bfo"
+
+    # Single-phase paths — disambiguate via peak current when CT scaling is reliable
+    ct_reliable = peak >= 200.0
+    if ct_reliable:
+        if peak >= _BFO_PEAK_CURRENT_A:
+            return "BACK_FLASHOVER", "bfo"
+        if peak < _SF_PEAK_CURRENT_A:
+            return "SHIELDING_FAILURE", "sf"
+        return "INCONCLUSIVE", "inconclusive"
+
+    # CT scaling unreliable — single-phase petir most often is SF in transmission
+    # (per Eriksson EGM distribution), but flag low confidence
+    return "INCONCLUSIVE", "inconclusive"
+
+
+_PETIR_SUBTYPE_SENTENCES = {
+    "sf": (
+        "Mekanisme petir terindikasi: Shielding Failure (SF) — sambaran langsung "
+        "ke konduktor fasa karena gagal terlindungi oleh kawat tanah (OHGW); "
+        "umumnya menghasilkan gangguan satu-fasa dengan arus stroke moderat."
+    ),
+    "bfo": (
+        "Mekanisme petir terindikasi: Back-Flashover (BFO) — sambaran ke tower "
+        "atau kawat tanah (OHGW) menaikkan potensial tower hingga melampaui BIL "
+        "isolator dan terjadi flashover balik dari tower ke konduktor fasa; "
+        "sering melibatkan lebih dari satu fasa atau menunjukkan arus stroke tinggi."
+    ),
+    "inconclusive": (
+        "Mekanisme petir belum dapat dipastikan antara Shielding Failure (SF) "
+        "dan Back-Flashover (BFO) — karakteristik gelombang berada di area "
+        "tumpang tindih kedua mekanisme."
+    ),
+}
+
+_PETIR_SUBTYPE_FOOTING_NOTE = (
+    "Dibutuhkan integrasi dengan data PI terkait pentanahan tanah "
+    "(tower footing resistance) dan BIL isolator untuk konklusi yang lebih akurat."
+)
+
+
+def _petir_subtype_description(row: dict) -> str | None:
+    """
+    Build the PETIR sub-mechanism narrative line. Returns None when the row
+    has no signal to support the call (e.g. fault_type missing entirely).
+    """
+    if not str(row.get("fault_type", "") or "").strip():
+        return None
+    _, sid = _classify_petir_subtype(row)
+    sentence = _PETIR_SUBTYPE_SENTENCES.get(sid)
+    if not sentence:
+        return None
+    return f"{sentence} {_PETIR_SUBTYPE_FOOTING_NOTE}"
+
+
 def _transient_recommendation(row: dict) -> str:
     """Return a context-aware follow-up recommendation based on the top heuristic cause."""
     scores = _compute_cause_scores(row)
@@ -449,6 +542,20 @@ def _generate_description(row: dict, result: "ClassificationResult") -> str:
             f"Berdasarkan analisis pola gelombang, AI mengklasifikasikan gangguan ini sebagai "
             f"{result.label} dengan tingkat keyakinan {conf_pct:.0f}%."
         )
+
+    # PETIR sub-mechanism (Shielding Failure vs Back-Flashover) — shown whenever
+    # PETIR is the model class OR the dominant heuristic cause for a transient event.
+    _top_cause = ""
+    if cause_pcts:
+        try:
+            _top_cause = str(max(cause_pcts, key=lambda x: float(x.get("pct", 0) or 0)).get("name", "")).upper()
+        except (ValueError, TypeError):
+            _top_cause = ""
+    _petir_signaled = ("PETIR" in label_upper) or ("PETIR" in _top_cause)
+    if _petir_signaled:
+        subtype_line = _petir_subtype_description(row)
+        if subtype_line:
+            lines.append(subtype_line)
 
     return "\n".join(lines)
 
