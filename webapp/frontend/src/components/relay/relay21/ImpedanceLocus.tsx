@@ -58,6 +58,8 @@ type LoopName = "ZA" | "ZB" | "ZC" | "ZAB" | "ZBC" | "ZCA";
 
 type ZoneFamily = "ground" | "phase";
 type TimeMode = "fault" | "all";
+type PlotFamily = "ground" | "phase";
+type PlotRange = { x?: [number, number]; y?: [number, number] };
 
 const GROUND_LOOPS: LoopName[] = ["ZA", "ZB", "ZC"];
 const PHASE_LOOPS: LoopName[] = ["ZAB", "ZBC", "ZCA"];
@@ -274,7 +276,19 @@ function parseSifangRIO(text: string): ImportedRelayData | null {
   }
 
   if (phGnd.length === 0 && phPh.length === 0) return null;
-  return { kind: "rio", phGnd: phGnd.slice(0, 3), phPh: phPh.slice(0, 3) };
+
+  // KM mag, angle = residual compensation (K0) in Sifang/Alstom .rio format
+  const kmMatch = text.match(/\bKM\s+([-0-9.]+)\s*,\s*([-0-9.]+)/i);
+  let earthComp: ImportedRelayData["earthComp"];
+  if (kmMatch) {
+    const k0 = Number.parseFloat(kmMatch[1]);
+    const angleDeg = Number.parseFloat(kmMatch[2]);
+    if (Number.isFinite(k0) && Number.isFinite(angleDeg) && k0 > 0) {
+      earthComp = { k0, angleDeg, source: `RIO KM=${k0.toFixed(4)}, ∠=${angleDeg.toFixed(1)}°` };
+    }
+  }
+
+  return { kind: "rio", phGnd: phGnd.slice(0, 3), phPh: phPh.slice(0, 3), ...(earthComp ? { earthComp } : {}) };
 }
 
 function parseRioEarthComp(text: string): ImportedRelayData["earthComp"] {
@@ -529,11 +543,49 @@ function loopTrace(loop: LoopName, points: LocusPoint[]): Partial<Plotly.Scatter
     y: yVals,
     customdata: tVals,
     type: "scatter",
-    mode: "lines",
+    mode: "lines+markers",
     name: loop,
-    line: { color: LOOP_COLORS[loop], width: 2.1 },
+    line: { color: LOOP_COLORS[loop], width: 1.5, shape: "spline", smoothing: 0.8 },
+    marker: { color: LOOP_COLORS[loop], size: 5, symbol: "square" },
     connectgaps: false,
     hovertemplate: `${loop}<br>t=%{customdata:.2f} ms<br>R=%{x:.2f} Ω<br>X=%{y:.2f} Ω<extra></extra>`,
+  };
+}
+
+function closestPointAtTime(allPoints: LocusPoint[], eventMs: number): LocusPoint | null {
+  if (!allPoints.length) return null;
+  let closest: LocusPoint | null = null;
+  let minDiff = Infinity;
+  for (const p of allPoints) {
+    const diff = Math.abs(p.t * 1000 - eventMs);
+    if (diff < minDiff) { minDiff = diff; closest = p; }
+  }
+  return closest;
+}
+
+function eventTrace(
+  label: string,
+  loops: LoopName[],
+  pointsByLoop: Partial<Record<LoopName, LocusPoint[]>>,
+  cursorMs: number,
+  color: string,
+): Partial<Plotly.ScatterData> | null {
+  const hits = loops.flatMap((loop) => {
+    const point = closestPointAtTime(pointsByLoop[loop] ?? [], cursorMs);
+    return point ? [{ loop, point }] : [];
+  });
+  if (!hits.length) return null;
+
+  return {
+    x: hits.map((hit) => hit.point.r),
+    y: hits.map((hit) => hit.point.x),
+    customdata: hits.map((hit) => [hit.loop, cursorMs]),
+    type: "scatter",
+    mode: "markers",
+    name: label,
+    marker: { color, size: 13, symbol: "cross", line: { color: "#111827", width: 1.2 } },
+    showlegend: true,
+    hovertemplate: `%{customdata[0]} ${label}<br>t=%{customdata[1]:.1f} ms<br>R=%{x:.2f} Ω<br>X=%{y:.2f} Ω<extra></extra>`,
   };
 }
 
@@ -631,10 +683,27 @@ function finalizeRange(bounds: { xMin: number; xMax: number; yMin: number; yMax:
   };
 }
 
+function rangeFromRelayout(event: Readonly<Record<string, unknown>>): PlotRange | null {
+  if (event["xaxis.autorange"] || event["yaxis.autorange"]) return { x: undefined, y: undefined };
+
+  const x0 = event["xaxis.range[0]"];
+  const x1 = event["xaxis.range[1]"];
+  const y0 = event["yaxis.range[0]"];
+  const y1 = event["yaxis.range[1]"];
+  const next: PlotRange = {};
+
+  if (typeof x0 === "number" && typeof x1 === "number") next.x = [x0, x1];
+  if (typeof y0 === "number" && typeof y1 === "number") next.y = [y0, y1];
+
+  return next.x || next.y ? next : null;
+}
+
 function familyLayout(title: string, xRange: [number, number], yRange: [number, number], currentMs?: number): Partial<Plotly.Layout> {
   return {
+    uirevision: title,
     height: 460,
     margin: { t: 36, b: 56, l: 64, r: 20 },
+    autosize: true,
     xaxis: { title: { text: "R (secondary ohm)" }, range: xRange, zeroline: false, tickfont: { size: 10 } },
     yaxis: {
       title: { text: "X (secondary ohm)" },
@@ -642,6 +711,8 @@ function familyLayout(title: string, xRange: [number, number], yRange: [number, 
       zeroline: false,
       tickfont: { size: 10 },
       scaleanchor: "x",
+      scaleratio: 1,
+      constrain: "domain",
     },
     plot_bgcolor: "#ffffff",
     paper_bgcolor: "#ffffff",
@@ -676,16 +747,16 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
   const [error, setError] = useState<string | null>(null);
   const [relayStatus, setRelayStatus] = useState("Belum ada file relay dimuat; zona proteksi tidak digambar.");
   const [rioOver, setRioOver] = useState(false);
-  const [timeMode, setTimeMode] = useState<TimeMode>("fault");
-  const [timing, setTiming] = useState<{ inceptionMs: number | null; durationMs: number | null }>({
+  const [timeMode, setTimeMode] = useState<TimeMode>("all");
+  const [timing, setTiming] = useState<{ inceptionMs: number | null; durationMs: number | null; tripMs: number | null }>({
     inceptionMs: null,
     durationMs: null,
+    tripMs: null,
   });
   const [playMs, setPlayMs] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [k0Mag, setK0Mag] = useState(0.0);
-  const [k0Ang, setK0Ang] = useState(0.0);
-  const [invertI] = useState(false);
+  const [replaySpeed, setReplaySpeed] = useState(0.5);
+  const [plotRanges, setPlotRanges] = useState<Record<PlotFamily, PlotRange>>({ ground: {}, phase: {} });
   const [ctRatioOverride, setCtRatioOverride] = useState<number | null>(null);
   const [vtRatioOverride, setVtRatioOverride] = useState<number | null>(null);
   const rioInputRef = useRef<HTMLInputElement>(null);
@@ -693,9 +764,6 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
   async function fetchAllLoci(
     nextGroundZones = groundZones,
     nextPhaseZones = phaseZones,
-    nextK0Mag = k0Mag,
-    nextK0Ang = k0Ang,
-    nextInvertI = invertI,
     nextCtRatio = ctRatioOverride,
     nextVtRatio = vtRatioOverride,
   ) {
@@ -706,7 +774,7 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
         [...GROUND_LOOPS, ...PHASE_LOOPS].map(async (loop) => {
           const zones = GROUND_LOOPS.includes(loop) ? nextGroundZones : nextPhaseZones;
           const response = await computeLocus(
-            analysisId, zones, loop, nextK0Mag, nextK0Ang, nextInvertI,
+            analysisId, zones, loop, 0, 0, false,
             nextCtRatio ?? undefined, nextVtRatio ?? undefined,
           );
           return [loop, response.points ?? []] as const;
@@ -745,10 +813,11 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
         setTiming({
           inceptionMs: typeof params.inception_time_ms === "number" ? params.inception_time_ms : null,
           durationMs: typeof params.fault_duration_ms === "number" ? params.fault_duration_ms : null,
+          tripMs: typeof params.trip_time_ms === "number" ? params.trip_time_ms : null,
         });
       })
       .catch(() => {
-        if (alive) setTiming({ inceptionMs: null, durationMs: null });
+        if (alive) setTiming({ inceptionMs: null, durationMs: null, tripMs: null });
       });
     return () => { alive = false; };
   }, [analysisId, dataRevision]);
@@ -793,15 +862,6 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       setGroundZones(nextGroundZones);
       setPhaseZones(nextPhaseZones);
 
-      let nextK0Mag = k0Mag;
-      let nextK0Ang = k0Ang;
-      if (imported.earthComp) {
-        nextK0Mag = Number(imported.earthComp.k0.toFixed(4));
-        nextK0Ang = Number(imported.earthComp.angleDeg.toFixed(2));
-        setK0Mag(nextK0Mag);
-        setK0Ang(nextK0Ang);
-      }
-
       let nextCtRatio = ctRatioOverride;
       let nextVtRatio = vtRatioOverride;
       if (imported.ctRatio != null && imported.vtRatio != null) {
@@ -815,12 +875,11 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       const phCount = imported.phPh.length;
       const polyCount = [...imported.phGnd, ...imported.phPh].filter((z) => z.shapeType === "poly").length;
       const polyNote = polyCount > 0 ? ` (${polyCount} zona polygon dari .rio)` : "";
-      const compNote = imported.earthComp ? ` Earth comp: ${imported.earthComp.source}` : "";
       const ratioNote = nextCtRatio != null && nextVtRatio != null
         ? ` | CT=${nextCtRatio.toFixed(0)}:1, VT=${nextVtRatio.toFixed(1)}:1`
         : "";
-      setRelayStatus(`${file.name} dimuat: ${gndCount} zona ground, ${phCount} zona phase.${polyNote}${compNote}${ratioNote}`);
-      await fetchAllLoci(nextGroundZones, nextPhaseZones, nextK0Mag, nextK0Ang, invertI, nextCtRatio, nextVtRatio);
+      setRelayStatus(`${file.name} dimuat: ${gndCount} zona ground, ${phCount} zona phase.${polyNote}${ratioNote}`);
+      await fetchAllLoci(nextGroundZones, nextPhaseZones, nextCtRatio, nextVtRatio);
     } catch {
       setRelayStatus("Gagal membaca file relay.");
     }
@@ -837,8 +896,10 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
 
   const activeTimeRange = useMemo((): [number, number] => {
     if (timeMode === "fault" && timing.inceptionMs !== null && timing.durationMs !== null) {
-      const start = Math.max(allTimeRange[0], timing.inceptionMs - 10);
-      const end = Math.min(allTimeRange[1], timing.inceptionMs + timing.durationMs + 30);
+      // 20ms pre-inception + fault + 50% of fault duration post-trip (min 100ms)
+      const postTail = Math.max(100, timing.durationMs * 0.5);
+      const start = Math.max(allTimeRange[0], timing.inceptionMs - 20);
+      const end = Math.min(allTimeRange[1], timing.inceptionMs + timing.durationMs + postTail);
       if (end > start) return [start, end];
     }
     return allTimeRange;
@@ -850,9 +911,13 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
   }, [activeTimeRange[0], activeTimeRange[1], analysisId, dataRevision]);
 
   useEffect(() => {
+    setPlotRanges({ ground: {}, phase: {} });
+  }, [analysisId, dataRevision, timeMode]);
+
+  useEffect(() => {
     if (!playing) return undefined;
     const span = Math.max(activeTimeRange[1] - activeTimeRange[0], 1);
-    const step = Math.max(span / 120, 1);
+    const step = Math.max((span / 300) * replaySpeed, 0.25);
     const timer = window.setInterval(() => {
       setPlayMs((prev) => {
         const next = Math.min((prev ?? activeTimeRange[0]) + step, activeTimeRange[1]);
@@ -864,7 +929,7 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       });
     }, 80);
     return () => window.clearInterval(timer);
-  }, [activeTimeRange, playing]);
+  }, [activeTimeRange, playing, replaySpeed]);
 
   const currentPlayMs = playMs ?? activeTimeRange[1];
   const visiblePointsByLoop = useMemo(() => {
@@ -882,40 +947,102 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
     timeMode === "fault" && timing.inceptionMs !== null && timing.durationMs !== null
       ? `Fault window ${activeTimeRange[0].toFixed(1)}-${activeTimeRange[1].toFixed(1)} ms`
       : `Full record ${activeTimeRange[0].toFixed(1)}-${activeTimeRange[1].toFixed(1)} ms`;
+  const relayTripMs =
+    timing.tripMs !== null
+      ? timing.tripMs
+      : (timing.inceptionMs !== null && timing.durationMs !== null ? timing.inceptionMs + timing.durationMs : null);
   const hasRelayZones = groundZones.length > 0 || phaseZones.length > 0;
 
   const groundTraces = useMemo(() => {
     const loci = GROUND_LOOPS.filter((loop) => (visiblePointsByLoop[loop] ?? []).length > 0).map((loop) =>
       loopTrace(loop, visiblePointsByLoop[loop] ?? [])
     );
-    const heads = GROUND_LOOPS.map((loop) => headTrace(loop, visiblePointsByLoop[loop] ?? [], currentPlayMs)).filter(Boolean);
+    const showPlayHead = currentPlayMs < activeTimeRange[1] - 0.01;
+    const heads = showPlayHead
+      ? GROUND_LOOPS.map((loop) => headTrace(loop, visiblePointsByLoop[loop] ?? [], currentPlayMs)).filter(Boolean)
+      : [];
+    const inception = timing.inceptionMs !== null
+      ? eventTrace("Inception marker", GROUND_LOOPS, pointsByLoop, timing.inceptionMs, "#facc15")
+      : null;
+    const trip = relayTripMs !== null
+      ? eventTrace("Relay trip marker", GROUND_LOOPS, pointsByLoop, relayTripMs, "#2563eb")
+      : null;
     const zoneTraces = groundZones.map((zone) => (zone.shape === "mho" ? mhoCircleTrace(zone) : quadTrace(zone)));
-    return [...loci, ...(heads as Plotly.Data[]), ...zoneTraces] as Plotly.Data[];
-  }, [currentPlayMs, groundZones, visiblePointsByLoop]);
+    return [...loci, ...(heads as Plotly.Data[]), ...(inception ? [inception as Plotly.Data] : []), ...(trip ? [trip as Plotly.Data] : []), ...zoneTraces] as Plotly.Data[];
+  }, [activeTimeRange, currentPlayMs, groundZones, pointsByLoop, relayTripMs, timing.inceptionMs, visiblePointsByLoop]);
 
   const phaseTraces = useMemo(() => {
     const loci = PHASE_LOOPS.filter((loop) => (visiblePointsByLoop[loop] ?? []).length > 0).map((loop) =>
       loopTrace(loop, visiblePointsByLoop[loop] ?? [])
     );
-    const heads = PHASE_LOOPS.map((loop) => headTrace(loop, visiblePointsByLoop[loop] ?? [], currentPlayMs)).filter(Boolean);
+    const showPlayHead = currentPlayMs < activeTimeRange[1] - 0.01;
+    const heads = showPlayHead
+      ? PHASE_LOOPS.map((loop) => headTrace(loop, visiblePointsByLoop[loop] ?? [], currentPlayMs)).filter(Boolean)
+      : [];
+    const inception = timing.inceptionMs !== null
+      ? eventTrace("Inception marker", PHASE_LOOPS, pointsByLoop, timing.inceptionMs, "#facc15")
+      : null;
+    const trip = relayTripMs !== null
+      ? eventTrace("Relay trip marker", PHASE_LOOPS, pointsByLoop, relayTripMs, "#2563eb")
+      : null;
     const zoneTraces = phaseZones.map((zone) => (zone.shape === "mho" ? mhoCircleTrace(zone) : quadTrace(zone)));
-    return [...loci, ...(heads as Plotly.Data[]), ...zoneTraces] as Plotly.Data[];
-  }, [currentPlayMs, phaseZones, visiblePointsByLoop]);
+    return [...loci, ...(heads as Plotly.Data[]), ...(inception ? [inception as Plotly.Data] : []), ...(trip ? [trip as Plotly.Data] : []), ...zoneTraces] as Plotly.Data[];
+  }, [activeTimeRange, currentPlayMs, phaseZones, pointsByLoop, relayTripMs, timing.inceptionMs, visiblePointsByLoop]);
 
+  // When zones are loaded, merge zone bounds with locus points but cap at 4× the
+  // zone span so pre-fault load impedance (100-150 Ω away) doesn't crush the view.
   const groundRanges = useMemo(() => {
-    const pointBounds = boundsFromPoints(visiblePointsByLoop, GROUND_LOOPS);
-    const merged = groundZones.length > 0 ? mergeBounds(pointBounds, boundsFromZones(groundZones)) : pointBounds;
-    return finalizeRange(merged);
-  }, [groundZones, visiblePointsByLoop]);
+    const pointBounds = boundsFromPoints(pointsByLoop, GROUND_LOOPS);
+    if (groundZones.length === 0) return finalizeRange(pointBounds);
+    const zoneBounds = boundsFromZones(groundZones);
+    const zoneSpanR = Math.max(10, zoneBounds.xMax - zoneBounds.xMin);
+    const zoneSpanX = Math.max(10, zoneBounds.yMax - zoneBounds.yMin);
+    const capped = {
+      xMin: Math.max(pointBounds.xMin, zoneBounds.xMin - zoneSpanR * 2),
+      xMax: Math.min(pointBounds.xMax, zoneBounds.xMax + zoneSpanR * 4),
+      yMin: Math.max(pointBounds.yMin, zoneBounds.yMin - zoneSpanX * 2),
+      yMax: Math.min(pointBounds.yMax, zoneBounds.yMax + zoneSpanX * 2),
+    };
+    return finalizeRange(mergeBounds(zoneBounds, capped));
+  }, [groundZones, pointsByLoop]);
 
   const phaseRanges = useMemo(() => {
-    const pointBounds = boundsFromPoints(visiblePointsByLoop, PHASE_LOOPS);
-    const merged = phaseZones.length > 0 ? mergeBounds(pointBounds, boundsFromZones(phaseZones)) : pointBounds;
-    return finalizeRange(merged);
-  }, [phaseZones, visiblePointsByLoop]);
+    const pointBounds = boundsFromPoints(pointsByLoop, PHASE_LOOPS);
+    if (phaseZones.length === 0) return finalizeRange(pointBounds);
+    const zoneBounds = boundsFromZones(phaseZones);
+    const zoneSpanR = Math.max(10, zoneBounds.xMax - zoneBounds.xMin);
+    const zoneSpanX = Math.max(10, zoneBounds.yMax - zoneBounds.yMin);
+    const capped = {
+      xMin: Math.max(pointBounds.xMin, zoneBounds.xMin - zoneSpanR * 2),
+      xMax: Math.min(pointBounds.xMax, zoneBounds.xMax + zoneSpanR * 4),
+      yMin: Math.max(pointBounds.yMin, zoneBounds.yMin - zoneSpanX * 2),
+      yMax: Math.min(pointBounds.yMax, zoneBounds.yMax + zoneSpanX * 2),
+    };
+    return finalizeRange(mergeBounds(zoneBounds, capped));
+  }, [phaseZones, pointsByLoop]);
 
   const groundShape = groundZones[0]?.shape ?? "mho";
   const phaseShape = phaseZones[0]?.shape ?? "mho";
+  const groundViewRange = {
+    x: plotRanges.ground.x ?? groundRanges.x,
+    y: plotRanges.ground.y ?? groundRanges.y,
+  };
+  const phaseViewRange = {
+    x: plotRanges.phase.x ?? phaseRanges.x,
+    y: plotRanges.phase.y ?? phaseRanges.y,
+  };
+
+  function rememberPlotRange(family: PlotFamily, event: Readonly<Record<string, unknown>>) {
+    const range = rangeFromRelayout(event);
+    if (!range) return;
+    setPlotRanges((prev) => ({
+      ...prev,
+      [family]: {
+        x: Object.prototype.hasOwnProperty.call(range, "x") ? range.x : prev[family].x,
+        y: Object.prototype.hasOwnProperty.call(range, "y") ? range.y : prev[family].y,
+      },
+    }));
+  }
 
   function renderZoneEditor(title: string, family: ZoneFamily, zones: Zone[], familyShape: Zone["shape"]) {
     return (
@@ -1041,42 +1168,9 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
       <div className={styles.panelHeader}>
         <h2 className={styles.panelTitle}>Impedance Locus Diagram</h2>
         <div className={styles.controls} style={{ flexWrap: "wrap", gap: 10 }}>
-          <label className={styles.zoneLabel} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>|KZN|</span>
-            <input
-              className={styles.inputField}
-              type="number"
-              step="0.01"
-              min="0"
-              max="2"
-              value={k0Mag}
-              style={{ width: 54 }}
-              onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setK0Mag(v); }}
-            />
-            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>∠°</span>
-            <input
-              className={styles.inputField}
-              type="number"
-              step="1"
-              min="-180"
-              max="180"
-              value={k0Ang}
-              style={{ width: 54 }}
-              onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setK0Ang(v); }}
-            />
-            <button
-              type="button"
-              title="PLN standard: |KZN|=0.66, ∠=−5°"
-              style={{ padding: "2px 7px", fontSize: "0.7rem", borderRadius: 6, border: "1.5px solid #94a3b8", background: "#f8fafc", color: "#475569", cursor: "pointer", whiteSpace: "nowrap" }}
-              onClick={() => { setK0Mag(0.66); setK0Ang(-5); }}
-            >
-              PLN std
-            </button>
-          </label>
-
           <button
             className={styles.applyBtn}
-            onClick={() => void fetchAllLoci(groundZones, phaseZones, k0Mag, k0Ang, invertI, ctRatioOverride, vtRatioOverride)}
+            onClick={() => void fetchAllLoci(groundZones, phaseZones, ctRatioOverride, vtRatioOverride)}
             disabled={loading}
           >
             {loading ? "Computing..." : "Refresh All Loci"}
@@ -1168,6 +1262,19 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
           >
             Show End
           </button>
+          <label className={styles.zoneLabel}>
+            Replay speed
+            <select
+              className={styles.selectField}
+              value={replaySpeed}
+              onChange={(event) => setReplaySpeed(Number(event.target.value))}
+            >
+              <option value={0.25}>0.25x</option>
+              <option value={0.5}>0.5x</option>
+              <option value={1}>1x</option>
+              <option value={2}>2x</option>
+            </select>
+          </label>
         </div>
         <input
           type="range"
@@ -1185,7 +1292,9 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
           <strong>{currentPlayMs.toFixed(2)} ms</strong>
           <span>{activeWindowLabel}</span>
           {timing.inceptionMs !== null && timing.durationMs !== null && (
-            <span>Inception {timing.inceptionMs.toFixed(1)} ms | FCT {timing.durationMs.toFixed(1)} ms</span>
+            <span>
+              Inception {timing.inceptionMs.toFixed(1)} ms | Relay trip {relayTripMs !== null ? relayTripMs.toFixed(1) : "-"} ms | FCT {timing.durationMs.toFixed(1)} ms
+            </span>
           )}
         </div>
       </div>
@@ -1195,9 +1304,10 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
           <div className={styles.locusPlotTitle}>Phase-to-Ground | ZA, ZB, ZC</div>
           <Plot
             data={groundTraces}
-            layout={familyLayout("Phase-to-Ground", groundRanges.x, groundRanges.y, currentPlayMs)}
+            layout={familyLayout("Phase-to-Ground", groundViewRange.x, groundViewRange.y, currentPlayMs)}
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: "100%" }}
+            onRelayout={(event) => rememberPlotRange("ground", event as Readonly<Record<string, unknown>>)}
           />
         </div>
 
@@ -1205,9 +1315,10 @@ export default function ImpedanceLocus({ analysisId, dataRevision = 0 }: { analy
           <div className={styles.locusPlotTitle}>Phase-to-Phase | ZAB, ZBC, ZCA</div>
           <Plot
             data={phaseTraces}
-            layout={familyLayout("Phase-to-Phase", phaseRanges.x, phaseRanges.y, currentPlayMs)}
+            layout={familyLayout("Phase-to-Phase", phaseViewRange.x, phaseViewRange.y, currentPlayMs)}
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: "100%" }}
+            onRelayout={(event) => rememberPlotRange("phase", event as Readonly<Record<string, unknown>>)}
           />
         </div>
       </div>
