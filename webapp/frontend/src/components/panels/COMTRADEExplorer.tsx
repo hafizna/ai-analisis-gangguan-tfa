@@ -307,11 +307,7 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
   const [sharedRange, setSharedRange] = useState<[number, number] | null>(null);
   const [normalizeToInception, setNormalizeToInception] = useState(false);
   const [displayMode, setDisplayMode] = useState<"instantaneous" | "rms">("instantaneous");
-  const [digitalCursorActive, setDigitalCursorActive] = useState<1 | 2>(1);
-  const [digitalCursors, setDigitalCursors] = useState<{ c1: number | null; c2: number | null }>({
-    c1: null,
-    c2: null,
-  });
+  const [digitalHoverMs, setDigitalHoverMs] = useState<number | null>(null);
 
   // One electrical cycle in samples — used for RMS window
   const cycleN = useMemo(() => {
@@ -345,7 +341,7 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
   useEffect(() => {
     setSharedRange(null);
     setNormalizeToInception(false);
-    setDigitalCursors({ c1: null, c2: null });
+    setDigitalHoverMs(null);
   }, [comtrade]);
 
   // Default zoom: ±N ms around trigger (or inception if no CFG trigger)
@@ -473,41 +469,29 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
     [selectedStatus, displayTimeMs]
   );
 
-  function stateAtCursor(tMs: number | null) {
+  function digitalStateAtTime(tMs: number | null) {
     if (tMs === null || selectedStatus.length === 0 || displayTimeMs.length === 0) return null;
     let idx = 0;
     while (idx < displayTimeMs.length - 1 && displayTimeMs[idx + 1] <= tMs) idx += 1;
-    const channel = selectedStatus.find((ch) => ch.samples[idx] === 1) ?? selectedStatus[0];
+    const active = selectedStatus.filter((ch) => ch.samples[idx] === 1).map((ch) => ch.name);
     return {
       time: tMs,
-      channel: channel.name,
-      state: channel.samples[idx] === 1 ? "ON" : "OFF",
+      active,
+      inactiveCount: selectedStatus.length - active.length,
     };
   }
 
-  const digitalCursorReadout = useMemo(() => {
-    const c1 = stateAtCursor(digitalCursors.c1);
-    const c2 = stateAtCursor(digitalCursors.c2);
-    const delta =
-      digitalCursors.c1 !== null && digitalCursors.c2 !== null
-        ? Math.abs(digitalCursors.c2 - digitalCursors.c1)
-        : null;
-    return { c1, c2, delta };
-  }, [digitalCursors, selectedStatus, displayTimeMs]);
+  const digitalHoverReadout = useMemo(
+    () => digitalStateAtTime(digitalHoverMs),
+    [digitalHoverMs, selectedStatus, displayTimeMs]
+  );
 
-  function formatCursorState(cursor: ReturnType<typeof stateAtCursor>) {
-    if (!cursor) return "-";
-    return `${cursor.time.toFixed(2)} ms | ${cursor.channel} = ${cursor.state}`;
-  }
-
-  function placeDigitalCursor(event: Readonly<Plotly.PlotMouseEvent>) {
+  function updateDigitalHover(event: Readonly<Plotly.PlotMouseEvent>) {
     const point = event.points?.[0];
     const xRaw = point?.x;
     const x = typeof xRaw === "number" ? xRaw : Number(xRaw);
     if (!Number.isFinite(x)) return;
-    setDigitalCursors((prev) =>
-      digitalCursorActive === 2 ? { ...prev, c2: x } : { ...prev, c1: x }
-    );
+    setDigitalHoverMs(x);
   }
 
   const inceptionShape: Plotly.Shape | null = inceptionDisplayMs !== null ? {
@@ -525,67 +509,15 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
     line: { color: "#f59e0b", width: 1.5, dash: "dash" },
   } as Plotly.Shape : null;
 
-  const digitalCursorShapes: Plotly.Shape[] = [
-    ...(digitalCursors.c1 !== null
-      ? [{
-          type: "line",
-          x0: digitalCursors.c1,
-          x1: digitalCursors.c1,
-          yref: "paper",
-          y0: 0,
-          y1: 1,
-          line: { color: "#16a34a", width: 1.4 },
-        } as Plotly.Shape]
-      : []),
-    ...(digitalCursors.c2 !== null
-      ? [{
-          type: "line",
-          x0: digitalCursors.c2,
-          x1: digitalCursors.c2,
-          yref: "paper",
-          y0: 0,
-          y1: 1,
-          line: { color: "#e11d48", width: 1.4 },
-        } as Plotly.Shape]
-      : []),
-  ];
-
-  const digitalCursorAnnotations: Partial<Plotly.Annotations>[] = [
-    ...(digitalCursors.c1 !== null
-      ? [{
-          x: digitalCursors.c1,
-          y: 1,
-          xref: "x",
-          yref: "paper",
-          text: `C1 ${digitalCursors.c1.toFixed(2)} ms`,
-          showarrow: true,
-          arrowhead: 0,
-          ax: 0,
-          ay: -24,
-          font: { size: 10, color: "#16a34a" },
-          bgcolor: "rgba(255,255,255,0.92)",
-          bordercolor: "#16a34a",
-          borderpad: 3,
-        } as Partial<Plotly.Annotations>]
-      : []),
-    ...(digitalCursors.c2 !== null
-      ? [{
-          x: digitalCursors.c2,
-          y: 1,
-          xref: "x",
-          yref: "paper",
-          text: `C2 ${digitalCursors.c2.toFixed(2)} ms`,
-          showarrow: true,
-          arrowhead: 0,
-          ax: 0,
-          ay: -42,
-          font: { size: 10, color: "#e11d48" },
-          bgcolor: "rgba(255,255,255,0.92)",
-          bordercolor: "#e11d48",
-          borderpad: 3,
-        } as Partial<Plotly.Annotations>]
-      : []),
-  ];
+  const digitalHoverShape: Plotly.Shape | null = digitalHoverMs !== null ? {
+    type: "line",
+    x0: digitalHoverMs,
+    x1: digitalHoverMs,
+    yref: "paper",
+    y0: 0,
+    y1: 1,
+    line: { color: "#2563eb", width: 1.2 },
+  } as Plotly.Shape : null;
 
   const activeRange = sharedRange ?? defaultRange;
 
@@ -610,7 +542,9 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
     yaxis: {
       title: { text: yTitle },
       tickfont: { size: 10 },
-      tickformat: ".3g",
+      tickformat: "~s",
+      exponentformat: "SI",
+      separatethousands: true,
       // Lock y-axis so scroll/drag only affects the time axis.
       // Range is computed from data so it updates when mode or channels change.
       fixedrange: true,
@@ -656,9 +590,8 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
     shapes: [
       ...(inceptionShape && !normalizeToInception ? [inceptionShape] : []),
       ...(triggerShape ? [triggerShape] : []),
-      ...digitalCursorShapes,
+      ...(digitalHoverShape ? [digitalHoverShape] : []),
     ],
-    annotations: digitalCursorAnnotations,
   };
 
   return (
@@ -809,7 +742,7 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
               <div className={styles.waveSubplotTitle}>Tegangan</div>
               <Plot
                 data={voltageTraces}
-                layout={analogLayout("Tegangan", voltageYRange)}
+                layout={analogLayout(`Tegangan (${selectedVoltage[0]?.unit || "kV"})`, voltageYRange)}
                 config={{ displayModeBar: false, responsive: true, scrollZoom: true, doubleClick: "reset" }}
                 style={{ width: "100%" }}
                 onRelayout={(event) => syncRange(event as Record<string, unknown>)}
@@ -833,7 +766,7 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
                   </div>
                   <Plot
                     data={traces}
-                    layout={analogLayout("Arus", yRange)}
+                    layout={analogLayout(`Arus (${groupCurrents[0]?.unit || "A"})`, yRange)}
                     config={{ displayModeBar: false, responsive: true, scrollZoom: true, doubleClick: "reset" }}
                     style={{ width: "100%" }}
                     onRelayout={(event) => syncRange(event as Record<string, unknown>)}
@@ -847,7 +780,7 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
                 <div className={styles.waveSubplotTitle}>Arus</div>
                 <Plot
                   data={currentTraces}
-                  layout={analogLayout("Arus", currentYRange)}
+                  layout={analogLayout(`Arus (${selectedCurrent[0]?.unit || "A"})`, currentYRange)}
                   config={{ displayModeBar: false, responsive: true, scrollZoom: true, doubleClick: "reset" }}
                   style={{ width: "100%" }}
                   onRelayout={(event) => syncRange(event as Record<string, unknown>)}
@@ -875,41 +808,13 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
               <div className={styles.waveSubplotTitle} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span>Sinyal Digital</span>
                 <span style={{ fontSize: "0.68rem", color: "#94a3b8", fontWeight: 400 }}>(bar = aktif)</span>
-                <button
-                  type="button"
-                  className={styles.waveGhostBtn}
-                  onClick={() => setDigitalCursorActive(1)}
-                  style={digitalCursorActive === 1 ? { background: "#f0fdf4", borderColor: "#16a34a", color: "#166534", padding: "2px 8px" } : { padding: "2px 8px" }}
-                >
-                  C1
-                </button>
-                <button
-                  type="button"
-                  className={styles.waveGhostBtn}
-                  onClick={() => setDigitalCursorActive(2)}
-                  style={digitalCursorActive === 2 ? { background: "#fff1f2", borderColor: "#e11d48", color: "#9f1239", padding: "2px 8px" } : { padding: "2px 8px" }}
-                >
-                  C2
-                </button>
-                <button
-                  type="button"
-                  className={styles.waveGhostBtn}
-                  onClick={() => setDigitalCursors({ c1: null, c2: null })}
-                  style={{ padding: "2px 8px" }}
-                >
-                  Reset
-                </button>
                 <span style={{ fontSize: "0.72rem", color: "#475569", fontWeight: 500 }}>
-                  C1: {formatCursorState(digitalCursorReadout.c1)}
+                  Hover: {digitalHoverReadout ? `${digitalHoverReadout.time.toFixed(2)} ms` : "-"}
                 </span>
-                <span style={{ fontSize: "0.72rem", color: "#475569", fontWeight: 500 }}>
-                  C2: {formatCursorState(digitalCursorReadout.c2)}
+                <span style={{ fontSize: "0.72rem", color: "#0f172a", fontWeight: 700 }}>
+                  Active: {digitalHoverReadout ? (digitalHoverReadout.active.length ? digitalHoverReadout.active.slice(0, 5).join(", ") : "None") : "-"}
+                  {digitalHoverReadout && digitalHoverReadout.active.length > 5 ? ` +${digitalHoverReadout.active.length - 5}` : ""}
                 </span>
-                {digitalCursorReadout.delta !== null && (
-                  <span style={{ fontSize: "0.72rem", color: "#0f172a", fontWeight: 700 }}>
-                    Delta t: {digitalCursorReadout.delta.toFixed(2)} ms
-                  </span>
-                )}
               </div>
               <Plot
                 data={digitalBarTraces}
@@ -917,7 +822,7 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
                 config={{ displayModeBar: false, responsive: true, scrollZoom: true, doubleClick: "reset" }}
                 style={{ width: "100%" }}
                 onRelayout={(event) => syncRange(event as Record<string, unknown>)}
-                onClick={(event) => placeDigitalCursor(event as Readonly<Plotly.PlotMouseEvent>)}
+                onHover={(event) => updateDigitalHover(event as Readonly<Plotly.PlotMouseEvent>)}
               />
             </div>
           )}

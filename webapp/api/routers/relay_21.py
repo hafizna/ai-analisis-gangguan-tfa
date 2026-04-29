@@ -136,12 +136,79 @@ def _find_voltage_for_loop(channels, mapping: dict) -> Optional[np.ndarray]:
     return None
 
 
-def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
+def _fundamental_phasor(samples: np.ndarray, start: int, win: int, freq: float, sr: float) -> complex:
+    """Return the complex fundamental phasor for one analysis window."""
+    segment = np.asarray(samples[start:start + win], dtype=float)
+    if len(segment) != win:
+        return complex(np.nan, np.nan)
+
+    segment = segment - float(np.mean(segment))
+    n = np.arange(win, dtype=float)
+    kernel = np.exp(-1j * 2.0 * np.pi * freq * n / sr)
+    return complex(2.0 * np.mean(segment * kernel))
+
+
+def _smooth_locus_values(values: np.ndarray, passes: int = 2) -> np.ndarray:
+    """Small display smoother that preserves endpoints and broad shape."""
+    if len(values) < 5:
+        return values
+
+    smoothed = values.astype(float).copy()
+    kernel = np.array([1.0, 2.0, 3.0, 2.0, 1.0], dtype=float)
+    kernel = kernel / np.sum(kernel)
+    for _ in range(passes):
+        padded = np.pad(smoothed, (2, 2), mode="edge")
+        smoothed = np.convolve(padded, kernel, mode="valid")
+    smoothed[0] = values[0]
+    smoothed[-1] = values[-1]
+    return smoothed
+
+
+def _despike_locus(r_arr: np.ndarray, x_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Replace isolated one-window jumps with local medians."""
+    if len(r_arr) < 7:
+        return r_arr, x_arr
+
+    r = r_arr.astype(float).copy()
+    x = x_arr.astype(float).copy()
+    step_mag = np.sqrt(np.diff(r) ** 2 + np.diff(x) ** 2)
+    finite = step_mag[np.isfinite(step_mag)]
+    if finite.size == 0:
+        return r, x
+
+    med = float(np.median(finite))
+    mad = float(np.median(np.abs(finite - med)))
+    threshold = max(med + 8.0 * mad, med * 6.0, 1.0)
+
+    for idx in range(1, len(r) - 1):
+        jump_in = step_mag[idx - 1]
+        jump_out = step_mag[idx] if idx < len(step_mag) else 0.0
+        neighbor_gap = float(np.hypot(r[idx + 1] - r[idx - 1], x[idx + 1] - x[idx - 1]))
+        if jump_in > threshold and jump_out > threshold and neighbor_gap < threshold:
+            r[idx] = float(np.median(r[idx - 1:idx + 2]))
+            x[idx] = float(np.median(x[idx - 1:idx + 2]))
+
+    return r, x
+
+
+def _compute_locus(
+    comtrade_data: dict,
+    loop: str,
+    k0: float = 0.0,
+    k0_angle_deg: float = 0.0,
+    invert_i: bool = False,
+    ct_ratio_override: Optional[float] = None,
+    vt_ratio_override: Optional[float] = None,
+) -> list[dict]:
     channels = comtrade_data["analog_channels"]
     time = np.array(comtrade_data["time"])
     mapping = LOOP_CHANNELS.get(loop, LOOP_CHANNELS["ZA"])
     voltage_scale = _voltage_to_volts_scale(channels)
-    secondary_scale = _secondary_impedance_scale(channels)
+
+    if ct_ratio_override is not None and vt_ratio_override is not None and vt_ratio_override > 0:
+        secondary_scale = ct_ratio_override / vt_ratio_override
+    else:
+        secondary_scale = _secondary_impedance_scale(channels)
 
     v = _find_voltage_for_loop(channels, mapping)
     if v is None:
@@ -162,36 +229,68 @@ def _compute_locus(comtrade_data: dict, loop: str) -> list[dict]:
     else:
         i = i_channels[0]
 
+    if invert_i:
+        i = -i
+
     if np.iscomplexobj(v) or np.iscomplexobj(i):
         with np.errstate(divide="ignore", invalid="ignore"):
             z = np.where(np.abs(i) > 0.01, (v * voltage_scale / i) * secondary_scale, np.nan + 1j * np.nan)
         r = np.real(z)
         x = np.imag(z)
     else:
-        freq = comtrade_data.get("frequency", 50.0)
+        freq = float(comtrade_data.get("frequency", 50.0))
         sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
         win = max(1, int(sr / freq))  # one cycle window
-        r_list, x_list = [], []
-        for k in range(len(time)):
-            s = max(0, k - win + 1)
+        step = max(1, win // 16)
+        i_max_global = float(np.max(np.abs(i))) if len(i) > 0 else 1.0
+        min_i = max(0.01, i_max_global * 0.01)
+        k0_complex = k0 * np.exp(1j * np.radians(k0_angle_deg))
+        i_n = None
+        if loop in ("ZA", "ZB", "ZC") and k0 != 0.0:
+            i_n = _find_channel(channels, ["IN", "I0", "3I0", "IRESIDUAL", "IEN", "IE", "IR"])
+            if i_n is None:
+                ia = _find_phase_current(channels, "A")
+                ib = _find_phase_current(channels, "B")
+                ic = _find_phase_current(channels, "C")
+                if ia is not None and ib is not None and ic is not None:
+                    i_n = ia + ib + ic
+        r_list, x_list, t_list = [], [], []
+        for k in range(win - 1, len(time), step):
+            s = k - win + 1
             v_w = v[s:k+1]
             i_w = i[s:k+1]
-            if len(v_w) < 2 or np.max(np.abs(i_w)) < 0.01:
-                r_list.append(float("nan"))
-                x_list.append(float("nan"))
-            else:
-                # Least-squares: V = R*I + X*I_90  (I_90 = Hilbert approx)
-                i_90 = np.gradient(i_w) / (2 * np.pi * freq / sr)
-                A = np.column_stack([i_w, i_90])
-                try:
-                    coeffs, _, _, _ = np.linalg.lstsq(A, v_w * voltage_scale, rcond=None)
-                    r_list.append(float(coeffs[0]) * secondary_scale)
-                    x_list.append(float(coeffs[1]) * secondary_scale)
-                except Exception:
-                    r_list.append(float("nan"))
-                    x_list.append(float("nan"))
-        r = np.array(r_list)
-        x = np.array(x_list)
+            if len(v_w) < 2 or np.max(np.abs(i_w)) < min_i:
+                continue
+            v_ph = _fundamental_phasor(v * voltage_scale, s, win, freq, sr)
+            i_ph = _fundamental_phasor(i, s, win, freq, sr)
+            if i_n is not None and len(i_n) == len(i):
+                i_ph = i_ph + k0_complex * _fundamental_phasor(i_n, s, win, freq, sr)
+            if not np.isfinite(abs(v_ph)) or not np.isfinite(abs(i_ph)) or abs(i_ph) < min_i:
+                continue
+            z = (v_ph / i_ph) * secondary_scale
+            r_list.append(float(np.real(z)))
+            x_list.append(float(np.imag(z)))
+            t_list.append(float(time[k]))
+
+        # IQR outlier removal on |Z| — drops wild inception transients
+        # without killing valid fault points the way R² filtering does.
+        if r_list:
+            r_arr = np.array(r_list)
+            x_arr = np.array(x_list)
+            z_mag = np.sqrt(r_arr ** 2 + x_arr ** 2)
+            q25, q75 = np.percentile(z_mag, 25), np.percentile(z_mag, 75)
+            iqr = q75 - q25
+            fence = q75 + 4.0 * iqr  # 4× IQR keeps most valid points
+            mask = z_mag <= fence
+            r_arr, x_arr = r_arr[mask], x_arr[mask]
+            time = np.array(t_list)[mask]
+            r_arr, x_arr = _despike_locus(r_arr, x_arr)
+            r_arr = _smooth_locus_values(r_arr)
+            x_arr = _smooth_locus_values(x_arr)
+        else:
+            r_arr = x_arr = np.array([])
+            time = np.array([])
+        r, x = r_arr, x_arr
 
     points = []
     for k in range(len(time)):
@@ -227,8 +326,10 @@ def _extract_features_from_payload(payload: dict) -> dict:
     sr = 1.0 / (time[1] - time[0])
     cycle_n = max(4, int(sr / freq))
 
-    # Pick first available phase current and voltage
-    i = _find_channel(channels, ["IA", "IL1", "I1", "IB", "IL2", "IC", "IL3"])
+    # Pick the phase with the highest peak current — fault may be on B or C only
+    candidates = [_find_channel(channels, [n]) for n in ["IA", "IL1", "I1", "IB", "IL2", "IC", "IL3"]]
+    candidates = [c for c in candidates if c is not None]
+    i = max(candidates, key=lambda arr: float(np.max(np.abs(arr)))) if candidates else None
     v = _find_channel(channels, ["VA", "VAN", "UA", "VB", "VBN", "VC", "VCN"])
     if i is None:
         return empty
@@ -317,7 +418,12 @@ def _compute_electrical_params(payload: dict) -> dict:
 
     sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
     cycle_n = max(4, int(sr / freq))
-    i_ref = ia if ia is not None else (ib if ib is not None else ic)
+
+    # Use the phase with the highest peak fault current as reference — avoids
+    # misdetection when the fault is on B or C and IA barely rises.
+    available = [arr for arr in (ia, ib, ic) if arr is not None]
+    i_ref = max(available, key=lambda arr: float(np.max(np.abs(arr)))) if available else None
+
     pre_end = min(2 * cycle_n, len(i_ref) // 4) if i_ref is not None else 0
     inception_idx = 0
     extinction_idx = len(time) - 1
@@ -406,6 +512,19 @@ def _compute_electrical_params(payload: dict) -> dict:
             break
     if ar_dead_ms is not None:
         result["ar_dead_time_ms"] = ar_dead_ms
+
+    trip_time_ms = None
+    for sch in payload.get("status_channels", []):
+        name = sch.get("name", "").upper()
+        if not any(key in name for key in ("TRIP", "TRIPPING", "OPRT", "OPERATE")):
+            continue
+        samples = sch.get("samples", [])
+        first_idx = next((idx for idx, value in enumerate(samples) if value == 1), None)
+        if first_idx is not None and first_idx < len(time):
+            candidate_ms = float(time[first_idx] * 1000)
+            trip_time_ms = candidate_ms if trip_time_ms is None else min(trip_time_ms, candidate_ms)
+    if trip_time_ms is not None:
+        result["trip_time_ms"] = round(trip_time_ms, 1)
 
     result["fault_duration_ms"] = round((time[extinction_idx] - time[inception_idx]) * 1000, 1)
     result["inception_time_ms"] = round(float(time[inception_idx]) * 1000, 1)
@@ -516,7 +635,11 @@ async def compute_locus(body: LocusAnalysisRequest):
 
     loop = asyncio.get_event_loop()
     points = await loop.run_in_executor(
-        None, partial(_compute_locus, payload, body.loop)
+        None, partial(
+            _compute_locus, payload, body.loop,
+            body.k0, body.k0_angle_deg, body.invert_i,
+            body.ct_ratio_override, body.vt_ratio_override,
+        )
     )
     return LocusResponse(
         loop=body.loop,
