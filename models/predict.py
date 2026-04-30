@@ -268,7 +268,7 @@ _SF_PEAK_CURRENT_A = 8_000.0
 _BFO_PEAK_CURRENT_A = 30_000.0
 
 
-def _classify_petir_subtype(row: dict) -> tuple[str, str]:
+def _classify_petir_subtype(row: dict) -> tuple[str, str, str]:
     """
     Classify a PETIR event as Shielding Failure (SF) or Back-Flashover (BFO).
 
@@ -280,55 +280,71 @@ def _classify_petir_subtype(row: dict) -> tuple[str, str]:
          SF strokes are capped by the EGM at ~20 kA; very high single-phase
          currents (≥ 30 kA) point to BFO above BIL × tower footing resistance.
 
-    Returns: (subtype, sentence_id)
+    Returns: (subtype, sentence_id, reasoning)
       subtype     ∈ {"SHIELDING_FAILURE", "BACK_FLASHOVER", "INCONCLUSIVE"}
-      sentence_id ∈ {"sf", "bfo", "inconclusive"}  — short tag for downstream use
+      sentence_id ∈ {"sf", "bfo", "inconclusive"}
+      reasoning   — Indonesian sentence citing the actual data that produced
+                    the call (phase count, peak kA), so the operator sees WHY.
     """
     fault_type = str(row.get("fault_type", "") or "").upper().strip()
-    phases = str(row.get("faulted_phases", "") or "").upper().strip()
+    phases_raw = str(row.get("faulted_phases", "") or "").upper().strip()
     peak = float(row.get("peak_fault_current_a", 0) or 0)
 
-    # Count distinct phase letters (handles "AB", "BC", "ABC" formats)
-    phase_count = sum(1 for ch in phases if ch in "ABC")
+    # Extract bare phase letters (handles "A+B+C", "AB", "BC", "ABC" formats)
+    phases = "".join(ch for ch in phases_raw if ch in "ABC")
+    phase_count = len(phases)
+    phase_label = "+".join(phases) if phases else "—"
+    peak_ka = peak / 1000.0
+
     is_multi_phase = (
         fault_type in {"DLG", "3PH", "3PH-G", "LL", "LLL", "LLG", "LLLG"}
         or phase_count >= 2
     )
 
     if is_multi_phase:
-        return "BACK_FLASHOVER", "bfo"
+        peak_clause = f" dengan arus puncak {peak_ka:.1f} kA" if peak >= 200.0 else ""
+        reasoning = (
+            f"gangguan multi-fasa ({phase_label}){peak_clause}; "
+            f"flashover serempak pada beberapa isolator hanya mungkin terjadi "
+            f"saat potensial tower naik melampaui BIL akibat sambaran ke tower/OHGW"
+        )
+        return "BACK_FLASHOVER", "bfo", reasoning
 
-    # Single-phase paths — disambiguate via peak current when CT scaling is reliable
+    # Single-phase paths
     ct_reliable = peak >= 200.0
-    if ct_reliable:
-        if peak >= _BFO_PEAK_CURRENT_A:
-            return "BACK_FLASHOVER", "bfo"
-        if peak < _SF_PEAK_CURRENT_A:
-            return "SHIELDING_FAILURE", "sf"
-        return "INCONCLUSIVE", "inconclusive"
+    if not ct_reliable:
+        return "INCONCLUSIVE", "inconclusive", (
+            "skala CT tidak dapat dipercaya (peak < 200 A primer), "
+            "sehingga magnitudo arus stroke tidak dapat dibandingkan terhadap ambang SF/BFO"
+        )
 
-    # CT scaling unreliable — single-phase petir most often is SF in transmission
-    # (per Eriksson EGM distribution), but flag low confidence
-    return "INCONCLUSIVE", "inconclusive"
+    if peak >= _BFO_PEAK_CURRENT_A:
+        reasoning = (
+            f"gangguan satu-fasa ({phase_label}) dengan arus puncak {peak_ka:.1f} kA "
+            f"≥ {_BFO_PEAK_CURRENT_A/1000:.0f} kA — magnitudo ini melampaui cap "
+            f"shielding failure menurut Eriksson EGM dan hanya kompatibel dengan "
+            f"sambaran tinggi ke tower/OHGW"
+        )
+        return "BACK_FLASHOVER", "bfo", reasoning
+    if peak < _SF_PEAK_CURRENT_A:
+        reasoning = (
+            f"gangguan satu-fasa ({phase_label}) dengan arus puncak {peak_ka:.1f} kA "
+            f"< {_SF_PEAK_CURRENT_A/1000:.0f} kA — konsisten dengan distribusi sambaran "
+            f"yang lolos kawat tanah (shielding failure) menurut Eriksson EGM"
+        )
+        return "SHIELDING_FAILURE", "sf", reasoning
+    return "INCONCLUSIVE", "inconclusive", (
+        f"gangguan satu-fasa ({phase_label}) dengan arus puncak {peak_ka:.1f} kA "
+        f"berada di rentang tumpang tindih "
+        f"{_SF_PEAK_CURRENT_A/1000:.0f}–{_BFO_PEAK_CURRENT_A/1000:.0f} kA "
+        f"antara SF dan BFO"
+    )
 
 
-_PETIR_SUBTYPE_SENTENCES = {
-    "sf": (
-        "Mekanisme petir terindikasi: Shielding Failure (SF) — sambaran langsung "
-        "ke konduktor fasa karena gagal terlindungi oleh kawat tanah (OHGW); "
-        "umumnya menghasilkan gangguan satu-fasa dengan arus stroke moderat."
-    ),
-    "bfo": (
-        "Mekanisme petir terindikasi: Back-Flashover (BFO) — sambaran ke tower "
-        "atau kawat tanah (OHGW) menaikkan potensial tower hingga melampaui BIL "
-        "isolator dan terjadi flashover balik dari tower ke konduktor fasa; "
-        "sering melibatkan lebih dari satu fasa atau menunjukkan arus stroke tinggi."
-    ),
-    "inconclusive": (
-        "Mekanisme petir belum dapat dipastikan antara Shielding Failure (SF) "
-        "dan Back-Flashover (BFO) — karakteristik gelombang berada di area "
-        "tumpang tindih kedua mekanisme."
-    ),
+_PETIR_SUBTYPE_LABELS = {
+    "sf":  "Shielding Failure (SF)",
+    "bfo": "Back-Flashover (BFO)",
+    "inconclusive": "Belum Konklusif (SF vs BFO)",
 }
 
 _PETIR_SUBTYPE_FOOTING_NOTE = (
@@ -339,16 +355,26 @@ _PETIR_SUBTYPE_FOOTING_NOTE = (
 
 def _petir_subtype_description(row: dict) -> str | None:
     """
-    Build the PETIR sub-mechanism narrative line. Returns None when the row
-    has no signal to support the call (e.g. fault_type missing entirely).
+    Build the PETIR sub-mechanism narrative line. Returns None only when the
+    row carries zero fault signal (no fault_type, no faulted_phases, no peak),
+    which would make the call meaningless.
     """
-    if not str(row.get("fault_type", "") or "").strip():
+    has_signal = (
+        str(row.get("fault_type", "") or "").strip()
+        or str(row.get("faulted_phases", "") or "").strip()
+        or float(row.get("peak_fault_current_a", 0) or 0) > 0
+    )
+    if not has_signal:
         return None
-    _, sid = _classify_petir_subtype(row)
-    sentence = _PETIR_SUBTYPE_SENTENCES.get(sid)
-    if not sentence:
+    _, sid, reasoning = _classify_petir_subtype(row)
+    label = _PETIR_SUBTYPE_LABELS.get(sid)
+    if not label:
         return None
-    return f"{sentence} {_PETIR_SUBTYPE_FOOTING_NOTE}"
+    return (
+        f"Mekanisme petir terindikasi: {label}. "
+        f"Indikator: {reasoning}. "
+        f"{_PETIR_SUBTYPE_FOOTING_NOTE}"
+    )
 
 
 def _transient_recommendation(row: dict) -> str:
