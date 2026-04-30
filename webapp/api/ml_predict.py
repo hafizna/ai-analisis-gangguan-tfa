@@ -17,6 +17,8 @@ _PIPELINE_DIR = Path(__file__).parent.parent.parent
 if str(_PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(_PIPELINE_DIR))
 
+from models.predict import _petir_subtype_description  # noqa: E402
+
 _MODEL_PATH = Path(__file__).parent.parent.parent / "models" / "fault_classifier.pkl"
 
 _LABEL_DISPLAY = {
@@ -661,6 +663,12 @@ def run_ml_prediction(payload: dict, relay_type: str = "21") -> dict:
         f"Berdasarkan analisis pola gelombang, AI mengklasifikasikan gangguan ini sebagai "
         f"{ranking[0]['label']} dengan tingkat keyakinan {confidence:.0%}."
     )
+
+    # 4a. PETIR sub-mechanism (Shielding Failure vs Back-Flashover)
+    if pred == "PETIR":
+        subtype_line = _petir_subtype_description(row)
+        if subtype_line:
+            evidence.append(subtype_line)
 
     if pred == "PETIR" and (
         row.get("digital_ar_lockout")

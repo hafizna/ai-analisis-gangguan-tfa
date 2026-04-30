@@ -258,6 +258,125 @@ def _label_recommendation(model_class: str) -> str:
     )
 
 
+# Threshold references (kA, primary current):
+#   < 8 kA  → low stroke current → bypassed shield wire is the most likely path
+#             (Eriksson Electrogeometric Model: SF stroke current cap ≈ 20 kA at most
+#              transmission heights; the bulk of SF events sit well below that).
+#   ≥ 30 kA → high stroke current → only BFO can produce this fault current on a
+#             single phase since SF strokes are bounded by the EGM cap.
+_SF_PEAK_CURRENT_A = 8_000.0
+_BFO_PEAK_CURRENT_A = 30_000.0
+
+
+def _classify_petir_subtype(row: dict) -> tuple[str, str, str]:
+    """
+    Classify a PETIR event as Shielding Failure (SF) or Back-Flashover (BFO).
+
+    Discriminators (in order of strength):
+      1. Faulted phase count — multi-phase (DLG / 3PH / 3PH-G or > 1 phase letter)
+         strongly implies BFO, since simultaneous insulator flashover requires the
+         tower potential to rise (back-flash mechanism).
+      2. Peak primary current (only when CT scaling is reliable, peak ≥ 200 A):
+         SF strokes are capped by the EGM at ~20 kA; very high single-phase
+         currents (≥ 30 kA) point to BFO above BIL × tower footing resistance.
+
+    Returns: (subtype, sentence_id, reasoning)
+      subtype     ∈ {"SHIELDING_FAILURE", "BACK_FLASHOVER", "INCONCLUSIVE"}
+      sentence_id ∈ {"sf", "bfo", "inconclusive"}
+      reasoning   — Indonesian sentence citing the actual data that produced
+                    the call (phase count, peak kA), so the operator sees WHY.
+    """
+    fault_type = str(row.get("fault_type", "") or "").upper().strip()
+    phases_raw = str(row.get("faulted_phases", "") or "").upper().strip()
+    peak = float(row.get("peak_fault_current_a", 0) or 0)
+
+    # Extract bare phase letters (handles "A+B+C", "AB", "BC", "ABC" formats)
+    phases = "".join(ch for ch in phases_raw if ch in "ABC")
+    phase_count = len(phases)
+    phase_label = "+".join(phases) if phases else "—"
+    peak_ka = peak / 1000.0
+
+    is_multi_phase = (
+        fault_type in {"DLG", "3PH", "3PH-G", "LL", "LLL", "LLG", "LLLG"}
+        or phase_count >= 2
+    )
+
+    if is_multi_phase:
+        peak_clause = f" dengan arus puncak {peak_ka:.1f} kA" if peak >= 200.0 else ""
+        reasoning = (
+            f"gangguan multi-fasa ({phase_label}){peak_clause}; "
+            f"flashover serempak pada beberapa isolator hanya mungkin terjadi "
+            f"saat potensial tower naik melampaui BIL akibat sambaran ke tower/OHGW"
+        )
+        return "BACK_FLASHOVER", "bfo", reasoning
+
+    # Single-phase paths
+    ct_reliable = peak >= 200.0
+    if not ct_reliable:
+        return "INCONCLUSIVE", "inconclusive", (
+            "skala CT tidak dapat dipercaya (peak < 200 A primer), "
+            "sehingga magnitudo arus stroke tidak dapat dibandingkan terhadap ambang SF/BFO"
+        )
+
+    if peak >= _BFO_PEAK_CURRENT_A:
+        reasoning = (
+            f"gangguan satu-fasa ({phase_label}) dengan arus puncak {peak_ka:.1f} kA "
+            f"≥ {_BFO_PEAK_CURRENT_A/1000:.0f} kA — magnitudo ini melampaui cap "
+            f"shielding failure menurut Eriksson EGM dan hanya kompatibel dengan "
+            f"sambaran tinggi ke tower/OHGW"
+        )
+        return "BACK_FLASHOVER", "bfo", reasoning
+    if peak < _SF_PEAK_CURRENT_A:
+        reasoning = (
+            f"gangguan satu-fasa ({phase_label}) dengan arus puncak {peak_ka:.1f} kA "
+            f"< {_SF_PEAK_CURRENT_A/1000:.0f} kA — konsisten dengan distribusi sambaran "
+            f"yang lolos kawat tanah (shielding failure) menurut Eriksson EGM"
+        )
+        return "SHIELDING_FAILURE", "sf", reasoning
+    return "INCONCLUSIVE", "inconclusive", (
+        f"gangguan satu-fasa ({phase_label}) dengan arus puncak {peak_ka:.1f} kA "
+        f"berada di rentang tumpang tindih "
+        f"{_SF_PEAK_CURRENT_A/1000:.0f}–{_BFO_PEAK_CURRENT_A/1000:.0f} kA "
+        f"antara SF dan BFO"
+    )
+
+
+_PETIR_SUBTYPE_LABELS = {
+    "sf":  "Shielding Failure (SF)",
+    "bfo": "Back-Flashover (BFO)",
+    "inconclusive": "Belum Konklusif (SF vs BFO)",
+}
+
+_PETIR_SUBTYPE_FOOTING_NOTE = (
+    "Dibutuhkan integrasi dengan data PI terkait pentanahan tanah "
+    "(tower footing resistance) dan BIL isolator untuk konklusi yang lebih akurat."
+)
+
+
+def _petir_subtype_description(row: dict) -> str | None:
+    """
+    Build the PETIR sub-mechanism narrative line. Returns None only when the
+    row carries zero fault signal (no fault_type, no faulted_phases, no peak),
+    which would make the call meaningless.
+    """
+    has_signal = (
+        str(row.get("fault_type", "") or "").strip()
+        or str(row.get("faulted_phases", "") or "").strip()
+        or float(row.get("peak_fault_current_a", 0) or 0) > 0
+    )
+    if not has_signal:
+        return None
+    _, sid, reasoning = _classify_petir_subtype(row)
+    label = _PETIR_SUBTYPE_LABELS.get(sid)
+    if not label:
+        return None
+    return (
+        f"Mekanisme petir terindikasi: {label}. "
+        f"Indikator: {reasoning}. "
+        f"{_PETIR_SUBTYPE_FOOTING_NOTE}"
+    )
+
+
 def _transient_recommendation(row: dict) -> str:
     """Return a context-aware follow-up recommendation based on the top heuristic cause."""
     scores = _compute_cause_scores(row)
@@ -449,6 +568,20 @@ def _generate_description(row: dict, result: "ClassificationResult") -> str:
             f"Berdasarkan analisis pola gelombang, AI mengklasifikasikan gangguan ini sebagai "
             f"{result.label} dengan tingkat keyakinan {conf_pct:.0f}%."
         )
+
+    # PETIR sub-mechanism (Shielding Failure vs Back-Flashover) — shown whenever
+    # PETIR is the model class OR the dominant heuristic cause for a transient event.
+    _top_cause = ""
+    if cause_pcts:
+        try:
+            _top_cause = str(max(cause_pcts, key=lambda x: float(x.get("pct", 0) or 0)).get("name", "")).upper()
+        except (ValueError, TypeError):
+            _top_cause = ""
+    _petir_signaled = ("PETIR" in label_upper) or ("PETIR" in _top_cause)
+    if _petir_signaled:
+        subtype_line = _petir_subtype_description(row)
+        if subtype_line:
+            lines.append(subtype_line)
 
     return "\n".join(lines)
 
