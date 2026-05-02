@@ -77,6 +77,16 @@ def _symmetrical_components(ia: np.ndarray, ib: np.ndarray, ic: np.ndarray):
 
 def _phase_from_status_name(name: str) -> Optional[str]:
     upper = name.upper()
+    rst_to_abc = {"R": "A", "S": "B", "T": "C"}
+    for rst, phase in rst_to_abc.items():
+        patterns = [
+            rf"\bPH\s*[\.-]?\s*{rst}\b",
+            rf"\bPHASE\s+{rst}\b",
+            rf"\b{rst}\s+PH\b",
+            rf"\b{rst}\s*-\s*PH\b",
+        ]
+        if any(re.search(pattern, upper) for pattern in patterns):
+            return phase
     for phase in "ABC":
         patterns = [
             rf"\bPH\s*{phase}\b",
@@ -89,6 +99,23 @@ def _phase_from_status_name(name: str) -> Optional[str]:
         ]
         if any(re.search(pattern, upper) for pattern in patterns):
             return phase
+    return None
+
+
+def _zone_from_status_name(name: str) -> Optional[str]:
+    upper = name.upper()
+    for zone in ("1", "2", "3", "4", "5"):
+        if re.search(rf"\b(?:ZONE|Z)\s*[-_]?\s*{zone}\b", upper):
+            return f"Z{zone}"
+    return None
+
+
+def _trip_type_from_status_name(name: str) -> Optional[str]:
+    upper = name.upper()
+    if re.search(r"\b(?:3|THREE)\s*(?:PH|P|POLE)\b", upper) or "THREE_POLE" in upper:
+        return "three_pole"
+    if re.search(r"\b(?:1|ONE|SINGLE)\s*(?:PH|P|POLE)\b", upper) or "SINGLE_POLE" in upper:
+        return "single_pole"
     return None
 
 
@@ -151,10 +178,9 @@ def _digital_sequence_features(status_channels: list, time: np.ndarray, inceptio
             if is_fault:
                 fault_phases[phase] = min(first_ms, fault_phases.get(phase, first_ms))
 
-        if is_trip and "ZONE" in name and first_ms is not None:
-            for zone in ("1", "2", "3", "4", "5"):
-                if f"ZONE{zone}" in name.replace(" ", "") or f"Z{zone}" in name:
-                    zone_times[f"Z{zone}"] = min(first_ms, zone_times.get(f"Z{zone}", first_ms))
+        zone = _zone_from_status_name(name)
+        if is_trip and zone and first_ms is not None:
+            zone_times[zone] = min(first_ms, zone_times.get(zone, first_ms))
 
         if "AR" in name or "RECLOS" in name or "RECLOSE" in name:
             if "LOCKOUT" in name or "LOCK OUT" in name:
@@ -171,9 +197,16 @@ def _digital_sequence_features(status_channels: list, time: np.ndarray, inceptio
         return sorted(data.keys(), key=lambda ph: data[ph])
 
     trip_type = None
-    if len(cb_open_phases) >= 3 or len(trip_phases) >= 3:
+    explicit_trip_types = [
+        _trip_type_from_status_name(str(ch.get("name", "") or ""))
+        for ch in status_channels
+        if _status_any_on(ch.get("samples") or [])
+    ]
+    explicit_trip_types = [value for value in explicit_trip_types if value]
+
+    if "three_pole" in explicit_trip_types or len(cb_open_phases) >= 3 or len(trip_phases) >= 3:
         trip_type = "three_pole"
-    elif len(cb_open_phases) == 1 or len(trip_phases) == 1:
+    elif "single_pole" in explicit_trip_types or len(cb_open_phases) == 1 or len(trip_phases) == 1:
         trip_type = "single_pole"
 
     ar_status = None
@@ -235,7 +268,7 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
     for arr, phase in phase_currents:
         if arr is None or len(arr) < 4:
             continue
-        pre_n = min(2 * cycle_n, len(arr) // 4)
+        pre_n = min(cycle_n, len(arr) // 4)
         pre = float(np.sqrt(np.mean(arr[:pre_n] ** 2))) if pre_n > 1 else 0.0
         peak = float(np.max(np.abs(arr)))
         scored_currents.append((peak / max(pre, 1.0), peak, arr, phase))
@@ -367,30 +400,37 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
     # Trip type from status channels
     trip_type_str = "unknown"
     for sch in status_channels:
-        name = sch.get("name", "").upper()
-        if "3PH" in name or "THREE" in name or "3P" in name or "THREE_POLE" in name:
-            trip_type_str = "three_pole"
-            break
-        if "1PH" in name or "SINGLE" in name or "1P" in name or "SINGLE_POLE" in name:
-            trip_type_str = "single_pole"
+        trip_type_from_name = _trip_type_from_status_name(str(sch.get("name", "") or ""))
+        if trip_type_from_name:
+            trip_type_str = trip_type_from_name
             break
     if digital.get("digital_trip_type"):
         trip_type_str = digital["digital_trip_type"]
 
     # Faulted phases — per-phase 3× pre-fault RMS threshold to avoid false 3Ph detection
-    faulted_phases = []
+    phase_fault_stats: list[tuple[str, float, float]] = []
     for ph_arr, phase in [(ia, "A"), (ib, "B"), (ic, "C")]:
         if ph_arr is None:
             continue
-        pre_end_ph = min(2 * cycle_n, len(ph_arr) // 4)
+        pre_end_ph = min(cycle_n, len(ph_arr) // 4)
         if pre_end_ph < 2:
             continue
         pre_rms_ph = float(np.sqrt(np.mean(ph_arr[:pre_end_ph] ** 2)))
-        ph_thr = max(pre_rms_ph * 3.0, peak_fault_current_a * 0.10, 1.0)
-        seg = ph_arr[inception_idx: inception_idx + cycle_n]
-        if len(seg) > 0 and float(np.max(np.abs(seg))) > ph_thr:
-            faulted_phases.append(phase)
-    faulted_phases_str = "+".join(faulted_phases) if faulted_phases else "A"
+        seg = ph_arr[inception_idx: extinction_idx + 1]
+        if len(seg) > 0:
+            phase_fault_stats.append((phase, float(np.max(np.abs(seg))), pre_rms_ph))
+
+    faulted_phases: list[str] = []
+    if phase_fault_stats:
+        max_fault_peak = max(peak for _, peak, _ in phase_fault_stats)
+        for phase, peak, pre_rms_ph in phase_fault_stats:
+            ph_thr = max(pre_rms_ph * 3.0, max_fault_peak * 0.25, 1.0)
+            if peak >= ph_thr:
+                faulted_phases.append(phase)
+        if not faulted_phases:
+            faulted_phases = [max(phase_fault_stats, key=lambda item: item[1])[0]]
+
+    faulted_phases_str = "+".join(faulted_phases) if faulted_phases else primary_phase
     if len(digital.get("digital_startup_phases") or []) == 1:
         faulted_phases_str = digital["digital_startup_phases"][0]
 
@@ -398,10 +438,10 @@ def extract_ml_features(payload: dict, relay_type: str = "21") -> dict:
     zone_str = ""
     for sch in status_channels:
         name = sch.get("name", "").upper()
-        for z in ("ZONE 1", "ZONE 2", "ZONE 3", "Z1", "Z2", "Z3"):
-            if z in name and 1 in (sch.get("samples") or []):
-                zone_str = z.replace(" ", "")
-                break
+        zone = _zone_from_status_name(name)
+        if zone and 1 in (sch.get("samples") or []):
+            zone_str = zone
+            break
     if digital.get("digital_zone"):
         zone_str = digital["digital_zone"]
 

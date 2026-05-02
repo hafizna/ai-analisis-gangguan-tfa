@@ -2,7 +2,10 @@ import { useState } from "react";
 import { aiFaultAnalysis87L } from "../../../api/client";
 import styles from "../../panels/Panel.module.css";
 
-interface Props { analysisId: string; }
+interface Props {
+  analysisId: string;
+  relayLabel?: string;
+}
 
 interface AIResult {
   cause_ranking: { cause: string; label: string; confidence: number }[];
@@ -21,7 +24,7 @@ const DEFAULT_PARAMS = {
   idiff_fast: 7.50,
 };
 
-export default function AIFaultAnalysis87L({ analysisId }: Props) {
+export default function AIFaultAnalysis87L({ analysisId, relayLabel = "Line Differential (87L)" }: Props) {
   const [result, setResult] = useState<AIResult | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -38,7 +41,7 @@ export default function AIFaultAnalysis87L({ analysisId }: Props) {
   return (
     <div className={styles.panel}>
       <div className={styles.panelHeader}>
-        <h2 className={styles.panelTitle}>AI Fault Analysis — Line Differential (87L)</h2>
+        <h2 className={styles.panelTitle}>AI Fault Analysis — {relayLabel}</h2>
       </div>
 
       <p style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: 16 }}>

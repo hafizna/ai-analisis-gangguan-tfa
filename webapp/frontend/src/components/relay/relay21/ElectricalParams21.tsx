@@ -24,7 +24,7 @@ function Param({ label, value, unit, highlight }: { label: string; value?: numbe
     }}>
       <span style={{ fontSize: "0.7rem", color: "#64748b", fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{label}</span>
       <span style={{ fontSize: "1.05rem", fontWeight: 700, color: highlight ? "#dc2626" : "#1e293b", fontVariantNumeric: "tabular-nums" }}>
-        {value.toFixed(value < 10 ? 2 : 1)}
+        {value.toFixed(Math.abs(value) < 10 ? 2 : 1)}
         <span style={{ fontSize: "0.75rem", fontWeight: 400, color: "#64748b", marginLeft: 4 }}>{unit}</span>
       </span>
     </div>
@@ -59,7 +59,12 @@ export default function ElectricalParams21({ analysisId, dataRevision = 0 }: Pro
 
   const hasAnyPhase = params && (params.i_peak_ia_a !== undefined || params.i_peak_ib_a !== undefined || params.i_peak_ic_a !== undefined);
   const hasSeq = params && (params.i_pos_seq_a !== undefined || params.i_neg_seq_a !== undefined || params.i_zero_seq_a !== undefined);
-  const hasImpedance = params && (params.z_at_inception_ohm !== undefined || params.r_at_fault_ohm !== undefined || params.z_angle_deg !== undefined);
+  const hasImpedance = params && (
+    params.z_at_inception_ohm !== undefined ||
+    params.z_min_fault_ohm !== undefined ||
+    params.r_at_fault_ohm !== undefined ||
+    params.z_angle_deg !== undefined
+  );
 
   return (
     <div className={styles.panel}>
@@ -95,6 +100,7 @@ export default function ElectricalParams21({ analysisId, dataRevision = 0 }: Pro
           {hasImpedance && (
             <Section title="Impedansi Gangguan">
               <Param label="|Z| saat Inception" value={params.z_at_inception_ohm} unit="Ω" highlight />
+              <Param label="|Z| minimum saat gangguan" value={params.z_min_fault_ohm} unit="Ω" highlight />
               <Param label="R (resistif)" value={params.r_at_fault_ohm} unit="Ω" />
               <Param label="X (reaktif)" value={params.x_at_fault_ohm} unit="Ω" />
               <Param label="Rasio R/X" value={params.rx_ratio} unit="" />

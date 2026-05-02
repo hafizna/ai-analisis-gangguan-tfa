@@ -199,6 +199,7 @@ def _compute_locus(
     invert_i: bool = False,
     ct_ratio_override: Optional[float] = None,
     vt_ratio_override: Optional[float] = None,
+    detailed: bool = False,
 ) -> list[dict]:
     channels = comtrade_data["analog_channels"]
     time = np.array(comtrade_data["time"])
@@ -241,9 +242,9 @@ def _compute_locus(
         freq = float(comtrade_data.get("frequency", 50.0))
         sr = 1.0 / (time[1] - time[0]) if len(time) > 1 else 1000.0
         win = max(1, int(sr / freq))  # one cycle window
-        step = max(1, win // 16)
+        step = max(1, win // (32 if detailed else 16))
         i_max_global = float(np.max(np.abs(i))) if len(i) > 0 else 1.0
-        min_i = max(0.01, i_max_global * 0.01)
+        min_i = max(0.01, i_max_global * (0.005 if detailed else 0.01))
         k0_complex = k0 * np.exp(1j * np.radians(k0_angle_deg))
         i_n = None
         if loop in ("ZA", "ZB", "ZC") and k0 != 0.0:
@@ -280,13 +281,14 @@ def _compute_locus(
             z_mag = np.sqrt(r_arr ** 2 + x_arr ** 2)
             q25, q75 = np.percentile(z_mag, 25), np.percentile(z_mag, 75)
             iqr = q75 - q25
-            fence = q75 + 4.0 * iqr  # 4× IQR keeps most valid points
+            fence = q75 + (6.0 if detailed else 4.0) * iqr
             mask = z_mag <= fence
             r_arr, x_arr = r_arr[mask], x_arr[mask]
             time = np.array(t_list)[mask]
             r_arr, x_arr = _despike_locus(r_arr, x_arr)
-            r_arr = _smooth_locus_values(r_arr)
-            x_arr = _smooth_locus_values(x_arr)
+            if not detailed:
+                r_arr = _smooth_locus_values(r_arr)
+                x_arr = _smooth_locus_values(x_arr)
         else:
             r_arr = x_arr = np.array([])
             time = np.array([])
@@ -421,10 +423,11 @@ def _compute_electrical_params(payload: dict) -> dict:
 
     # Use the phase with the highest peak fault current as reference — avoids
     # misdetection when the fault is on B or C and IA barely rises.
-    available = [arr for arr in (ia, ib, ic) if arr is not None]
-    i_ref = max(available, key=lambda arr: float(np.max(np.abs(arr)))) if available else None
+    available = [(label, arr) for label, arr in (("A", ia), ("B", ib), ("C", ic)) if arr is not None]
+    ref_label, i_ref = max(available, key=lambda item: float(np.max(np.abs(item[1])))) if available else (None, None)
+    v_ref = {"A": va, "B": vb, "C": vc}.get(ref_label)
 
-    pre_end = min(2 * cycle_n, len(i_ref) // 4) if i_ref is not None else 0
+    pre_end = min(cycle_n, len(i_ref) // 4) if i_ref is not None else 0
     inception_idx = 0
     extinction_idx = len(time) - 1
 
@@ -447,9 +450,9 @@ def _compute_electrical_params(payload: dict) -> dict:
         if arr is not None and len(arr) > inception_idx:
             result[f"i_peak_{label.lower()}_a"] = round(float(np.max(np.abs(arr[fault_slice]))), 2)
 
-    if va is not None and pre_end > 1:
-        v_pre_rms = float(np.sqrt(np.mean(va[:pre_end] ** 2)))
-        v_fault_rms = float(np.sqrt(np.mean(va[fault_slice] ** 2))) if len(va) > inception_idx else v_pre_rms
+    if v_ref is not None and pre_end > 1:
+        v_pre_rms = float(np.sqrt(np.mean(v_ref[:pre_end] ** 2)))
+        v_fault_rms = float(np.sqrt(np.mean(v_ref[fault_slice] ** 2))) if len(v_ref) > inception_idx else v_pre_rms
         if v_pre_rms > 0:
             result["v_sag_pct"] = round((1.0 - v_fault_rms / v_pre_rms) * 100, 1)
 
@@ -479,11 +482,11 @@ def _compute_electrical_params(payload: dict) -> dict:
         result["i_neg_seq_a"] = round(abs(i_neg), 2)
         result["i_zero_seq_a"] = round(abs(i_zero), 2)
 
-    if va is not None and ia is not None:
-        win = min(cycle_n, len(va) - inception_idx)
+    if v_ref is not None and i_ref is not None:
+        win = min(cycle_n, len(v_ref) - inception_idx, len(i_ref) - inception_idx)
         if win >= 4:
-            v_w = va[inception_idx : inception_idx + win] * 1000.0
-            i_w = ia[inception_idx : inception_idx + win]
+            v_w = v_ref[inception_idx : inception_idx + win] * 1000.0
+            i_w = i_ref[inception_idx : inception_idx + win]
             i_90 = np.gradient(i_w) / (2 * np.pi * freq / sr)
             matrix = np.column_stack([i_w, i_90])
             try:
@@ -500,6 +503,18 @@ def _compute_electrical_params(payload: dict) -> dict:
                     result["z_angle_deg"] = round(float(np.degrees(np.arctan2(x_val, r_val))), 1)
             except Exception:
                 pass
+
+            z_window: list[float] = []
+            end_idx = min(extinction_idx + 1, len(v_ref), len(i_ref))
+            step = max(1, win // 16)
+            for k in range(inception_idx + win - 1, end_idx, step):
+                s = k - win + 1
+                v_ph = _fundamental_phasor(v_ref * 1000.0, s, win, freq, sr)
+                i_ph = _fundamental_phasor(i_ref, s, win, freq, sr)
+                if np.isfinite(abs(v_ph)) and np.isfinite(abs(i_ph)) and abs(i_ph) > 0.01:
+                    z_window.append(float(abs(v_ph / i_ph)))
+            if z_window:
+                result["z_min_fault_ohm"] = round(float(np.min(z_window)), 2)
 
     ar_dead_ms = None
     for sch in payload.get("status_channels", []):
@@ -638,7 +653,7 @@ async def compute_locus(body: LocusAnalysisRequest):
         None, partial(
             _compute_locus, payload, body.loop,
             body.k0, body.k0_angle_deg, body.invert_i,
-            body.ct_ratio_override, body.vt_ratio_override,
+            body.ct_ratio_override, body.vt_ratio_override, body.detailed,
         )
     )
     return LocusResponse(

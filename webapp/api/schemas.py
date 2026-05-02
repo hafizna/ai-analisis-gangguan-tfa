@@ -135,6 +135,7 @@ class LocusAnalysisRequest(AnalysisRequestBase):
     invert_i: bool = False
     ct_ratio_override: Optional[float] = None
     vt_ratio_override: Optional[float] = None
+    detailed: bool = False
 
 
 class LocusPoint(BaseModel):

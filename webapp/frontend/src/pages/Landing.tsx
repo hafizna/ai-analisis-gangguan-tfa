@@ -29,6 +29,14 @@ const RELAY_OPTIONS: RelayOption[] = [
     icon: "87L",
   },
   {
+    id: "CCP",
+    label: "CCP / Stub Differential",
+    subtitle: "Circulating current protection and stub differential review",
+    tooltip:
+      "Use this category for CCP, circulating current, or stub differential records that should be reviewed with the line differential workflow.",
+    icon: "CCP",
+  },
+  {
     id: "87T",
     label: "87T / REF",
     subtitle: "Transformer differential and restricted earth fault",

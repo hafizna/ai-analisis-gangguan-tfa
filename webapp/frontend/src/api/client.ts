@@ -86,6 +86,7 @@ export async function computeLocus(
   invertI = false,
   ctRatioOverride?: number,
   vtRatioOverride?: number,
+  detailed = false,
 ) {
   const { data } = await api.post("/api/analyze/21/locus", {
     analysis_id: analysisId,
@@ -96,6 +97,7 @@ export async function computeLocus(
     invert_i: invertI,
     ...(ctRatioOverride != null ? { ct_ratio_override: ctRatioOverride } : {}),
     ...(vtRatioOverride != null ? { vt_ratio_override: vtRatioOverride } : {}),
+    detailed,
   });
   return data;
 }
@@ -130,6 +132,7 @@ export async function fetchElectricalParams21(analysisId: string) {
     i_neg_seq_a?: number;
     i_zero_seq_a?: number;
     z_at_inception_ohm?: number;
+    z_min_fault_ohm?: number;
     r_at_fault_ohm?: number;
     x_at_fault_ohm?: number;
     rx_ratio?: number;

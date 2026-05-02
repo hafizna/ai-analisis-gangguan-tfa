@@ -391,6 +391,12 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
     return [Math.max(0, center - 300), Math.min(dur, center + 700)];
   }, [triggerOffsetMs, inceptionTimeMs, comtrade.time]);
 
+  const inceptionRange = useMemo((): [number, number] | null => {
+    const dur = (comtrade.time[comtrade.time.length - 1] ?? 0) * 1000;
+    if (inceptionTimeMs === null || dur <= 0) return null;
+    return [Math.max(0, inceptionTimeMs - 60), Math.min(dur, inceptionTimeMs + 220)];
+  }, [inceptionTimeMs, comtrade.time]);
+
   const displayTimeMs = useMemo(() => {
     const offset = normalizeToInception && inceptionTimeMs !== null ? inceptionTimeMs : 0;
     return sampledTimeMs.map((t) => t - offset);
@@ -437,6 +443,11 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
     if (next !== undefined) {
       setSharedRange(next);
     }
+  }
+
+  function resetToInception() {
+    setSharedRange(inceptionRange ?? defaultRange ?? null);
+    setDigitalHoverMs(null);
   }
 
   /** Channels whose unit is pu or In (relay-computed diff / REF) — shown in own subplot. */
@@ -663,7 +674,7 @@ export default function COMTRADEExplorer({ comtrade }: Props) {
           <span className={styles.waveBadge}>Revision: {comtrade.rev_year}</span>
         </div>
         <div className={styles.waveToolbarActions}>
-          <button type="button" className={styles.waveGhostBtn} onClick={() => setSharedRange(null)}>
+          <button type="button" className={styles.waveGhostBtn} onClick={resetToInception}>
             Reset Zoom
           </button>
           <button
